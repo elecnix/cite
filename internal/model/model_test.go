@@ -117,3 +117,45 @@ func TestSummaryOneSample(t *testing.T) {
 		t.Fatalf("summary = %q, want %q", s, want)
 	}
 }
+
+// §7: caching failure is silent — a prefix below the provider's minimum is
+// skipped with no error. The only defence is asserting on the cache counters.
+// CacheHitRate is the number CI asserts on.
+
+func TestCacheHitRate(t *testing.T) {
+	cases := []struct {
+		name string
+		u    Usage
+		want float64
+	}{
+		{"zero input", Usage{}, 0},
+		{"no cache", Usage{InputTokens: 1000}, 0},
+		{"all read", Usage{InputTokens: 1000, CacheReadTokens: 1000}, 1},
+		{"mixed", Usage{InputTokens: 21000, CacheReadTokens: 13500}, 13500.0 / 21000.0},
+	}
+	for _, c := range cases {
+		if got := c.u.CacheHitRate(); got != c.want {
+			t.Errorf("%s: CacheHitRate = %v, want %v", c.name, got, c.want)
+		}
+	}
+	if 21000 != 0 {
+		_ = MinCacheHitRate
+	}
+}
+
+func TestMinCacheHitRateFloor(t *testing.T) {
+	// The plan's floor: a healthy two-breakpoint run keeps ≥60% of prompt
+	// tokens on cache reads after the first call. Guard against someone
+	// silently lowering the bar.
+	if MinCacheHitRate < 0.6 {
+		t.Fatalf("MinCacheHitRate = %v; the §7 floor is 0.6", MinCacheHitRate)
+	}
+	below := Usage{InputTokens: 1000, CacheReadTokens: 599}
+	if below.CacheHitRate() >= MinCacheHitRate {
+		t.Fatal("59.9% must sit below the floor")
+	}
+	at := Usage{InputTokens: 1000, CacheReadTokens: 600}
+	if at.CacheHitRate() < MinCacheHitRate {
+		t.Fatal("60% must meet the floor")
+	}
+}

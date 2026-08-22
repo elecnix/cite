@@ -759,3 +759,91 @@ func TestDeletedFileReviewedWithoutModelCall(t *testing.T) {
 		t.Errorf("coverage incomplete: %+v", rec.Coverage)
 	}
 }
+
+// §7: "assert on the cache counters in CI, since caching failure is silent."
+// The two-breakpoint structure has its own structural tests (segment B
+// identity, nonce placement); this one keeps the *accounting* honest: the
+// run record's usage must accumulate every response's cache counters, and a
+// cache-shaped call sequence must land at or above the §7 floor. A change
+// that stops propagating Usage — or that reorders calls so the prefix
+// cold-misses — fails here instead of on an invoice.
+func TestCacheCountersAccumulateAndHoldFloor(t *testing.T) {
+	in := baseInputs()
+	// Three changed files so the run makes one triage + three review calls.
+	const nFiles = 3
+	for _, p := range []string{"b.go", "c.go"} {
+		diffText := fmt.Sprintf(`diff --git a/%s b/%s
+--- a/%s
++++ b/%s
+@@ -1,2 +1,3 @@
+ context line one
++added line alpha here
+ context line two
+`, p, p, p, p)
+		df, err := scope.ParseUnifiedDiff(diffText)
+		if err != nil {
+			t.Fatal(err)
+		}
+		in.Manifest = append(in.Manifest, scope.ManifestEntry{Status: "M", Path: p, Adds: 1})
+		in.Diffs[p] = df.Files[0]
+		in.PostImage[p] = []byte("context line one\nadded line alpha here\ncontext line two\n")
+	}
+
+	// Responses carry no findings. Usage is scripted per call shape:
+	// triage (cold), first review (serialized, pays the cache write), later
+	// reviews (read the cached prefix).
+	c := &fakeClient{fn: func(i int, req model.CompletionRequest) (string, error) {
+		if isTriageCall(req) {
+			return triageJSON("a.go", "b.go", "c.go"), nil
+		}
+		return "{}", nil
+	}}
+	client := &usageClient{inner: c, usageFor: func(i int) model.Usage {
+		switch {
+		case i == 0:
+			return model.Usage{InputTokens: 1000, OutputTokens: 10, CacheWriteTokens: 1000}
+		case i == 1:
+			return model.Usage{InputTokens: 5000, OutputTokens: 10, CacheWriteTokens: 4500}
+		default:
+			return model.Usage{InputTokens: 5000, OutputTokens: 10, CacheReadTokens: 4900, CacheWriteTokens: 100}
+		}
+	}}
+
+	rec, err := runOnce(t, in, baseOptions(client))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantInput := 1000 + 3*5000
+	if rec.Usage.InputTokens != wantInput {
+		t.Fatalf("input tokens = %d, want %d", rec.Usage.InputTokens, wantInput)
+	}
+	wantRead := 2 * 4900
+	if rec.Usage.CacheReadTokens != wantRead {
+		t.Fatalf("cache-read tokens = %d, want %d", rec.Usage.CacheReadTokens, wantRead)
+	}
+	rate := rec.Usage.CacheHitRate()
+	if rate < model.MinCacheHitRate {
+		t.Fatalf("cache hit rate %.3f fell below the §7 floor %.2f", rate, model.MinCacheHitRate)
+	}
+}
+
+// usageClient decorates a fakeClient's responses with per-call usage counters.
+type usageClient struct {
+	inner    *fakeClient
+	usageFor func(i int) model.Usage
+}
+
+func (u *usageClient) Complete(ctx context.Context, req model.CompletionRequest) (*model.CompletionResponse, error) {
+	resp, err := u.inner.Complete(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	u.inner.mu.Lock()
+	i := len(u.inner.calls) - 1
+	u.inner.mu.Unlock()
+	resp.Usage = u.usageFor(i)
+	return resp, nil
+}
+
+func (u *usageClient) ModelID() string { return u.inner.ModelID() }

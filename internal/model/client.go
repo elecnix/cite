@@ -140,6 +140,24 @@ type Usage struct {
 	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
 }
 
+// MinCacheHitRate is the floor CI asserts on (§7: "a test that fails when
+// the hit rate drops below 60% is the only thing that keeps these rules true
+// in six months"). A healthy two-breakpoint run keeps most prompt tokens on
+// cache reads once past the serialized first call; a cold-miss regression
+// shows up here before it shows up on an invoice.
+const MinCacheHitRate = 0.6
+
+// CacheHitRate is the fraction of prompt tokens served from provider cache.
+// Cached tokens are reported as part of prompt tokens, so the denominator is
+// InputTokens. Zero input means nothing was measured and the rate is zero —
+// never NaN.
+func (u Usage) CacheHitRate() float64 {
+	if u.InputTokens <= 0 {
+		return 0
+	}
+	return float64(u.CacheReadTokens) / float64(u.InputTokens)
+}
+
 // CompletionResponse carries the text and the counters.
 type CompletionResponse struct {
 	Text         string

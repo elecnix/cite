@@ -74,6 +74,10 @@ func printRecord(rec *model.RunRecord) {
 	fmt.Printf("model=%s temperature=%.1f samples=%d\n", rec.Model, rec.Temperature, rec.Samples)
 	fmt.Printf("coverage: %d/%d api files complete=%t\n", rec.Coverage.Reviewed+rec.Coverage.ApprovedSkip, rec.Coverage.APIFiles, rec.Coverage.Complete)
 	fmt.Printf("cost: $%.4f (in %s out %s)\n", rec.CostUSD, humanTokens(rec.Usage.InputTokens), humanTokens(rec.Usage.OutputTokens))
+	if rec.Usage.InputTokens > 0 {
+		fmt.Printf("cache: %.0f%% of prompt tokens on reads (§7 floor %.0f%%)\n",
+			100*rec.Usage.CacheHitRate(), 100*model.MinCacheHitRate)
+	}
 	for _, f := range rec.Files {
 		line := fmt.Sprintf("  %-3s %s", f.Status, f.Path)
 		if f.Reason != "" {
