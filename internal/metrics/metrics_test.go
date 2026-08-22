@@ -78,9 +78,9 @@ func TestEvaluateDispositions(t *testing.T) {
 		fi("dddddddddddddddddddddddddddddddd", "d.go", ev(1, "untouched")),
 	}
 	heads := map[string][]byte{
-		"a.go": []byte("new line"),          // fixed
-		"b.go": []byte("stable line"),      // argued below
-		"c.go": []byte("also stable"),      // both
+		"a.go": []byte("new line"),    // fixed
+		"b.go": []byte("stable line"), // argued below
+		"c.go": []byte("also stable"), // both
 		"d.go": []byte("untouched"),
 	}
 	replies := map[string][]Reply{

@@ -183,9 +183,10 @@ func printInstructionWarnings(ws []instructions.Warning) {
 // --- API mode --------------------------------------------------------------
 
 type stickyState struct {
-	Ledger       string                       `json:"ledger,omitempty"` // base64 blob
-	BlobSHAs     map[string]string            `json:"blob_shas,omitempty"`
-	Findings     []threadFinding              `json:"findings,omitempty"`
+	Ledger        string            `json:"ledger,omitempty"` // base64 blob
+	BlobSHAs      map[string]string `json:"blob_shas,omitempty"`
+	Findings      []threadFinding   `json:"findings,omitempty"`
+	ReplyVerdicts map[string]string `json:"reply_verdicts,omitempty"` // fingerprint → reply classification cache
 }
 
 const stickyMarker = "<!-- cite-sticky -->"

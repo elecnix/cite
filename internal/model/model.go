@@ -20,17 +20,17 @@ const SchemaVersion = 1
 type Category string
 
 const (
-	CategorySecretExposure    Category = "secret-exposure"
-	CategoryInjection         Category = "injection"
-	CategoryAuthBypass        Category = "auth-bypass"
-	CategoryDestructiveOp     Category = "destructive-operation"
-	CategoryCrash             Category = "crash"
-	CategoryLogicInversion    Category = "logic-inversion"
-	CategoryResourceLeak      Category = "resource-leak"
-	CategoryConcurrency       Category = "concurrency"
-	CategoryErrorSwallow      Category = "error-swallow"
-	CategoryAPIContractBreak  Category = "api-contract-break"
-	CategoryConvention        Category = "convention"
+	CategorySecretExposure   Category = "secret-exposure"
+	CategoryInjection        Category = "injection"
+	CategoryAuthBypass       Category = "auth-bypass"
+	CategoryDestructiveOp    Category = "destructive-operation"
+	CategoryCrash            Category = "crash"
+	CategoryLogicInversion   Category = "logic-inversion"
+	CategoryResourceLeak     Category = "resource-leak"
+	CategoryConcurrency      Category = "concurrency"
+	CategoryErrorSwallow     Category = "error-swallow"
+	CategoryAPIContractBreak Category = "api-contract-break"
+	CategoryConvention       Category = "convention"
 )
 
 // MayBlock reports whether the category is eligible to block a merge at all.
@@ -60,8 +60,8 @@ func (c Category) IsSecurityDerived() bool {
 type Confidence string
 
 const (
-	ConfidenceCertain Confidence = "certain"
-	ConfidenceLikely  Confidence = "likely"
+	ConfidenceCertain  Confidence = "certain"
+	ConfidenceLikely   Confidence = "likely"
 	ConfidenceQuestion Confidence = "question"
 )
 
@@ -71,20 +71,20 @@ const (
 type ClaimType string
 
 const (
-	ClaimPathExists   ClaimType = "path_exists"
-	ClaimSymbolExists ClaimType = "symbol_exists"
-	ClaimConfigKey    ClaimType = "config_key"
+	ClaimPathExists      ClaimType = "path_exists"
+	ClaimSymbolExists    ClaimType = "symbol_exists"
+	ClaimConfigKey       ClaimType = "config_key"
 	ClaimVersionBehavior ClaimType = "version_behavior" // rejected at parse time
-	ClaimCIBehavior   ClaimType = "ci_behavior"      // note only, never blocking
-	ClaimConvention   ClaimType = "convention"       // note only, rendered as a question
+	ClaimCIBehavior      ClaimType = "ci_behavior"      // note only, never blocking
+	ClaimConvention      ClaimType = "convention"       // note only, rendered as a question
 )
 
 // ExternalClaim is a repository-dependent fact the model cannot verify from
 // the bytes it was given. Declaring it is how a claim gets checked instead of
 // believed.
 type ExternalClaim struct {
-	Type   ClaimType `json:"type"`
-	Subject string   `json:"subject"`
+	Type    ClaimType `json:"type"`
+	Subject string    `json:"subject"`
 	// Verified is filled in by the verifier pass, never by the model.
 	Verified *bool `json:"verified,omitempty"`
 	// Disposition is the mechanical outcome: "verified", "dropped",
@@ -140,10 +140,10 @@ const (
 type FixShape string
 
 const (
-	FixDeleteLines   FixShape = "delete_lines"
+	FixDeleteLines     FixShape = "delete_lines"
 	FixSubstituteToken FixShape = "substitute_token"
-	FixShellQuoting  FixShape = "shell_quoting"
-	FixAddGuard      FixShape = "add_guard"
+	FixShellQuoting    FixShape = "shell_quoting"
+	FixAddGuard        FixShape = "add_guard"
 )
 
 // Fix is nullable and defaults to null. A fix becomes a one-click commit
@@ -151,11 +151,11 @@ const (
 // worse". Enforced mechanically: the replacement may only introduce tokens
 // already in the file or language keywords.
 type Fix struct {
-	Shape      FixShape `json:"shape"`
-	StartLine  int      `json:"start_line"`
-	EndLine    int      `json:"end_line"`
-	Original   string   `json:"original,omitempty"`
-	Replacement string  `json:"replacement,omitempty"`
+	Shape       FixShape `json:"shape"`
+	StartLine   int      `json:"start_line"`
+	EndLine     int      `json:"end_line"`
+	Original    string   `json:"original,omitempty"`
+	Replacement string   `json:"replacement,omitempty"`
 }
 
 // Finding is the model-emitted fact set, in a closed schema, with structured
@@ -163,19 +163,19 @@ type Fix struct {
 // Deliberately absent: severity, cwe/owasp, references/URLs, free-form tags,
 // file_summary.
 type Finding struct {
-	ID             string          `json:"id"`
-	Category       Category        `json:"category"`
-	Anchor         Anchor          `json:"anchor"`
-	Title          string          `json:"title"`
-	Body           string          `json:"body"`
-	Impact         string          `json:"impact"`
-	Evidence       []Evidence      `json:"evidence"`
-	EvidenceKind   EvidenceKind    `json:"evidence_kind,omitempty"`
-	MissingAssertion string        `json:"missing_assertion,omitempty"`
-	ExternalClaims []ExternalClaim `json:"external_claims"`
-	IntroducedBy   IntroducedBy    `json:"introduced_by"`
-	Confidence     Confidence      `json:"confidence"`
-	Fix            *Fix            `json:"fix"`
+	ID               string          `json:"id"`
+	Category         Category        `json:"category"`
+	Anchor           Anchor          `json:"anchor"`
+	Title            string          `json:"title"`
+	Body             string          `json:"body"`
+	Impact           string          `json:"impact"`
+	Evidence         []Evidence      `json:"evidence"`
+	EvidenceKind     EvidenceKind    `json:"evidence_kind,omitempty"`
+	MissingAssertion string          `json:"missing_assertion,omitempty"`
+	ExternalClaims   []ExternalClaim `json:"external_claims"`
+	IntroducedBy     IntroducedBy    `json:"introduced_by"`
+	Confidence       Confidence      `json:"confidence"`
+	Fix              *Fix            `json:"fix"`
 }
 
 // Outcome distinguishes "nothing to say" from "could not say anything";
@@ -183,18 +183,18 @@ type Finding struct {
 type Outcome string
 
 const (
-	OutcomeReviewed          Outcome = "reviewed"
-	OutcomeReviewedPartial   Outcome = "reviewed_partial_context"
-	OutcomeNotReviewable     Outcome = "not_reviewable"
+	OutcomeReviewed        Outcome = "reviewed"
+	OutcomeReviewedPartial Outcome = "reviewed_partial_context"
+	OutcomeNotReviewable   Outcome = "not_reviewable"
 )
 
 // FileReview is the parsed, schema-validated output for one review unit.
 type FileReview struct {
-	SchemaVersion      int      `json:"schema_version"`
-	Path               string   `json:"path"`
-	Outcome            Outcome  `json:"outcome"`
-	NotReviewableReason string  `json:"not_reviewable_reason,omitempty"`
-	Findings           []Finding `json:"findings"`
+	SchemaVersion       int       `json:"schema_version"`
+	Path                string    `json:"path"`
+	Outcome             Outcome   `json:"outcome"`
+	NotReviewableReason string    `json:"not_reviewable_reason,omitempty"`
+	Findings            []Finding `json:"findings"`
 }
 
 // ValidatedFinding is a finding that survived the evidence cascade, the
@@ -268,20 +268,20 @@ func NormalizeForFingerprint(s string) string {
 type DropReason string
 
 const (
-	DropEvidenceMismatch  DropReason = "evidence_mismatch"
-	DropAnchorInvalid     DropReason = "anchor_invalid"
-	DropAnchorNotAddedLine DropReason = "anchor_not_added_line"
-	DropClaimUnverified   DropReason = "external_claim_unverified"
-	DropClaimRejectedType DropReason = "external_claim_rejected_type"
+	DropEvidenceMismatch                 DropReason = "evidence_mismatch"
+	DropAnchorInvalid                    DropReason = "anchor_invalid"
+	DropAnchorNotAddedLine               DropReason = "anchor_not_added_line"
+	DropClaimUnverified                  DropReason = "external_claim_unverified"
+	DropClaimRejectedType                DropReason = "external_claim_rejected_type"
 	DropCategoryNeverBlocksAndBelowNotes DropReason = "category_never_blocks_below_notes"
-	DropBudget            DropReason = "comment_budget"
-	DropPerFileBudget     DropReason = "per_file_budget"
-	DropSuppressed        DropReason = "suppressed"
-	DropAssemblyCut       DropReason = "assembly_cut"
-	DropAmbiguousQuote    DropReason = "ambiguous_quote"
-	DropVerifierUnsupported DropReason = "verifier_unsupported"
-	DropAbsenceOnPartial  DropReason = "absence_claim_on_partial_context"
-	DropParseFailure      DropReason = "parse_failure"
+	DropBudget                           DropReason = "comment_budget"
+	DropPerFileBudget                    DropReason = "per_file_budget"
+	DropSuppressed                       DropReason = "suppressed"
+	DropAssemblyCut                      DropReason = "assembly_cut"
+	DropAmbiguousQuote                   DropReason = "ambiguous_quote"
+	DropVerifierUnsupported              DropReason = "verifier_unsupported"
+	DropAbsenceOnPartial                 DropReason = "absence_claim_on_partial_context"
+	DropParseFailure                     DropReason = "parse_failure"
 )
 
 // DropEntry is one killed finding with its reason, written to the run record.
@@ -299,9 +299,9 @@ type DropEntry struct {
 type FileTerminalState string
 
 const (
-	FileReviewed       FileTerminalState = "reviewed"
-	FileSkipped        FileTerminalState = "skipped"
-	FileErrored        FileTerminalState = "error"
+	FileReviewed FileTerminalState = "reviewed"
+	FileSkipped  FileTerminalState = "skipped"
+	FileErrored  FileTerminalState = "error"
 )
 
 // Well-known skip reasons. A skip is never a pass (§11).
@@ -311,14 +311,14 @@ const (
 
 // FileOutcome is one file's terminal state in the run record.
 type FileOutcome struct {
-	Path        string            `json:"path"`
-	OldPath     string            `json:"old_path,omitempty"` // rename source
-	Status      string            `json:"status"`             // A / M / D / R###
-	State       FileTerminalState `json:"state"`
-	Reason      string            `json:"reason,omitempty"` // named skip reason
-	BlobSHA     string            `json:"blob_sha,omitempty"`
-	Findings    int               `json:"findings"`
-	Reviewed    bool              `json:"-"`
+	Path     string            `json:"path"`
+	OldPath  string            `json:"old_path,omitempty"` // rename source
+	Status   string            `json:"status"`             // A / M / D / R###
+	State    FileTerminalState `json:"state"`
+	Reason   string            `json:"reason,omitempty"` // named skip reason
+	BlobSHA  string            `json:"blob_sha,omitempty"`
+	Findings int               `json:"findings"`
+	Reviewed bool              `json:"-"`
 }
 
 // Verdict is the three-state gate. Only one of them is a pass (§11).
@@ -343,11 +343,11 @@ func (v Verdict) Conclusion() string {
 
 // Coverage is computed in code, never attested by the model (§12, I7).
 type Coverage struct {
-	APIFiles    int `json:"api_files"`     // count of changed files from the GitHub API
-	Reviewed    int `json:"reviewed"`
-	ApprovedSkip int `json:"approved_skip"`
-	Errored     int `json:"errored"`
-	Complete    bool `json:"complete"` // count(reviewed ∪ approved-skip) == count(api files)
+	APIFiles     int  `json:"api_files"` // count of changed files from the GitHub API
+	Reviewed     int  `json:"reviewed"`
+	ApprovedSkip int  `json:"approved_skip"`
+	Errored      int  `json:"errored"`
+	Complete     bool `json:"complete"` // count(reviewed ∪ approved-skip) == count(api files)
 }
 
 // RunRecord is the artifact the reviewer hands to the publisher and the gate.
@@ -361,10 +361,10 @@ type RunRecord struct {
 	BaseSHA       string `json:"base_sha"`
 	MergeBaseSHA  string `json:"merge_base_sha"`
 
-	Model        string `json:"model"`
-	Temperature  float64 `json:"temperature"`
-	Seed         *int64  `json:"seed,omitempty"`
-	InputHash    string `json:"input_hash"`
+	Model       string  `json:"model"`
+	Temperature float64 `json:"temperature"`
+	Seed        *int64  `json:"seed,omitempty"`
+	InputHash   string  `json:"input_hash"`
 
 	Files    []FileOutcome      `json:"files"`
 	Findings []ValidatedFinding `json:"findings"`
@@ -380,7 +380,7 @@ type RunRecord struct {
 	InstructionsUsed []InstructionUsage `json:"instructions_used,omitempty"`
 
 	// Scoped says when risk-ranking capped the reviewed set, never silently.
-	RiskRanked bool `json:"risk_ranked,omitempty"`
+	RiskRanked     bool   `json:"risk_ranked,omitempty"`
 	RiskRankedNote string `json:"risk_ranked_note,omitempty"`
 
 	// Samples is 1: a green is one sample (§8).
@@ -396,10 +396,10 @@ type RunRecord struct {
 
 // InstructionUsage records which instruction sections survived triage.
 type InstructionUsage struct {
-	File       string `json:"file"`
-	TotalSections int `json:"total_sections"`
-	UsedSections  int `json:"used_sections"`
-	AuthoringSections int `json:"authoring_sections"`
+	File              string `json:"file"`
+	TotalSections     int    `json:"total_sections"`
+	UsedSections      int    `json:"used_sections"`
+	AuthoringSections int    `json:"authoring_sections"`
 }
 
 // Summary renders the one-line check-run summary that says a green is one

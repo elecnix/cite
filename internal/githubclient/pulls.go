@@ -31,9 +31,9 @@ func (c *Client) ListRecentlyMerged(ctx context.Context, since time.Time) ([]Mer
 	var out []MergedPR
 	for _, r := range raws {
 		var p struct {
-			Number      int     `json:"number"`
-			MergedAt    *string `json:"merged_at"`
-			MergeCommitSHA string `json:"merge_commit_sha"`
+			Number         int     `json:"number"`
+			MergedAt       *string `json:"merged_at"`
+			MergeCommitSHA string  `json:"merge_commit_sha"`
 		}
 		if err := json.Unmarshal(r, &p); err != nil {
 			return nil, err
