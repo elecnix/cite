@@ -1,0 +1,30 @@
+# Cite — an open code reviewer for GitHub.
+#
+# The happy path needs no `with:` block and no `actions/checkout`.
+# The provider is inferred from which key is present (§1 of the plan).
+name: 'Cite'
+description: >
+  Reviews pull requests with a large language model you choose, posts a real
+  review with comments anchored to the lines they are about, and publishes a
+  check run that a repository may require before merge. Every finding quotes
+  the source line it is about, and the quote is verified against the file.
+
+branding:
+  icon: 'check-circle'
+  color: 'blue'
+
+inputs:
+  model_api_key:
+    description: 'API key for the model provider. Optional when using GitHub models with models: read.'
+    required: false
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run Cite review
+      shell: bash
+      env:
+        MODEL_API_KEY: ${{ inputs.model_api_key }}
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        cite review --pr "$GITHUB_REPOSITORY#$PR_NUMBER"
