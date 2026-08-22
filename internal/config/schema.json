@@ -1,0 +1,137 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Cite configuration (.github/cite.yml)",
+  "description": "The complete v1 surface: seven top-level keys plus the extended model block (PLAN §6). Unknown keys are errors, never silently ignored.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "model": {
+      "type": "string",
+      "description": "One string; a role map is available below. \"provider/id\" when providers are declared, otherwise a plain builtin name."
+    },
+    "max_comments": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 20,
+      "description": "Hard-capped at 20 by this schema."
+    },
+    "paths_ignore": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "nits": {
+      "type": "boolean",
+      "default": false
+    },
+    "gate": {
+      "type": "string",
+      "enum": ["comment", "block"],
+      "default": "comment"
+    },
+    "compat_profile": {
+      "type": "string",
+      "minLength": 1,
+      "default": "2026-08"
+    },
+    "blocking_categories": {
+      "type": "array",
+      "description": "Optional shrink of the default blocking set. It may never grow beyond DefaultBlockingCategories, and convention can never block in any configuration.",
+      "items": { "$ref": "#/definitions/category" }
+    },
+    "providers": {
+      "type": "object",
+      "description": "Providers declare capability; credentials are expressions rather than values.",
+      "additionalProperties": { "$ref": "#/definitions/provider" }
+    },
+    "roles": {
+      "type": "object",
+      "properties": {
+        "review": { "$ref": "#/definitions/role" },
+        "triage": { "$ref": "#/definitions/role" },
+        "assemble": { "$ref": "#/definitions/role" }
+      },
+      "additionalProperties": false
+    },
+    "fallback": {
+      "type": "array",
+      "description": "Ordered model references, exercised by a canary.",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "definitions": {
+    "category": {
+      "type": "string",
+      "enum": [
+        "secret-exposure",
+        "injection",
+        "auth-bypass",
+        "destructive-operation",
+        "crash",
+        "logic-inversion",
+        "resource-leak",
+        "concurrency",
+        "error-swallow",
+        "api-contract-break",
+        "convention"
+      ]
+    },
+    "provider": {
+      "type": "object",
+      "required": ["base_url", "api"],
+      "additionalProperties": false,
+      "properties": {
+        "base_url": { "type": "string", "minLength": 1 },
+        "api": {
+          "type": "string",
+          "enum": ["openai-completions", "openai-responses", "anthropic-messages"]
+        },
+        "api_key": {
+          "type": "string",
+          "description": "Credential expression: literal | $VAR | ${VAR} | !shell-command. Never a resolved secret.",
+          "minLength": 1
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "models": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/modelEntry" }
+        }
+      }
+    },
+    "modelEntry": {
+      "type": "object",
+      "description": "A model entry has exactly one required field: id.",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "context_window": { "type": "integer", "minimum": 1 },
+        "max_tokens": { "type": "integer", "minimum": 1 },
+        "cost": { "$ref": "#/definitions/cost" }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "description": "Per-million rates, so cost reporting works for a model Cite has never heard of.",
+      "additionalProperties": false,
+      "properties": {
+        "input": { "type": "number", "minimum": 0 },
+        "output": { "type": "number", "minimum": 0 },
+        "cache_read": { "type": "number", "minimum": 0 },
+        "cache_write": { "type": "number", "minimum": 0 }
+      }
+    },
+    "role": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": { "type": "string", "minLength": 1 },
+        "timeout": { "type": "string", "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$" },
+        "max_output_tokens": { "type": "integer", "minimum": 1 },
+        "concurrency": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}
