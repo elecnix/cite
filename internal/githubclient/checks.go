@@ -1,5 +1,11 @@
 package githubclient
 
+// Check runs (§11), review publishing (§10), review threads and the sticky
+// ledger comment. Everything here enforces its invariant at this layer, not
+// at call sites: check runs target whatever SHA the caller passes (the PR
+// head, never github.sha), reviews are COMMENT-only, and 422 anchor
+// failures demote comments into the body instead of dropping them.
+
 import (
 	"context"
 	"encoding/json"
@@ -74,7 +80,7 @@ const reviewEvent = "COMMENT"
 const demotedHeading = "Not anchored to a diff line"
 
 // CreateReview publishes one atomic review with event COMMENT. On HTTP 422
-// (an unanchorable line fails the whole request) it bisects the comment
+// (one unanchorable line fails the whole request) it bisects the comment
 // list, demoting offenders into a labelled body section, and republishes
 // until something lands. It returns an error only if even a body-only
 // review is rejected.
@@ -85,6 +91,8 @@ func (c *Client) CreateReview(ctx context.Context, prNum int, body string, comme
 // publishReview carries the accumulated demoted lines through recursion.
 func (c *Client) publishReview(ctx context.Context, prNum int, body string, comments []ReviewComment, demoted []string) error {
 	fullBody := renderDemoted(body, demoted)
+	endpoint := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", c.owner, c.repo, prNum)
+
 	if len(comments) > 0 {
 		payload := map[string]any{
 			"body":  fullBody,
@@ -103,26 +111,34 @@ func (c *Client) publishReview(ctx context.Context, prNum int, body string, comm
 				return m
 			}),
 		}
-		resp, err := c.attempt(ctx, http.MethodPost,
-			fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", c.owner, c.repo, prNum), nil, payload)
-		if err == nil {
-			return finish(resp, nil)
-		}
-		if apiErr, ok := err.(*APIError); !ok || apiErr.StatusCode != http.StatusUnprocessableEntity {
+		resp, err := c.attempt(ctx, http.MethodPost, endpoint, nil, payload)
+		if err != nil {
 			return err
 		}
-		// Bisect: keep the second half anchored, demote the first half into
-		// the body, retry. One offending comment poisons the whole request,
-		// so halving isolates it in log(len) rounds without dropping it.
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			return finish(resp, nil)
+		}
+		// Drain the 422 body so the connection is reusable, then bisect:
+		// keep the second half anchored, demote the first half into the
+		// body, retry. One offending comment poisons the whole request, so
+		// halving isolates it in log(len) rounds without dropping it.
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
 		mid := len(comments) / 2
+		if mid == 0 {
+			// A single comment was rejected: demote it and fall through to
+			// the body-only review rather than retrying the same request.
+			return c.publishReview(ctx, prNum, body, nil,
+				append(demoted, describeComments(comments)...))
+		}
 		demoted := append(demoted, describeComments(comments[:mid])...)
 		return c.publishReview(ctx, prNum, body, comments[mid:], demoted)
 	}
+
 	// Body-only review: the last resort. If even this fails there is
 	// nothing to publish and the caller must see the error.
 	payload := map[string]any{"body": fullBody, "event": reviewEvent}
-	resp, err := c.attempt(ctx, http.MethodPost,
-		fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", c.owner, c.repo, prNum), nil, payload)
+	resp, err := c.attempt(ctx, http.MethodPost, endpoint, nil, payload)
 	if err != nil {
 		return err
 	}
@@ -148,12 +164,14 @@ func mapSlice[T any, U any](in []T, f func(T) U) []U {
 func describeComments(comments []ReviewComment) []string {
 	lines := make([]string, 0, len(comments))
 	for _, cm := range comments {
-		line := fmt.Sprintf("- `%s`", cm.Path)
-		if cm.Line > 0 {
-			line += fmt.Sprintf(":%d", cm.Line)
-			if cm.StartLine > 0 && cm.StartLine != cm.Line {
-				line = fmt.Sprintf("- `%s:%d-%d`", cm.Path, cm.StartLine, cm.Line)
-			}
+		var line string
+		switch {
+		case cm.StartLine > 0 && cm.StartLine != cm.Line:
+			line = fmt.Sprintf("- `%s:%d-%d`", cm.Path, cm.StartLine, cm.Line)
+		case cm.Line > 0:
+			line = fmt.Sprintf("- `%s:%d`", cm.Path, cm.Line)
+		default:
+			line = fmt.Sprintf("- `%s`", cm.Path)
 		}
 		if cm.Body != "" {
 			line += " — " + strings.ReplaceAll(cm.Body, "\n", " ")
@@ -188,9 +206,9 @@ type Thread struct {
 }
 
 // ThreadComment is one comment inside a thread. Line/StartLine are 0 when
-// GitHub reports null (an unanchored or file-level comment).
+// GitHub reports null (a file-level or unanchored comment).
 type ThreadComment struct {
-	ID          int64 // databaseId, used for minimizeComment subject IDs
+	ID          int64 // databaseId, the minimizeComment subject ID
 	Body        string
 	Path        string
 	Line        int
@@ -224,51 +242,47 @@ author{ login }
 }`
 
 // ListReviewThreads fetches all review threads of a pull request via
-// GraphQL. first:100 covers every thread Cite itself created; more than
-// that would be noise worth surfacing elsewhere.
+// GraphQL. first:100 covers every thread Cite itself created.
 func (c *Client) ListReviewThreads(ctx context.Context, prNum int) ([]Thread, error) {
-	var out struct {
-		Data struct {
-			Repository struct {
-				PullRequest struct {
-					ReviewThreads struct {
-						Nodes []struct {
-							ID         string `json:"id"`
-							IsOutdated bool   `json:"isOutdated"`
-							IsResolved bool   `json:"isResolved"`
-							Comments   struct {
-								Nodes []struct {
-									ID         json.Number `json:"id"`
-									DatabaseID int64        `json:"databaseId"`
-									Body       string       `json:"body"`
-									Path       string       `json:"path"`
-									Line       *int         `json:"line"`
-									StartLine  *int         `json:"startLine"`
-									Author     *struct {
-										Login string `json:"login"`
-									} `json:"author"`
-								} `json:"nodes"`
-							} `json:"comments"`
-						} `json:"nodes"`
-					} `json:"reviewThreads"`
-				} `json:"pullRequest"`
-			} `json:"repository"`
-		} `json:"data"`
+	var result struct {
+		Repository struct {
+			PullRequest struct {
+				ReviewThreads struct {
+					Nodes []struct {
+						ID         string `json:"id"`
+						IsOutdated bool   `json:"isOutdated"`
+						IsResolved bool   `json:"isResolved"`
+						Comments   struct {
+							Nodes []struct {
+								DatabaseID int64  `json:"databaseId"`
+								Body       string `json:"body"`
+								Path       string `json:"path"`
+								Line       *int   `json:"line"`
+								StartLine  *int   `json:"startLine"`
+								Author     *struct {
+									Login string `json:"login"`
+								} `json:"author"`
+							} `json:"nodes"`
+						} `json:"comments"`
+					} `json:"nodes"`
+				} `json:"reviewThreads"`
+			} `json:"pullRequest"`
+		} `json:"repository"`
 	}
 	vars := map[string]any{"owner": c.owner, "repo": c.repo, "number": prNum}
-	if err := c.graphql(ctx, reviewThreadsQuery, vars, &out); err != nil {
+	if err := c.graphql(ctx, reviewThreadsQuery, vars, &result); err != nil {
 		return nil, err
 	}
-	nodes := out.Data.Repository.PullRequest.ReviewThreads.Nodes
+	nodes := result.Repository.PullRequest.ReviewThreads.Nodes
 	threads := make([]Thread, 0, len(nodes))
 	for _, n := range nodes {
 		t := Thread{ID: n.ID, IsOutdated: n.IsOutdated, IsResolved: n.IsResolved}
 		for _, cn := range n.Comments.Nodes {
 			tc := ThreadComment{
-				ID:    cn.DatabaseID,
-				Body:  cn.Body,
-				Path:  cn.Path,
-				Line:  deref(cn.Line),
+				ID:        cn.DatabaseID,
+				Body:      cn.Body,
+				Path:      cn.Path,
+				Line:      deref(cn.Line),
 				StartLine: deref(cn.StartLine),
 			}
 			if cn.Author != nil {
@@ -370,11 +384,11 @@ func graphqlAPIError(status int, raw []byte) error {
 	return &APIError{StatusCode: status, Message: sanitizeMessage(msg)}
 }
 
-// UpsertIssueComment finds this bot's existing issue comment containing
-// marker on the pull request and PATCHes it, or POSTs a new one when no
-// match exists. The sticky comment is where the ledger blob lives inside
-// an HTML comment (§10): marker must be unique enough that only Cite's own
-// comment matches.
+// UpsertIssueComment finds the existing issue comment containing marker on
+// the pull request and PATCHes it, or POSTs a new one when no match
+// exists. The sticky comment is where the ledger blob lives inside an HTML
+// comment (§10); marker must be unique enough that only Cite's own comment
+// matches.
 func (c *Client) UpsertIssueComment(ctx context.Context, prNum int, marker, body string) error {
 	id, found, err := c.findStickyComment(ctx, prNum, marker)
 	if err != nil {
@@ -382,23 +396,21 @@ func (c *Client) UpsertIssueComment(ctx context.Context, prNum int, marker, body
 	}
 	payload := map[string]string{"body": body}
 	if found {
-		err = c.do(ctx, http.MethodPatch,
+		return c.do(ctx, http.MethodPatch,
 			fmt.Sprintf("repos/%s/%s/issues/comments/%d", c.owner, c.repo, id), nil, payload, nil)
-		return err
 	}
-	err = c.do(ctx, http.MethodPost,
+	return c.do(ctx, http.MethodPost,
 		fmt.Sprintf("repos/%s/%s/issues/%d/comments", c.owner, c.repo, prNum), nil, payload, nil)
-	return err
 }
 
 // findStickyComment scans the issue comments for one whose body contains
-// marker, following pagination.
+// marker, following pagination; later pages win so the newest duplicate is
+// updated.
 func (c *Client) findStickyComment(ctx context.Context, prNum int, marker string) (int64, bool, error) {
 	raws, err := c.listPaginated(ctx, fmt.Sprintf("repos/%s/%s/issues/%d/comments", c.owner, c.repo, prNum))
 	if err != nil {
 		return 0, false, err
 	}
-	// Later pages win: if duplicates ever exist, prefer the newest.
 	for i := len(raws) - 1; i >= 0; i-- {
 		var cm struct {
 			ID   int64  `json:"id"`
