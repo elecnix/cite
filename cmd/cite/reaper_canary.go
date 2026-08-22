@@ -18,6 +18,11 @@ import (
 // whose head SHA has had no terminal Cite check for twenty minutes gets a
 // terminal failure with "run never reported". A stuck check must self-heal
 // into something a human can act on.
+func init() {
+	registerCommand("reaper", runReaper)
+	registerCommand("canary", runCanary)
+}
+
 func runReaper(args []string) error {
 	fs := flag.NewFlagSet("reaper", flag.ContinueOnError)
 	repo := fs.String("repo", "", "owner/repo to sweep")

@@ -18,6 +18,13 @@ import (
 	"github.com/elecnix/cite/internal/config"
 )
 
+func init() {
+	registerCommand("review", runReview)
+	registerCommand("doctor", runDoctor)
+	registerCommand("validate", runValidate)
+	registerCommand("soak", runSoak)
+}
+
 func runValidate(args []string) error {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	path := fs.String("config", ".github/cite.yml", "config file to check")
