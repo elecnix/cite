@@ -202,8 +202,9 @@ anyone may apply the `cite-bypass` label. A handler verifies the label through
 the authenticated API (never event text), concludes the check as success with
 `BYPASSED — <state> — @author — <run url>`, and appends one line to an
 enumerable bypass log. "Every pull request merged unreviewed on this date" is
-a one-line query. The bypass buys time, not amnesty: a scheduled re-review of
-bypassed merge commits files an issue per finding.
+a one-line query. The bypass buys time, not amnesty: a scheduled `cite re-review`
+job re-reviews bypassed merge commits afterwards and files an issue per
+finding.
 
 ## What Cite never has
 

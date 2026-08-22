@@ -48,6 +48,8 @@ you what it did with them.
 - Nothing to say means nothing posted. It never posts "LGTM".
 - Every comment quotes the exact line it is about. If the quote does not match
   your file, the comment is dropped before you see it.
+- Cost you can see: every run reports its token usage and USD cost from your
+  provider's declared rates.
 
 ## Local evaluation path
 
@@ -61,6 +63,7 @@ cite canary                                   # ping every provider/fallback leg
 cite bypass --pr owner/repo#N                 # break-glass: conclude + log (§11)
 cite listen --pr owner/repo#N --comment-id ID # handle an "@cite review" comment
 cite signals --pr owner/repo#N                # ingest 👎 reactions into the ledger
+cite re-review --repo owner/name              # re-review bypassed merges; one issue per finding
 ```
 
 ## Documentation
