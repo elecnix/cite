@@ -1,7 +1,9 @@
 # Cite — an open code reviewer for GitHub.
 #
-# The happy path needs no `with:` block and no `actions/checkout`.
-# The provider is inferred from which key is present (§1 of the plan).
+# The happy path needs no `with:` block and no `actions/checkout` OF THE PULL
+# REQUEST HEAD. This composite action checks out only its own trusted source
+# (the ref the caller pinned), builds it, and reviews the pull request from
+# the GitHub API. No head-controlled code is ever executed (§12 I1).
 name: 'Cite'
 description: >
   Reviews pull requests with a large language model you choose, posts a real
@@ -15,16 +17,53 @@ branding:
 
 inputs:
   model_api_key:
-    description: 'API key for the model provider. Optional when using GitHub models with models: read.'
+    description: 'API key for the model provider. Optional when a provider is inferred from the environment.'
     required: false
+  config_path:
+    description: 'Path to .github/cite.yml relative to the base ref. Leave unset.'
+    required: false
+    default: '.github/cite.yml'
+  dry_run:
+    description: 'Set to "true" to print findings without posting.'
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
   steps:
+    # Trusted checkout: this action's own source at the ref the caller
+    # pinned. This is NOT the pull request head.
+    - name: Check out Cite itself
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ github.action_repository }}
+        ref: ${{ github.action_ref }}
+        persist-credentials: false
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go.mod'
+
     - name: Run Cite review
       shell: bash
       env:
         MODEL_API_KEY: ${{ inputs.model_api_key }}
         GITHUB_TOKEN: ${{ github.token }}
+        CITE_CONFIG_PATH: ${{ inputs.config_path }}
+        CITE_DRY_RUN: ${{ inputs.dry_run }}
       run: |
-        cite review --pr "$GITHUB_REPOSITORY#$PR_NUMBER"
+        set -euo pipefail
+        ARGS=""
+        if [ -n "${PR_NUMBER:-}" ] && [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+          ARGS="--pr $GITHUB_REPOSITORY#$PR_NUMBER"
+        elif [ -n "${CITE_DIFF_FILE:-}" ]; then
+          ARGS="--diff $CITE_DIFF_FILE"
+        else
+          echo "cite: no pull request context found (event: ${GITHUB_EVENT_NAME:-unknown})" >&2
+          exit 1
+        fi
+        if [ "$CITE_DRY_RUN" = "true" ]; then
+          ARGS="$ARGS --dry-run"
+        fi
+        go run ./cmd/cite review $ARGS --config "$CITE_CONFIG_PATH"

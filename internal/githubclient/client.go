@@ -372,6 +372,36 @@ func (c *Client) ListPRFiles(ctx context.Context, num int) ([]scope.ManifestEntr
 	return scope.ParseGitHubFilesAPI(blob)
 }
 
+// FileExtra is per-file metadata the plain manifest does not carry: the
+// unified-diff patch text and the head blob SHA used for incremental
+// re-review keyed on content (§10).
+type FileExtra struct {
+	Filename string
+	Patch    string
+	BlobSHA  string
+}
+
+// ListPRFileExtras returns filename → {patch, blob sha} for a pull request.
+func (c *Client) ListPRFileExtras(ctx context.Context, num int) (map[string]FileExtra, error) {
+	raws, err := c.listPaginated(ctx, fmt.Sprintf("repos/%s/%s/pulls/%d/files", c.owner, c.repo, num))
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]FileExtra{}
+	for _, r := range raws {
+		var f struct {
+			Filename string `json:"filename"`
+			Patch    string `json:"patch"`
+			SHA      string `json:"sha"`
+		}
+		if err := json.Unmarshal(r, &f); err != nil {
+			return nil, err
+		}
+		out[f.Filename] = FileExtra{Filename: f.Filename, Patch: f.Patch, BlobSHA: f.SHA}
+	}
+	return out, nil
+}
+
 // contentsFile is the subset of the contents API response Cite reads.
 type contentsFile struct {
 	SHA       string `json:"sha"`
@@ -461,3 +491,11 @@ func (c *Client) GetMergeBase(ctx context.Context, base, head string) (string, e
 // sortStrings sorts in place; used by the tree adapters to keep List output
 // lexically ordered as the Tree contract requires.
 func sortStrings(s []string) { sort.Strings(s) }
+
+// SearchCode runs a code-search query and decodes the response. Used by the
+// external-claims verifier for symbol_exists; callers treat API failure as
+// "unverified", which drops the finding rather than blocking on a guess.
+func (c *Client) SearchCode(ctx context.Context, query string, out any) error {
+	q := url.Values{"q": []string{query}, "per_page": []string{"1"}}
+	return c.do(ctx, http.MethodGet, "search/code", q, nil, out)
+}

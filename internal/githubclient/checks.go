@@ -403,6 +403,29 @@ func (c *Client) UpsertIssueComment(ctx context.Context, prNum int, marker, body
 		fmt.Sprintf("repos/%s/%s/issues/%d/comments", c.owner, c.repo, prNum), nil, payload, nil)
 }
 
+// FindIssueComment returns the id and body of the issue comment containing
+// marker, or found=false. The CLI uses it to read the ledger blob back from
+// the sticky comment before reconciling.
+func (c *Client) FindIssueComment(ctx context.Context, prNum int, marker string) (id int64, body string, found bool, err error) {
+	raws, err := c.listPaginated(ctx, fmt.Sprintf("repos/%s/%s/issues/%d/comments", c.owner, c.repo, prNum))
+	if err != nil {
+		return 0, "", false, err
+	}
+	for i := len(raws) - 1; i >= 0; i-- {
+		var cm struct {
+			ID   int64  `json:"id"`
+			Body string `json:"body"`
+		}
+		if err := json.Unmarshal(raws[i], &cm); err != nil {
+			return 0, "", false, fmt.Errorf("decoding github response: %w", err)
+		}
+		if marker != "" && strings.Contains(cm.Body, marker) {
+			return cm.ID, cm.Body, true, nil
+		}
+	}
+	return 0, "", false, nil
+}
+
 // findStickyComment scans the issue comments for one whose body contains
 // marker, following pagination; later pages win so the newest duplicate is
 // updated.
