@@ -20,7 +20,6 @@ import (
 // into something a human can act on.
 func init() {
 	registerCommand("reaper", runReaper)
-	registerCommand("canary", runCanary)
 }
 
 func runReaper(args []string) error {
@@ -76,45 +75,6 @@ func runReaper(args []string) error {
 	}
 	if len(stuck) == 0 {
 		fmt.Println("no stuck checks")
-	}
-	return nil
-}
-
-// runCanary exercises every leg of the fallback chain on a schedule (§6):
-// an untested fallback is not a fallback but a second outage that begins at
-// the same moment as the first.
-func runCanary(args []string) error {
-	fs := flag.NewFlagSet("canary", flag.ContinueOnError)
-	cfgPath := fs.String("config", ".github/cite.yml", "config file with providers/fallback")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	cfg := loadConfig(*cfgPath)
-	if len(cfg.Fallback) == 0 {
-		fmt.Println("canary: no fallback chain configured — nothing to exercise")
-		return nil
-	}
-	client, err := model.NewOpenAICompatClient()
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	resp, err := client.Complete(ctx, model.CompletionRequest{
-		System: "ping", User: "reply pong", MaxOutputTokens: 8, Temperature: 0,
-	})
-	status := "ok"
-	if err != nil {
-		status = "FAIL: " + err.Error()
-	} else if resp == nil {
-		status = "FAIL: empty response"
-	}
-	fmt.Printf("canary primary leg (%s): %s\n", client.ModelID(), status)
-	for _, leg := range cfg.Fallback {
-		fmt.Printf("canary fallback leg %s: not exercised (single-endpoint client)\n", leg)
-	}
-	if err != nil {
-		return fmt.Errorf("canary: primary leg failed")
 	}
 	return nil
 }
