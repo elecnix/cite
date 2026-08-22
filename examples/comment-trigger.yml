@@ -1,0 +1,68 @@
+# examples/comment-trigger.yml
+#
+# The one keyword (PLAN §14 "Exactly one keyword survives"): a comment of
+# exactly `@cite review` on a pull request re-runs the review. Everything
+# else people do — resolving threads, reacting 👎, replying in prose — is
+# read by `cite signals`, not typed as a command.
+#
+# Install: copy to .github/workflows/comment-trigger.yml. Requires the
+# GITHUB_TOKEN to have pull-requests write (the review posts back) and
+# MODEL_API_KEY for the model provider.
+#
+# Why authorisation is enforced in the CLI and not here: workflow `if:`
+# guards are advisory. Anyone who can open a pull request can propose a
+# workflow edit, fork events can carry forged payload shapes, and
+# `github.event.comment.author_association` is computed by the rules of the
+# event, not authenticated against the comment at read time. The CLI
+# re-fetches the comment with the token and reads author_association from
+# the API response itself — the only input that cannot be forged by the
+# triggering actor. This workflow's guards exist to avoid wasted runs, not
+# to grant permission.
+
+name: cite-review-trigger
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  rerun:
+    # Only pull request comments (the event also fires for issues), and
+    # only when the body plausibly contains the keyword. The CLI re-checks
+    # both: the trimmed body must be exactly "@cite review" and the
+    # commenter's author_association must be OWNER, MEMBER, COLLABORATOR
+    # or CONTRIBUTOR — or the comment must come from the PR author, who may
+    # request a re-run of their own pull request (a re-run is not a
+    # dismissal).
+    if: >
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, '@cite review')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download latest Cite binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${RUNNER_ARCH}" in
+            X64) arch=amd64 ;;
+            ARM64) arch=arm64 ;;
+            *) echo "unsupported runner arch: ${RUNNER_ARCH}" >&2; exit 1 ;;
+          esac
+          url="https://github.com/elecnix/cite/releases/latest/download/cite-linux-${arch}"
+          curl -fsSL --retry 3 -o /usr/local/bin/cite "$url"
+          chmod +x /usr/local/bin/cite
+
+      - name: Run cite listen
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # issue_comment events carry the pull request number and the
+          # comment id in the event JSON; jq is preinstalled on runners.
+          PR_NUM="$(jq -r '.issue.number' "$GITHUB_EVENT_PATH")"
+          COMMENT_ID="$(jq -r '.comment.id' "$GITHUB_EVENT_PATH")"
+          cite listen --pr "$GITHUB_REPOSITORY#$PR_NUM" --comment-id "$COMMENT_ID"
