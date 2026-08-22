@@ -1,0 +1,23 @@
+{
+  "name": "clean-equivalent-rewrite",
+  "description": "Clean case: an equivalent rewrite of an arithmetic expression with no defect. The recorded response is a reviewed outcome with zero findings — nothing to say means nothing posted.",
+  "base": [
+    {
+      "path": "util/format.go",
+      "content": "package util\n\nfunc Double(x int) int {\n\treturn x * 2\n}\n"
+    }
+  ],
+  "patch": "diff --git a/util/format.go b/util/format.go\n--- a/util/format.go\n+++ b/util/format.go\n@@ -1,5 +1,5 @@\n package util\n \n func Double(x int) int {\n-\treturn x * 2\n+\treturn x + x\n }",
+  "recorded_responses": [
+    {
+      "path": "util/format.go",
+      "response_json": "{\"schema_version\":1,\"path\":\"util/format.go\",\"outcome\":\"reviewed\",\"findings\":[]}"
+    }
+  ],
+  "expect": {
+    "schema_valid": true,
+    "anchors_in_diff": true,
+    "fingerprints_stable": true,
+    "replay_zero_new_threads": true
+  }
+}

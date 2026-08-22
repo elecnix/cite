@@ -1,0 +1,23 @@
+{
+  "name": "near-miss-correct-unlock",
+  "description": "Near-miss: the code resembles the manual-Unlock concurrency pattern that often hides an early-return leak, but defer Unlock immediately after Lock is correct. A pattern-matcher flags it; a reasoner does not. The recorded response asserts zero findings, and the harness asserts those findings really are empty.",
+  "base": [
+    {
+      "path": "store/kv.go",
+      "content": "package store\n\nimport \"sync\"\n\n// Cache is a tiny mutex-guarded map.\ntype Cache struct {\n\tmu sync.Mutex\n\tm  map[string]string\n}\n\n// Get returns the value for key.\nfunc (c *Cache) Get(key string) string {\n\tc.mu.Lock()\n\tv := c.m[key]\n\tc.mu.Unlock()\n\treturn v\n}\n"
+    }
+  ],
+  "patch": "diff --git a/store/kv.go b/store/kv.go\n--- a/store/kv.go\n+++ b/store/kv.go\n@@ -11,7 +11,6 @@\n // Get returns the value for key.\n func (c *Cache) Get(key string) string {\n \tc.mu.Lock()\n-\tv := c.m[key]\n-\tc.mu.Unlock()\n-\treturn v\n+\tdefer c.mu.Unlock()\n+\treturn c.m[key]\n }",
+  "recorded_responses": [
+    {
+      "path": "store/kv.go",
+      "response_json": "{\"schema_version\":1,\"path\":\"store/kv.go\",\"outcome\":\"reviewed\",\"findings\":[]}"
+    }
+  ],
+  "expect": {
+    "schema_valid": true,
+    "anchors_in_diff": true,
+    "fingerprints_stable": true,
+    "replay_zero_new_threads": true
+  }
+}
