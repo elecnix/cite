@@ -31,7 +31,7 @@ inputs:
   version:
     description: 'Cite release tag to download.'
     required: false
-    default: 'v0.1.1'
+    default: 'v0.1.2'
 
 runs:
   using: 'composite'
@@ -60,11 +60,18 @@ runs:
         CITE_DRY_RUN: ${{ inputs.dry_run }}
       run: |
         set -euo pipefail
-        if [ -z "${PR_NUMBER:-}" ]; then
+        # PR_NUMBER is not a default runner variable; pull_request events put
+        # the number in the ref as refs/pull/N/merge.
+        PR_NUM="${PR_NUMBER:-}"
+        if [ -z "$PR_NUM" ] && [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
+          PR_NUM="${GITHUB_REF#refs/pull/}"
+          PR_NUM="${PR_NUM%/merge}"
+        fi
+        if [ -z "$PR_NUM" ]; then
           echo "cite: no pull request context (event: ${GITHUB_EVENT_NAME:-unknown}); nothing to review" >&2
           exit 0
         fi
-        ARGS="--pr $GITHUB_REPOSITORY#$PR_NUMBER --config $CITE_CONFIG_PATH"
+        ARGS="--pr $GITHUB_REPOSITORY#$PR_NUM --config $CITE_CONFIG_PATH"
         if [ "$CITE_DRY_RUN" = "true" ]; then
           ARGS="$ARGS --dry-run"
         fi
