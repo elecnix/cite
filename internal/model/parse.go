@@ -122,9 +122,9 @@ var forbiddenRunes = func() map[rune]bool {
 }()
 
 var (
-	reURL      = regexp.MustCompile(`(?i)\b(https?|ftp)://[^\s)\]<>"']+`)
-	reMention  = regexp.MustCompile(`(^|[^\w` + "`" + `])@([A-Za-z0-9][A-Za-z0-9-]*)`)
-	reClosing  = regexp.MustCompile(`(?i)\b(fixes|fix|closes|close|resolves|resolve)\s+#([0-9]+)`)
+	reURL     = regexp.MustCompile(`(?i)\b(https?|ftp)://[^\s)\]<>"']+`)
+	reMention = regexp.MustCompile(`(^|[^\w` + "`" + `])@([A-Za-z0-9][A-Za-z0-9-]*)`)
+	reClosing = regexp.MustCompile(`(?i)\b(fixes|fix|closes|close|resolves|resolve)\s+#([0-9]+)`)
 )
 
 // SanitizeText strips bidi and zero-width control characters and removes the

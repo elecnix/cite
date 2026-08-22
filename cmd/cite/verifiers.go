@@ -52,9 +52,9 @@ func (v *gitVerifier) SymbolExists(symbol string) bool {
 // apiVerifier answers claims against the base ref over the GitHub API —
 // the Actions job has no checkout (§12, I1).
 type apiVerifier struct {
-	c    *githubclient.Client
+	c                *githubclient.Client
 	owner, repo, ref string
-	tree *githubclient.APITree
+	tree             *githubclient.APITree
 }
 
 var _ reviewer.Verifier = (*apiVerifier)(nil)

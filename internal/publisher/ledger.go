@@ -44,6 +44,11 @@ const (
 	// published (§12), so nobody can pre-dismiss a finding that has not been
 	// raised. Published entries never suppress anything.
 	EntryPublished LedgerEntryKind = "published"
+	// EntryAcceptedFixed records a human-resolved thread whose quoted span
+	// changed in a later push (§14): the mechanical read is "handled by
+	// fixing". It never suppresses re-raising — the code moved, so there is
+	// nothing to suppress — and it feeds the accept-rate signal.
+	EntryAcceptedFixed LedgerEntryKind = "accepted-and-fixed"
 )
 
 // DismissalEntry is one ledger record. AdjudicatorAuthor and
@@ -87,6 +92,18 @@ func (l *DismissalLedger) Add(fingerprint, repo, author, association string, now
 func (l *DismissalLedger) addPublished(fingerprint, repo string, now time.Time) {
 	l.Entries = append(l.Entries, DismissalEntry{
 		Kind:        EntryPublished,
+		Fingerprint: fingerprint,
+		Repository:  repo,
+		DismissedAt: now,
+	})
+}
+
+// AddAcceptedFixed records that a human resolved this finding's thread AND
+// the quoted span changed afterwards — accepted-by-fixing (§14). It is a
+// metric record only: it must never suppress re-raising.
+func (l *DismissalLedger) AddAcceptedFixed(fingerprint, repo string, now time.Time) {
+	l.Entries = append(l.Entries, DismissalEntry{
+		Kind:        EntryAcceptedFixed,
 		Fingerprint: fingerprint,
 		Repository:  repo,
 		DismissedAt: now,

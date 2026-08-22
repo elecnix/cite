@@ -62,6 +62,8 @@ cite soak bench/cases                         # pipeline regression harness
 cite canary                                   # ping every provider/fallback leg
 cite bypass --pr owner/repo#N                 # break-glass: conclude + log (§11)
 cite listen --pr owner/repo#N --comment-id ID # handle an "@cite review" comment
+cite signals --pr owner/repo#N                # ingest 👎 dismissals into the ledger
+cite metrics fix-or-argue --pr owner/repo#N   # weekly actioned-rate proxy (§15)
 cite signals --pr owner/repo#N                # ingest 👎 reactions into the ledger
 cite re-review --repo owner/name              # re-review bypassed merges; one issue per finding
 ```

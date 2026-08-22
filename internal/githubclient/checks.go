@@ -498,10 +498,10 @@ func (c *Client) HasTerminalCiteCheck(ctx context.Context, headSHA string) (bool
 	var out struct {
 		TotalCount int `json:"total_count"`
 		CheckRuns  []struct {
-			ID         int64  `json:"id"`
-			Name       string `json:"name"`
-			Status     string `json:"status"`
-			App        *struct {
+			ID     int64  `json:"id"`
+			Name   string `json:"name"`
+			Status string `json:"status"`
+			App    *struct {
 				Slug string `json:"slug"`
 			} `json:"app"`
 		} `json:"check_runs"`

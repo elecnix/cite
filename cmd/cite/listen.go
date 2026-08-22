@@ -5,7 +5,11 @@ package main
 //	listen  — the one keyword: "@cite review" on an issue comment re-runs
 //	          the review, authorised from authenticated API metadata.
 //	signals — walk review comments for 👎 reactions on Cite findings and
-//	          record dismissals in the sticky-comment ledger.
+//	          record dismissals in the sticky-comment ledger; disambiguate
+//	          resolved threads mechanically: quoted span changed since →
+//	          accepted-and-fixed, span byte-identical → dismissed; classify
+//	          human prose replies ("Is this reply rejecting the finding?")
+//	          with one cheap model call (§14).
 //
 // Both are read-mostly reconcilers: they mutate only the ledger blob inside
 // Cite's own sticky comment and never touch reviews or check runs.
@@ -22,6 +26,8 @@ import (
 	"time"
 
 	"github.com/elecnix/cite/internal/githubclient"
+	"github.com/elecnix/cite/internal/metrics"
+	"github.com/elecnix/cite/internal/model"
 	"github.com/elecnix/cite/internal/publisher"
 )
 
@@ -119,6 +125,7 @@ func runListen(args []string) error {
 func runSignals(args []string) error {
 	fs := flag.NewFlagSet("signals", flag.ContinueOnError)
 	prSpec := fs.String("pr", "", "pull request as owner/repo#N")
+	noClassify := fs.Bool("no-classify-replies", false, "skip classifying prose replies with the model")
 	dryRun := fs.Bool("dry-run", false, "report what would be recorded, persist nothing")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -139,13 +146,33 @@ func runSignals(args []string) error {
 	c := githubclient.New(token, "", nil).WithRepo(owner, repo)
 	ctx := context.Background()
 
+	// The head SHA for span-change comparisons comes only from
+	// authenticated API metadata (I2), never from thread or comment text.
+	pr, err := c.GetPR(ctx, num)
+	if err != nil {
+		return fmt.Errorf("fetching PR #%d: %w", num, err)
+	}
+	headSHA := pr.HeadSHA
+
 	comments, err := c.ReviewComments(ctx, num)
 	if err != nil {
 		return err
 	}
+	// author_association per comment database ID: the reply-authorisation
+	// check reads only GitHub-reported metadata (I2), never comment text.
+	assocByID := map[int64]string{}
+	for _, cm := range comments {
+		assocByID[cm.ID] = cm.AuthorAssociation
+	}
 
 	prevState := readSticky(ctx, c, num)
 	ledger := publisher.DismissalLedger{}
+	replyVerdicts := map[string]string{}
+	if prevState.ReplyVerdicts != nil {
+		for k, v := range prevState.ReplyVerdicts {
+			replyVerdicts[k] = v
+		}
+	}
 	if prevState.Ledger != "" {
 		if l, err := publisher.UnmarshalBlob(prevState.Ledger); err == nil {
 			ledger = l
@@ -192,47 +219,132 @@ func runSignals(args []string) error {
 	if err != nil {
 		return err
 	}
-	citeThreads, resolved := 0, 0
+	citeThreads, resolvedCount, accepted, byResolution := 0, 0, 0, 0
 	for _, t := range threads {
 		if len(t.Comments) == 0 {
 			continue
 		}
-		if _, _, ok := parseCiteCommentBody(t.Comments[0].Body); !ok {
+		fp, tf, ok := parseCiteCommentBody(t.Comments[0].Body)
+		if !ok {
 			continue
 		}
 		citeThreads++
-		if t.IsResolved {
-			resolved++
+		if !t.IsResolved {
+			continue
+		}
+		resolvedCount++
+		// §14: a human resolving a thread means handled, disambiguated
+		// mechanically. If the quoted span changed in a later push it was
+		// accepted-and-fixed; if it is still identical, the human read it
+		// and said no — a dismissal. No evidence data means unverifiable:
+		// record neither.
+		if tf == nil || len(tf.Evidence) == 0 {
+			continue
+		}
+		content, _, err := c.GetFileContent(ctx, headSHA, tf.Path)
+		if err != nil {
+			return fmt.Errorf("fetching %s at head for resolution check: %w", tf.Path, err)
+		}
+		if metrics.SpanChanged(tf.Evidence, content) {
+			accepted++
+			ledger.AddAcceptedFixed(fp, repoFull, now)
+			fmt.Printf("resolved %s with the span changed → accepted-and-fixed recorded\n", fp)
+		} else {
+			byResolution++
+			ledger.Add(fp, repoFull, "thread-resolution", "UNKNOWN", now)
+			fmt.Printf("resolved %s with the span identical → dismissal recorded\n", fp)
 		}
 	}
 
-	fmt.Printf("%s#%d: %d Cite thread(s), %d resolved / %d open; %d dismissal(s) seen\n",
-		repoFull, num, citeThreads, resolved, citeThreads-resolved, dismissals)
+	fmt.Printf("%s#%d: %d Cite thread(s), %d resolved / %d open; "+
+		"%d 👎 dismissal(s), %d accepted-and-fixed, %d dismissed-by-resolution\n",
+		repoFull, num, citeThreads, resolvedCount, citeThreads-resolvedCount, dismissals, accepted, byResolution)
 
 	if *dryRun {
 		fmt.Println("dry-run: ledger not persisted")
 		return nil
 	}
-	if dismissals > 0 {
-		if err := updateStickyLedger(ctx, c, num, ledger); err != nil {
+
+	// Prose reply classification (§14). Non-fatal by design: a provider or
+	// parse failure warns and skips — this step must never fail a run that
+	// already has its verdicts.
+	classifiedNew := 0
+	if !*noClassify && citeThreads > 0 {
+		mc, merr := model.NewOpenAICompatClient()
+		if merr != nil {
+			fmt.Fprintln(os.Stderr, "warning: reply classification skipped:", merr)
+		} else {
+			for _, t := range threads {
+				if len(t.Comments) < 2 {
+					continue
+				}
+				fp, tf, ok := parseCiteCommentBody(t.Comments[0].Body)
+				if !ok || tf == nil || fp == "" {
+					continue
+				}
+				for _, rc := range t.Comments[1:] {
+					if rc.AuthorLogin == "" || strings.HasSuffix(rc.AuthorLogin, "[bot]") {
+						continue
+					}
+					if _, done := replyVerdicts[fp]; done {
+						continue // classified in a previous run — one call, ever
+					}
+					rejecting, cerr := classifyReply(ctx, mc, tf.Title, rc.AuthorLogin, rc.Body)
+					if cerr != nil {
+						fmt.Fprintln(os.Stderr, "warning: reply classification failed; skipping:", cerr)
+						continue
+					}
+					if rejecting {
+						v := VerdictRejecting
+						replyVerdicts[fp] = v
+						classifiedNew++
+						if aerr := replyDismissalAllowed(rc.AuthorLogin, assocByID[rc.ID], rc.AuthorLogin == pr.AuthorLogin); aerr != nil {
+							fmt.Fprintf(os.Stderr, "note: @%s's rejecting reply on %s is not authorised to dismiss: %v\n",
+								rc.AuthorLogin, fp, aerr)
+						} else if ledger.Active(fp, repoFull, now) {
+							fmt.Printf("reply by @%s rejects %s: already dismissed\n", rc.AuthorLogin, fp)
+						} else {
+							assoc := assocByID[rc.ID]
+							if assoc == "" {
+								assoc = string(publisher.AssocNone)
+							}
+							ledger.Add(fp, repoFull, rc.AuthorLogin, assoc, now)
+							fmt.Printf("reply by @%s (%s) rejects %s → dismissal recorded\n",
+								rc.AuthorLogin, assoc, fp)
+						}
+					} else {
+						replyVerdicts[fp] = VerdictNotRejecting
+						classifiedNew++
+					}
+				}
+			}
+		}
+	}
+
+	if classifiedNew > 0 || dismissals > 0 || accepted > 0 || byResolution > 0 {
+		if err := updateStickyLedger(ctx, c, num, ledger, replyVerdicts); err != nil {
 			return err
 		}
-		fmt.Printf("ledger persisted: %d entr(y/ies)\n", len(ledger.Entries))
+		fmt.Printf("ledger persisted: %d entr(y/ies), %d classified repl(y/ies)\n",
+			len(ledger.Entries), len(replyVerdicts))
 	}
 	return nil
 }
 
-// updateStickyLedger rewrites ONLY the Ledger field of the sticky comment's
-// state blob, preserving BlobSHAs and Findings written by the last review
-// run. writeSticky cannot be reused here: it rebuilds the whole state from
-// a RunRecord, which signals does not have.
-func updateStickyLedger(ctx context.Context, c *githubclient.Client, prNum int, ledger publisher.DismissalLedger) error {
+// updateStickyLedger rewrites ONLY the Ledger and ReplyVerdicts fields of
+// the sticky comment's state blob, preserving BlobSHAs and Findings written
+// by the last review run. writeSticky cannot be reused here: it rebuilds the
+// whole state from a RunRecord, which signals does not have.
+func updateStickyLedger(ctx context.Context, c *githubclient.Client, prNum int, ledger publisher.DismissalLedger, replyVerdicts map[string]string) error {
 	blob, err := ledger.MarshalBlob()
 	if err != nil {
 		return fmt.Errorf("marshalling ledger: %w", err)
 	}
 	st := readSticky(ctx, c, prNum)
 	st.Ledger = blob
+	if len(replyVerdicts) > 0 {
+		st.ReplyVerdicts = replyVerdicts
+	}
 	raw, err := json.Marshal(st)
 	if err != nil {
 		return err
