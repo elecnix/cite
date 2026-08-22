@@ -1,0 +1,46 @@
+# examples/monorepo-paths.yml
+#
+# A monorepo where generated code, vendored trees, and a huge legacy subtree
+# should never reach the reviewer.
+#
+# The path exclusions live in .github/cite.yml under `paths_ignore`. Skipped
+# files are listed on the check summary with their reason — a skip is never a
+# pass. The gate stays on: zero in-scope files after exclusions is a
+# COULD_NOT_EVALUATE failure, never a green.
+
+name: review
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: cite-review/cite@v1
+        env:
+          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
+
+# --- .github/cite.yml -------------------------------------------------------
+#
+# paths_ignore:
+#   - "**/*.pb.go"          # generated protobuf
+#   - "**/*.gen.go"         # other generated Go
+#   - "vendor/**"           # vendored dependencies
+#   - "web/dist/**"         # build output
+#   - "**/package-lock.json"
+#   - "legacy/**"           # frozen subtree, owned elsewhere
+#
+# Glob dialect (see CONFORMANCE.md): comma-separated globs in one string or a
+# YAML array (accepted as an alias); `**` crosses directories; brace expansion
+# is NOT supported.
+#
+# Built-in skips still apply and are not configurable: generated files,
+# lockfiles, vendored trees, minified output, and binaries. `paths_ignore`
+# adds to that list; it cannot un-skip it.
+#
+# Note there is no workflow-level `paths:` filter here on purpose. Filtering at
+# the workflow level can subtract to zero files and skip review entirely; Cite
+# computes scope from the GitHub API's changed-file list and fails closed when
+# nothing in scope remains.

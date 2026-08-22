@@ -1,0 +1,21 @@
+# examples/minimal.yml
+#
+# The whole install. No checkout, no `with:` block, no configuration file.
+# The provider is inferred from which key is present.
+#
+# This is the happy path from README.md, verbatim. Copy it, add the
+# MODEL_API_KEY repository secret, push a pull request.
+
+name: review
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: cite-review/cite@v1
+        env:
+          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
