@@ -1,0 +1,170 @@
+# Configuration
+
+Cite is configurable and optional about it. A repository that never writes a
+configuration file gets sensible behaviour forever: default model selection from
+the ambient key, a comment budget, the standard skip list, `gate: comment`, and
+the current compatibility profile.
+
+When you do want to change something, the file is `.github/cite.yml`. This page
+is the complete v1 surface.
+
+## The seven keys
+
+```yaml
+# .github/cite.yml — optional. This is the complete v1 surface.
+model: openai/gpt-5-mini      # one string; a role map is available below
+max_comments: 10              # hard-capped at 20 by the schema
+paths_ignore: ["**/*.gen.go", "vendor/**"]
+nits: false                   # style and test-gap findings, default off
+gate: comment                 # comment | block
+compat_profile: "2026-08"     # which snapshot of the instruction formats to honour
+```
+
+| Key | Default | Meaning |
+| -- | -- | -- |
+| `model` | inferred from the available key | One string identifying the model for the review pass. See [Roles](#roles) when one string is not enough. |
+| `max_comments` | `10` | Upper bound on comments per review. **Hard-capped at 20 by the schema**; values above 20 are rejected by [`cite validate`](#validation), not clamped silently. The per-run budget formula in [noise.md](noise.md#the-budget) can only lower this number, never raise it. |
+| `paths_ignore` | `[]` | Extra glob patterns added to the built-in skip list (generated files, lockfiles, vendored trees, minified output, binaries). See the [glob dialect](instructions.md#glob-dialect). A skipped file is never a passed file — every skip appears on the check summary with its reason. |
+| `nits` | `false` | Enables `convention` and `error-swallow` findings. Off by default, and they consume no comment budget unless enabled. `convention` findings can never block a merge in any configuration. |
+| `gate` | `comment` | `comment` posts findings as a non-blocking review plus a check run that always concludes `success` or `neutral`. `block` makes the check run conclude `failure` when a finding blocks. Turn blocking on after a month of shadowing the tool's output. |
+| `compat_profile` | `"2026-08"` | Which dated snapshot of instruction-file behaviour Cite honours. Never auto-updates. See [CONFORMANCE.md](../CONFORMANCE.md). |
+
+Seven keys. If v1 ships with more than ten it has already lost.
+
+## Providers
+
+The seven keys cover almost everyone. When they do not — a private gateway, a
+local model, a provider that needs extra headers — the `providers` block exists.
+It lives on this page rather than the front page because most repositories never
+open it.
+
+```yaml
+providers:
+  gateway:
+    base_url: https://gateway.example.invalid/v1
+    api: openai-completions          # openai-completions | openai-responses | anthropic-messages
+    api_key: $MODEL_API_KEY          # literal | $VAR | ${VAR} | !shell-command
+    headers:
+      x-tenant: acme
+    models:
+      - id: vendor/model-x           # the only required field
+        context_window: 262144
+        max_tokens: 8192
+        cost: { input: 5, output: 30, cache_read: 0.5, cache_write: 6.25 }
+```
+
+### `base_url`
+
+The endpoint Cite calls. Read from the base ref, never the pull request head —
+a config file on a pull request branch cannot redirect your source code and your
+key to an attacker's endpoint. See [security.md](security.md).
+
+### `api`
+
+One of three wire protocols:
+
+- `openai-completions`
+- `openai-responses`
+- `anthropic-messages`
+
+Without a `providers` block, the provider is inferred from which environment key
+is present.
+
+### `api_key`
+
+A credential **expression**, never a literal secret you have to paste:
+
+| Form | Example | Meaning |
+| -- | -- | -- |
+| literal | `api_key: sk-not-a-real-key` | Used as-is. Works, but there is rarely a reason. |
+| `$VAR` | `api_key: $MODEL_API_KEY` | Read from the environment. |
+| `${VAR}` | `api_key: ${MODEL_API_KEY}` | Same, braced. |
+| shell command | `api_key: !op read op://vault/item/key` | Output of the command. Lets the file hold a vault reference instead of a secret. |
+
+The key travels as an HTTP header only. It never enters a prompt, a log, a run
+artifact, or an error message. See [security.md](security.md).
+
+### `headers`
+
+Extra HTTP headers sent with every call to this provider. Static values only;
+this is not a credential channel.
+
+### `models`
+
+Each entry has exactly **one required field, `id`**. Everything else defaults:
+
+- `context_window` — input token limit
+- `max_tokens` — default output cap for calls using this model
+- `cost` — per-million-token rates: `input`, `output`, `cache_read`,
+  `cache_write`
+
+Cost as first-class configuration means cost reporting works for a model Cite
+has never heard of.
+
+## Roles
+
+One model string is enough for small teams. A reviewer actually runs three
+distinct jobs, and they have different tolerances:
+
+```yaml
+roles:
+  review:   { model: gateway/vendor/model-x, timeout: 90s, max_output_tokens: 8192, concurrency: 8 }
+  triage:   { model: gateway/cheap-model,    timeout: 30s }
+  assemble: { model: gateway/cheap-model,    timeout: 60s }
+```
+
+- **`review`** — the expensive pass over flagged files. Longest timeout, largest
+  output budget.
+- **`triage`** — the cheap whole-diff pass that decides which files deserve the
+  expensive pass. Short timeout; if triage fails, the run fails closed.
+- **`assemble`** — the final capping pass that enforces the comment budget. See
+  [noise.md](noise.md#the-assembly-call-is-a-capper).
+
+Timeouts and concurrency are **per role**, not global, because a slow local model
+and a fast hosted one cannot share one number. Unspecified fields inherit sane
+defaults; `concurrency` is capped at 16 regardless of configuration.
+
+## Fallback
+
+```yaml
+fallback: [gateway/vendor/model-x, other/backup-model]
+```
+
+An ordered list. If the primary provider is unavailable, the next leg serves the
+run. For a merge gate, provider outage is the first operational failure you will
+hit, so the chain is first-class configuration rather than an afterthought.
+
+Two properties:
+
+- **The chain is exercised by a canary.** A scheduled job calls every leg of the
+  chain, because an untested fallback is not a fallback but a second outage that
+  begins at the same moment as the first.
+- **A failover is disclosed.** The run artifact records which leg served each
+  call, so a quality change after a failover is diagnosable rather than
+  mysterious.
+
+## Validation
+
+```
+cite validate
+```
+
+Schema-checks `.github/cite.yml`: unknown keys, bad enum values, `max_comments`
+above the hard cap, malformed globs, unresolvable credential expressions. It
+exits non-zero on any problem and prints what it found.
+
+Cite ships a JSON Schema for its own config and validates against it from day
+one. A typo in a configuration key is rejected loudly; it is never silently
+ignored, because a silently ignored suppression or gate setting is a merge gate
+that is not doing what its owner believes.
+
+## What is deliberately absent
+
+- No severity thresholds. There is no severity scale; blocking is computed in
+  code from verifiable fields ([noise.md](noise.md)).
+- No prompt overrides. Prompts are versioned files in this repository, changed
+  only with a benchmark delta ([CONTRIBUTING.md](../CONTRIBUTING.md)).
+- No suppressions file in v1. A file that does not exist cannot rot; dismissals
+  live in a ledger governed by the dispute protocol
+  ([security.md](security.md#the-dispute-protocol)).
+- No `with:` inputs beyond the API key. The happy path needs none.
