@@ -5,6 +5,7 @@
 //
 //	a published finding counts as actioned when a later head SHA changed
 //	the normalised content of its anchored span ("fixed"), or when a human
+//
 // posted a reply over 40 characters that is not a dismissal ("argued").
 //
 // Both cost the human something, which makes the metric fatigue-resistant

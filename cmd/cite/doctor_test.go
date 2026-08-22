@@ -27,10 +27,10 @@ func TestConformanceDate(t *testing.T) {
 			ok:   true,
 		},
 		{
-			name: "dated prose line",
+			name:    "dated prose line",
 			content: "# Conformance\n\nThis profile is dated 2026-08-21 and is a snapshot.\n",
-			want: time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC),
-			ok:   true,
+			want:    time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC),
+			ok:      true,
 		},
 		{
 			name:    "dated-profile alias form",

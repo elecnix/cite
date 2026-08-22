@@ -7,7 +7,9 @@ package main
 //	signals — walk review comments for 👎 reactions on Cite findings and
 //	          record dismissals in the sticky-comment ledger; disambiguate
 //	          resolved threads mechanically: quoted span changed since →
-//	          accepted-and-fixed, span byte-identical → dismissed (§14).
+//	          accepted-and-fixed, span byte-identical → dismissed; classify
+//	          human prose replies ("Is this reply rejecting the finding?")
+//	          with one cheap model call (§14).
 //
 // Both are read-mostly reconcilers: they mutate only the ledger blob inside
 // Cite's own sticky comment and never touch reviews or check runs.
@@ -25,6 +27,7 @@ import (
 
 	"github.com/elecnix/cite/internal/githubclient"
 	"github.com/elecnix/cite/internal/metrics"
+	"github.com/elecnix/cite/internal/model"
 	"github.com/elecnix/cite/internal/publisher"
 )
 
@@ -122,6 +125,7 @@ func runListen(args []string) error {
 func runSignals(args []string) error {
 	fs := flag.NewFlagSet("signals", flag.ContinueOnError)
 	prSpec := fs.String("pr", "", "pull request as owner/repo#N")
+	noClassify := fs.Bool("no-classify-replies", false, "skip classifying prose replies with the model")
 	dryRun := fs.Bool("dry-run", false, "report what would be recorded, persist nothing")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -154,9 +158,21 @@ func runSignals(args []string) error {
 	if err != nil {
 		return err
 	}
+	// author_association per comment database ID: the reply-authorisation
+	// check reads only GitHub-reported metadata (I2), never comment text.
+	assocByID := map[int64]string{}
+	for _, cm := range comments {
+		assocByID[cm.ID] = cm.AuthorAssociation
+	}
 
 	prevState := readSticky(ctx, c, num)
 	ledger := publisher.DismissalLedger{}
+	replyVerdicts := map[string]string{}
+	if prevState.ReplyVerdicts != nil {
+		for k, v := range prevState.ReplyVerdicts {
+			replyVerdicts[k] = v
+		}
+	}
 	if prevState.Ledger != "" {
 		if l, err := publisher.UnmarshalBlob(prevState.Ledger); err == nil {
 			ledger = l
@@ -248,26 +264,87 @@ func runSignals(args []string) error {
 		fmt.Println("dry-run: ledger not persisted")
 		return nil
 	}
-	if dismissals > 0 || accepted > 0 || byResolution > 0 {
-		if err := updateStickyLedger(ctx, c, num, ledger); err != nil {
+
+	// Prose reply classification (§14). Non-fatal by design: a provider or
+	// parse failure warns and skips — this step must never fail a run that
+	// already has its verdicts.
+	classifiedNew := 0
+	if !*noClassify && citeThreads > 0 {
+		mc, merr := model.NewOpenAICompatClient()
+		if merr != nil {
+			fmt.Fprintln(os.Stderr, "warning: reply classification skipped:", merr)
+		} else {
+			for _, t := range threads {
+				if len(t.Comments) < 2 {
+					continue
+				}
+				fp, tf, ok := parseCiteCommentBody(t.Comments[0].Body)
+				if !ok || tf == nil || fp == "" {
+					continue
+				}
+				for _, rc := range t.Comments[1:] {
+					if rc.AuthorLogin == "" || strings.HasSuffix(rc.AuthorLogin, "[bot]") {
+						continue
+					}
+					if _, done := replyVerdicts[fp]; done {
+						continue // classified in a previous run — one call, ever
+					}
+					rejecting, cerr := classifyReply(ctx, mc, tf.Title, rc.AuthorLogin, rc.Body)
+					if cerr != nil {
+						fmt.Fprintln(os.Stderr, "warning: reply classification failed; skipping:", cerr)
+						continue
+					}
+					if rejecting {
+						v := VerdictRejecting
+						replyVerdicts[fp] = v
+						classifiedNew++
+						if aerr := replyDismissalAllowed(rc.AuthorLogin, assocByID[rc.ID], rc.AuthorLogin == pr.AuthorLogin); aerr != nil {
+							fmt.Fprintf(os.Stderr, "note: @%s's rejecting reply on %s is not authorised to dismiss: %v\n",
+								rc.AuthorLogin, fp, aerr)
+						} else if ledger.Active(fp, repoFull, now) {
+							fmt.Printf("reply by @%s rejects %s: already dismissed\n", rc.AuthorLogin, fp)
+						} else {
+							assoc := assocByID[rc.ID]
+							if assoc == "" {
+								assoc = string(publisher.AssocNone)
+							}
+							ledger.Add(fp, repoFull, rc.AuthorLogin, assoc, now)
+							fmt.Printf("reply by @%s (%s) rejects %s → dismissal recorded\n",
+								rc.AuthorLogin, assoc, fp)
+						}
+					} else {
+						replyVerdicts[fp] = VerdictNotRejecting
+						classifiedNew++
+					}
+				}
+			}
+		}
+	}
+
+	if classifiedNew > 0 || dismissals > 0 || accepted > 0 || byResolution > 0 {
+		if err := updateStickyLedger(ctx, c, num, ledger, replyVerdicts); err != nil {
 			return err
 		}
-		fmt.Printf("ledger persisted: %d entr(y/ies)\n", len(ledger.Entries))
+		fmt.Printf("ledger persisted: %d entr(y/ies), %d classified repl(y/ies)\n",
+			len(ledger.Entries), len(replyVerdicts))
 	}
 	return nil
 }
 
-// updateStickyLedger rewrites ONLY the Ledger field of the sticky comment's
-// state blob, preserving BlobSHAs and Findings written by the last review
-// run. writeSticky cannot be reused here: it rebuilds the whole state from
-// a RunRecord, which signals does not have.
-func updateStickyLedger(ctx context.Context, c *githubclient.Client, prNum int, ledger publisher.DismissalLedger) error {
+// updateStickyLedger rewrites ONLY the Ledger and ReplyVerdicts fields of
+// the sticky comment's state blob, preserving BlobSHAs and Findings written
+// by the last review run. writeSticky cannot be reused here: it rebuilds the
+// whole state from a RunRecord, which signals does not have.
+func updateStickyLedger(ctx context.Context, c *githubclient.Client, prNum int, ledger publisher.DismissalLedger, replyVerdicts map[string]string) error {
 	blob, err := ledger.MarshalBlob()
 	if err != nil {
 		return fmt.Errorf("marshalling ledger: %w", err)
 	}
 	st := readSticky(ctx, c, prNum)
 	st.Ledger = blob
+	if len(replyVerdicts) > 0 {
+		st.ReplyVerdicts = replyVerdicts
+	}
 	raw, err := json.Marshal(st)
 	if err != nil {
 		return err

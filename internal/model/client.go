@@ -25,9 +25,9 @@ import (
 type APIStyle string
 
 const (
-	APIOpenAICompletions  APIStyle = "openai-completions"
-	APIOpenAIResponses    APIStyle = "openai-responses"
-	APIAnthropicMessages  APIStyle = "anthropic-messages"
+	APIOpenAICompletions APIStyle = "openai-completions"
+	APIOpenAIResponses   APIStyle = "openai-responses"
+	APIAnthropicMessages APIStyle = "anthropic-messages"
 )
 
 // ErrDeterministic is returned for deterministic failures, which are terminal:
@@ -73,10 +73,10 @@ func (c CredentialExpr) Resolve() (string, error) {
 
 // ModelEntry has exactly one required field: ID. Everything else is defaulted.
 type ModelEntry struct {
-	ID            string  `json:"id"` // the only required field
-	ContextWindow int     `json:"context_window,omitempty"`
-	MaxTokens     int     `json:"max_tokens,omitempty"`
-	Cost          *Cost   `json:"cost,omitempty"`
+	ID            string `json:"id"` // the only required field
+	ContextWindow int    `json:"context_window,omitempty"`
+	MaxTokens     int    `json:"max_tokens,omitempty"`
+	Cost          *Cost  `json:"cost,omitempty"`
 }
 
 // Cost is first-class configuration with per-million rates, so cost reporting
@@ -91,12 +91,12 @@ type Cost struct {
 // Provider declares capability: a base URL, a wire protocol, a credential
 // expression and its models.
 type Provider struct {
-	Name    string       `json:"-"`
-	BaseURL string       `json:"base_url"`
-	API     APIStyle     `json:"api"`
-	APIKey  CredentialExpr `json:"api_key,omitempty"`
+	Name    string            `json:"-"`
+	BaseURL string            `json:"base_url"`
+	API     APIStyle          `json:"api"`
+	APIKey  CredentialExpr    `json:"api_key,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
-	Models  []ModelEntry `json:"models,omitempty"`
+	Models  []ModelEntry      `json:"models,omitempty"`
 }
 
 // Role names the three roles a reviewer needs (§6).
@@ -134,8 +134,8 @@ type CompletionRequest struct {
 // Usage records token counters, including cache behaviour, which CI asserts on
 // because caching failure is silent (§7).
 type Usage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
 	CacheReadTokens  int `json:"cache_read_tokens,omitempty"`
 	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
 }
@@ -160,11 +160,11 @@ type Client interface {
 // base URL. It makes no runtime network call except to the model endpoint
 // (§12, I8).
 type OpenAICompatClient struct {
-	BaseURL string // e.g. https://api.openai.com/v1
-	APIKey  string // header value only; never logged
+	BaseURL      string // e.g. https://api.openai.com/v1
+	APIKey       string // header value only; never logged
 	ExtraHeaders map[string]string
-	Model   string
-	HTTP    *http.Client
+	Model        string
+	HTTP         *http.Client
 }
 
 // NewOpenAICompatClient infers the endpoint from the environment when no
@@ -280,8 +280,8 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		// Map to a typed code; never surface verbatim provider text (I4).
 		var b struct {
 			Error *struct {
-				Code    any    `json:"code"`
-				Message string `json:"message"`
+				Code     any    `json:"code"`
+				Message  string `json:"message"`
 				Metadata *struct {
 					Raw string `json:"raw"`
 				} `json:"metadata"`
