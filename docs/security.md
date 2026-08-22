@@ -194,6 +194,18 @@ backdoor.
   is honoured only for a fingerprint Cite itself published — nobody can
   pre-dismiss a finding that has not been raised.
 
+## Break-glass, and why it is loud
+
+A fail-closed gate with no escape gets deleted the first time it blocks a
+merge that cannot wait. So the bypass is self-service, loud, and enumerable:
+anyone may apply the `cite-bypass` label. A handler verifies the label through
+the authenticated API (never event text), concludes the check as success with
+`BYPASSED — <state> — @author — <run url>`, and appends one line to an
+enumerable bypass log. "Every pull request merged unreviewed on this date" is
+a one-line query. The bypass buys time, not amnesty: a scheduled `cite re-review`
+job re-reviews bypassed merge commits afterwards and files an issue per
+finding.
+
 ## What Cite never has
 
 - No repository write access. It never pushes a commit or opens a pull request.

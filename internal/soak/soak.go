@@ -80,6 +80,11 @@ type CaseResult struct {
 	Name     string
 	Checks   []CheckResult
 	Duration time.Duration
+
+	// aaJaccard is the minimum pairwise Jaccard similarity of the posted
+	// fingerprint set across the A/A repeats (1.0 when Repeats <= 1). It feeds
+	// Report.StabilityJaccard; per-case detail lives in the aa_variance check.
+	aaJaccard float64
 }
 
 // Pass reports whether every check passed.
@@ -95,6 +100,17 @@ func (r CaseResult) Pass() bool {
 // Report is the aggregate over all cases.
 type Report struct {
 	Results []CaseResult
+
+	// StabilityJaccard is the minimum pairwise Jaccard similarity of the
+	// posted-fingerprint set across A/A repeats over all cases (PLAN §15: the
+	// same arm twice; any effect smaller than the A/A spread is nothing).
+	// Deterministic pipelines must score exactly 1.0 — any variance is a bug,
+	// and this number proves it. 1.0 vacuously when Repeats <= 1.
+	StabilityJaccard float64
+
+	// Repeats is the number of times the replay invariant ran per case
+	// (the A/A run count; PLAN §15 recommends k = 3). Default 1.
+	Repeats int
 }
 
 // Pass reports whether every case passed.
@@ -112,6 +128,15 @@ type RunOptions struct {
 	// Now fixes the reconciliation instant so ledger expiry cannot make the
 	// harness flaky. Zero means a fixed epoch is used.
 	Now time.Time
+
+	// Repeats is the A/A run count: how many times the replay-twice check
+	// runs per case (PLAN §15: "Every eval report carries an A/A run — the
+	// same arm twice — and any A/B effect smaller than the A/A spread is
+	// nothing. No A/A, no decision." k = 3 recommended). Default 1. When
+	// Repeats > 1 an aa_variance check is emitted per case: it passes only
+	// when every pair of repeats posts the identical fingerprint set
+	// (pairwise Jaccard 1.0).
+	Repeats int
 }
 
 // LoadCases reads every cases/<name>/case.json under dir. A malformed case
@@ -170,30 +195,76 @@ func validateSpec(s *CaseFileSpec) error {
 	return nil
 }
 
-// RunCase executes the four pipeline checks against one case.
+// RunCase executes the four pipeline checks against one case. When
+// opts.Repeats > 1 the replay check runs k times and an aa_variance check
+// asserts the posted fingerprint set is identical across repeats.
 func RunCase(c Case, opts RunOptions) CaseResult {
 	start := time.Now()
-	res := CaseResult{Name: c.Spec.Name}
+	res := CaseResult{Name: c.Spec.Name, aaJaccard: 1.0}
 
 	res.Checks = append(res.Checks, checkSchema(c))
 	res.Checks = append(res.Checks, checkAnchors(c))
 	res.Checks = append(res.Checks, checkFingerprintStability(c))
-	res.Checks = append(res.Checks, checkReplayZeroNewThreads(c, opts))
+
+	repeats := opts.Repeats
+	if repeats < 1 {
+		repeats = 1
+	}
+	posted := make([]map[string]bool, repeats)
+	for i := 0; i < repeats; i++ {
+		chk, fps := runReplayZeroNewThreads(c, opts)
+		if i == 0 {
+			res.Checks = append(res.Checks, chk)
+		}
+		posted[i] = fps
+	}
+	if repeats > 1 {
+		minJ := 1.0
+		for i := 0; i < repeats; i++ {
+			for j := i + 1; j < repeats; j++ {
+				if jv := jaccard(posted[i], posted[j]); jv < minJ {
+					minJ = jv
+				}
+			}
+		}
+		res.aaJaccard = minJ
+		detail := fmt.Sprintf("A/A over k=%d repeats: min pairwise jaccard=%.3f", repeats, minJ)
+		if minJ != 1.0 {
+			detail += " (variance between identical runs is a bug)"
+		}
+		res.Checks = append(res.Checks, CheckResult{
+			Name:   "aa_variance",
+			Pass:   minJ == 1.0,
+			Detail: detail,
+		})
+	}
 
 	res.Duration = time.Since(start)
 	return res
 }
 
-// RunAll loads and runs every case under dir.
+// RunAll loads and runs every case under dir with default options.
 func RunAll(dir string) (Report, error) {
+	return RunAllWithOptions(dir, RunOptions{}) // fixed default epoch inside RunCase
+}
+
+// RunAllWithOptions loads and runs every case under dir with opts. The
+// report carries the A/A stability number when opts.Repeats > 1.
+func RunAllWithOptions(dir string, opts RunOptions) (Report, error) {
 	cases, err := LoadCases(dir)
 	if err != nil {
 		return Report{}, err
 	}
-	opts := RunOptions{} // fixed default epoch inside RunCase
-	rep := Report{}
+	if opts.Repeats < 1 {
+		opts.Repeats = 1
+	}
+	rep := Report{Repeats: opts.Repeats, StabilityJaccard: 1.0}
 	for _, c := range cases {
-		rep.Results = append(rep.Results, RunCase(c, opts))
+		cr := RunCase(c, opts)
+		if cr.aaJaccard < rep.StabilityJaccard {
+			rep.StabilityJaccard = cr.aaJaccard
+		}
+		rep.Results = append(rep.Results, cr)
 	}
 	return rep, nil
 }
@@ -356,13 +427,16 @@ func perturbText(s string) string {
 
 // --- check 4: replay-twice posts zero new threads the second time ----------
 
-func checkReplayZeroNewThreads(c Case, opts RunOptions) CheckResult {
+// runReplayZeroNewThreads executes one replay-twice pass (§10: replay the
+// same pull request twice and assert zero new threads) and returns the set
+// of fingerprints posted by replay 1, for A/A comparison across repeats.
+func runReplayZeroNewThreads(c Case, opts RunOptions) (CheckResult, map[string]bool) {
 	cr := CheckResult{Name: "replay_zero_new_threads"}
 	reviews := parsedResponses(c)
 	if reviews == nil {
 		cr.Pass = false
 		cr.Detail = "responses do not parse; replay unverifiable"
-		return cr
+		return cr, nil
 	}
 
 	current := validatedSet(reviews)
@@ -378,10 +452,13 @@ func checkReplayZeroNewThreads(c Case, opts RunOptions) CheckResult {
 
 	// The threads GitHub would have after replay 1.
 	live := make([]publisher.LiveThread, 0, len(plan1.CommentsToPost))
+	posted := make(map[string]bool, len(plan1.CommentsToPost))
 	for i, f := range plan1.CommentsToPost {
+		fp := f.FingerprintOf()
+		posted[fp] = true
 		live = append(live, publisher.LiveThread{
 			ID:          int64(1000 + i),
-			Fingerprint: f.FingerprintOf(),
+			Fingerprint: fp,
 			Path:        f.Path,
 		})
 	}
@@ -398,11 +475,33 @@ func checkReplayZeroNewThreads(c Case, opts RunOptions) CheckResult {
 		}
 		cr.Detail = fmt.Sprintf("replay 2 posted %d new thread(s): %s",
 			len(plan2.CommentsToPost), strings.Join(dups, ", "))
-		return cr
+		return cr, posted
 	}
 	cr.Pass = true
 	cr.Detail = fmt.Sprintf("replay 1 posted %d thread(s); replay 2 posted 0", len(live))
-	return cr
+	return cr, posted
+}
+
+// jaccard is the Jaccard similarity of two fingerprint sets: |A∩B| / |A∪B|.
+// Two empty sets are identical, so score 1.0. Deterministic pipelines must
+// always score 1.0 between A/A repeats; anything less is a bug.
+func jaccard(a, b map[string]bool) float64 {
+	if len(a) == 0 && len(b) == 0 {
+		return 1.0
+	}
+	union := len(a)
+	intersection := 0
+	for fp := range b {
+		if a[fp] {
+			intersection++
+		} else {
+			union++
+		}
+	}
+	if union == 0 {
+		return 1.0
+	}
+	return float64(intersection) / float64(union)
 }
 
 // validatedSet converts parsed reviews into the ValidatedFinding set the
@@ -465,6 +564,9 @@ func RenderReport(r Report) string {
 			}
 			fmt.Fprintf(&sb, "  %-22s %s  %s\n", pad(chk.Name, 22), mark, detail)
 		}
+	}
+	if r.Repeats > 1 {
+		fmt.Fprintf(&sb, "\nA/A stability: jaccard=%.3f over k=%d repeats", r.StabilityJaccard, r.Repeats)
 	}
 	fmt.Fprintf(&sb, "\n%d/%d case(s) passed.\n", passes, len(r.Results))
 	if !r.Pass() {

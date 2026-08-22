@@ -192,6 +192,106 @@ func TestReportRenderingShowsFailure(t *testing.T) {
 	}
 }
 
+func TestJaccard(t *testing.T) {
+	id := func(tags ...string) map[string]bool {
+		m := map[string]bool{}
+		for _, s := range tags {
+			m[s] = true
+		}
+		return m
+	}
+	a := id("fp-1", "fp-2", "fp-3")
+
+	// Identical sets score 1.0.
+	if got := jaccard(a, id("fp-3", "fp-1", "fp-2")); got != 1.0 {
+		t.Fatalf("jaccard(identical) = %v, want 1.0", got)
+	}
+	// Disjoint sets score 0.
+	if got := jaccard(a, id("fp-x", "fp-y")); got != 0.0 {
+		t.Fatalf("jaccard(disjoint) = %v, want 0", got)
+	}
+	// Partial overlap: |{fp-1}| / |{fp-1..fp-6}| = 1/6.
+	if got := jaccard(a, id("fp-1", "fp-4", "fp-5", "fp-6")); got != 1.0/6.0 {
+		t.Fatalf("jaccard(overlap) = %v, want %v", got, 1.0/6.0)
+	}
+	// Two empty sets are identical.
+	if got := jaccard(map[string]bool{}, map[string]bool{}); got != 1.0 {
+		t.Fatalf("jaccard(empty, empty) = %v, want 1.0", got)
+	}
+	// Symmetry.
+	if jaccard(a, id("fp-1")) != jaccard(id("fp-1"), a) {
+		t.Fatal("jaccard must be symmetric")
+	}
+}
+
+func TestRepeatsDefaultIsOne(t *testing.T) {
+	opts := RunOptions{}
+	repeats := opts.Repeats
+	if repeats < 1 {
+		repeats = 1
+	}
+	if repeats != 1 {
+		t.Fatalf("default Repeats resolved to %d, want 1", repeats)
+	}
+	cases, err := LoadCases(repoCases)
+	if err != nil {
+		t.Fatalf("LoadCases: %v", err)
+	}
+	res := RunCase(cases[0], RunOptions{}) // zero value: default single run
+	for _, chk := range res.Checks {
+		if chk.Name == "aa_variance" {
+			t.Fatal("aa_variance must not be emitted when Repeats <= 1")
+		}
+	}
+}
+
+func TestAARepeatsStablePipelineScoresOne(t *testing.T) {
+	rep, err := RunAllWithOptions(repoCases, RunOptions{Repeats: 3})
+	if err != nil {
+		t.Fatalf("RunAllWithOptions: %v", err)
+	}
+	if rep.Repeats != 3 {
+		t.Fatalf("report Repeats = %d, want 3", rep.Repeats)
+	}
+	if rep.StabilityJaccard != 1.0 {
+		t.Fatalf("deterministic pipeline A/A jaccard = %v, want exactly 1.0", rep.StabilityJaccard)
+	}
+	for _, cr := range rep.Results {
+		var aa *CheckResult
+		for i := range cr.Checks {
+			if cr.Checks[i].Name == "aa_variance" {
+				aa = &cr.Checks[i]
+			}
+		}
+		if aa == nil {
+			t.Errorf("case %s: missing aa_variance check at k=3", cr.Name)
+			continue
+		}
+		if !aa.Pass {
+			t.Errorf("case %s: aa_variance failed: %s", cr.Name, aa.Detail)
+		}
+		if !strings.Contains(aa.Detail, "k=3") || !strings.Contains(aa.Detail, "1.000") {
+			t.Errorf("case %s: aa_variance detail incomplete: %s", cr.Name, aa.Detail)
+		}
+	}
+	out := RenderReport(rep)
+	want := "A/A stability: jaccard=1.000 over k=3 repeats"
+	if !strings.Contains(out, want) {
+		t.Fatalf("report missing A/A line %q:\n%s", want, out)
+	}
+}
+
+func TestReportRenderingOmitsAALineAtDefaultRepeats(t *testing.T) {
+	rep, err := RunAll(repoCases)
+	if err != nil {
+		t.Fatalf("RunAll: %v", err)
+	}
+	out := RenderReport(rep)
+	if strings.Contains(out, "A/A stability:") {
+		t.Fatalf("A/A line must not render when Repeats <= 1:\n%s", out)
+	}
+}
+
 func TestNearMissCaseAssertsZeroFindings(t *testing.T) {
 	cases, err := LoadCases(repoCases)
 	if err != nil {

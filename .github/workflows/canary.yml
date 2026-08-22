@@ -1,0 +1,33 @@
+# Nightly canary: exercise every leg of the provider/fallback chain (PLAN §6).
+#
+# An untested fallback is not a fallback but a second outage that begins at
+# the same moment as the first. Each declared provider and fallback entry
+# gets one bounded ping; results are reported per leg. Skipped legs (no
+# resolvable credential) are loud, never silent.
+#
+# Fleet note: a fleet-wide COULD_NOT_EVALUATE should page ONCE with one
+# pinned notice, not per repository — aggregation belongs to the fleet
+# monitor, not this file.
+
+name: canary
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+      - name: Exercise provider legs
+        env:
+          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
+          MODEL_BASE_URL: ${{ vars.MODEL_BASE_URL }}
+        run: go run ./cmd/cite canary --config .github/cite.yml

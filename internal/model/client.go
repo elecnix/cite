@@ -170,6 +170,14 @@ type OpenAICompatClient struct {
 // NewOpenAICompatClient infers the endpoint from the environment when no
 // explicit provider is configured: the provider is inferred from which key is
 // present (§1).
+//
+// GitHub Models zero-secret path (§1, "A first run with no key at all"): when
+// MODEL_API_KEY is unset but the ambient GITHUB_TOKEN is present, inference
+// runs on https://models.github.ai/inference with the job's own token and the
+// default model id openai/gpt-4o-mini. That path needs the `models: read`
+// permission, is rate-limited, and exists only so the first review happens
+// before the user has configured anything; bring-your-own-key via
+// MODEL_API_KEY remains the serious path.
 func NewOpenAICompatClient() (*OpenAICompatClient, error) {
 	if k := os.Getenv("MODEL_API_KEY"); k != "" {
 		base := os.Getenv("MODEL_BASE_URL")
@@ -182,7 +190,15 @@ func NewOpenAICompatClient() (*OpenAICompatClient, error) {
 		}
 		return &OpenAICompatClient{BaseURL: strings.TrimSuffix(base, "/"), APIKey: k, Model: model}, nil
 	}
-	return nil, fmt.Errorf("no model key found: set MODEL_API_KEY (the provider is inferred from which key is present)")
+	// Zero-secret first run: GitHub's models endpoint on the ambient token.
+	if k := os.Getenv("GITHUB_TOKEN"); k != "" {
+		model := os.Getenv("MODEL_ID")
+		if model == "" {
+			model = "openai/gpt-4o-mini"
+		}
+		return &OpenAICompatClient{BaseURL: "https://models.github.ai/inference", APIKey: k, Model: model}, nil
+	}
+	return nil, fmt.Errorf("no model key found: set MODEL_API_KEY, or grant the workflow `models: read` so the ambient GITHUB_TOKEN can be used with GitHub Models (the provider is inferred from which key is present)")
 }
 
 func (c *OpenAICompatClient) ModelID() string { return c.Model }

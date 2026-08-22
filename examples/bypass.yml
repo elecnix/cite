@@ -1,0 +1,58 @@
+# examples/bypass.yml
+#
+# The break-glass escape (PLAN §11). Fail-closed with an administrator
+# bypass is how required checks get deleted: the administrator is asked
+# five times in an hour and on the sixth removes the check entirely. So the
+# bypass is self-service, loud, and enumerable instead:
+#
+#   - Self-service — a label any author can apply (`cite-bypass`). The
+#     organisation can never be blocked longer than it takes one engineer
+#     to click a label.
+#   - Loud — the pending `cite` check on the PR head SHA is concluded as
+#     success with "Cite bypassed" and a BYPASSED summary naming who and
+#     which run did it. It is green on purpose, never silently absent.
+#   - Enumerable — every use appends one line to a sticky bypass-log
+#     comment, so "every pull request merged unreviewed on this date" is a
+#     one-line query.
+#
+# The bypass buys time, not amnesty: a scheduled job re-reviews bypassed
+# merge commits on the default branch afterwards and files an issue per
+# finding (planned; see PLAN §11).
+#
+# Why the CLI and not the action: elecnix/cite@v0.1.4 has no bypass input,
+# so this workflow downloads the release binary directly.
+#
+# Copy it as .github/workflows/bypass.yml. Needs GITHUB_TOKEN with
+# checks+pull-requests write (below) — no extra secrets.
+
+name: cite-break-glass
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  bypass:
+    # Only react to the bypass label. The CLI still re-verifies against
+    # the API before concluding anything — trust is never derived from
+    # event payload text.
+    if: github.event.label.name == 'cite-bypass'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download cite binary
+        run: |
+          curl -fsSL -o cite \
+            https://github.com/elecnix/cite/releases/latest/download/cite-linux-amd64
+          chmod +x cite
+
+      - name: Conclude check as bypassed and append to bypass log
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./cite bypass \
+            --pr $GITHUB_REPOSITORY#${{ github.event.pull_request.number }} \
+            --run-url ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

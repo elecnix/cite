@@ -73,6 +73,7 @@ func logToStderr(format string, args ...any) {
 func printRecord(rec *model.RunRecord) {
 	fmt.Printf("model=%s temperature=%.1f samples=%d\n", rec.Model, rec.Temperature, rec.Samples)
 	fmt.Printf("coverage: %d/%d api files complete=%t\n", rec.Coverage.Reviewed+rec.Coverage.ApprovedSkip, rec.Coverage.APIFiles, rec.Coverage.Complete)
+	fmt.Printf("cost: $%.4f (in %s out %s)\n", rec.CostUSD, humanTokens(rec.Usage.InputTokens), humanTokens(rec.Usage.OutputTokens))
 	for _, f := range rec.Files {
 		line := fmt.Sprintf("  %-3s %s", f.Status, f.Path)
 		if f.Reason != "" {
@@ -161,6 +162,7 @@ func reviewLocal(diffPath, cfgPath string) error {
 		return err
 	}
 	rec.Coverage = scope.ComputeCoverage(rec.Files, len(manifest))
+	applyCost(rec, cfg)
 	verdict, reason := gate.Decide(rec, cfg, gate.Options{})
 	rec.Verdict, rec.VerdictReason = verdict, reason
 	printRecord(rec)
@@ -383,6 +385,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool) error {
 		SpanGone:   spanGone,
 	})
 
+	applyCost(rec, cfg)
 	verdict, reason := gate.Decide(rec, cfg, gate.Options{})
 	rec.Verdict, rec.VerdictReason = verdict, reason
 
