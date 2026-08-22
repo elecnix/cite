@@ -189,9 +189,13 @@ func BypassSummary(state model.Verdict, author, runURL string) string {
 
 // PRState is the reaper's view of one open pull request.
 type PRState struct {
+	Number           int
 	HeadSHA          string
 	HasTerminalCheck bool
 	AgeMinutes       int
+	// CheckID is the existing check run to update, when one exists at all;
+	// zero means the reaper must create one.
+	CheckID int64
 }
 
 // NeedsReaper returns the open PRs whose head SHA has had no terminal Cite

@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 )
 
 // Check run states (§11). The gate's first action creates the check as
@@ -452,4 +454,74 @@ func (c *Client) findStickyComment(ctx context.Context, prNum int, marker string
 		}
 	}
 	return 0, false, nil
+}
+
+// OpenPR is one open pull request with the fields the reaper needs.
+type OpenPR struct {
+	Number    int
+	HeadSHA   string
+	UpdatedAt time.Time
+}
+
+// ListOpenPRs returns every open pull request (per_page=100 pagination).
+func (c *Client) ListOpenPRs(ctx context.Context) ([]OpenPR, error) {
+	raws, err := c.listPaginated(ctx, fmt.Sprintf("repos/%s/%s/pulls", c.owner, c.repo))
+	if err != nil {
+		return nil, err
+	}
+	var out []OpenPR
+	for _, r := range raws {
+		var p struct {
+			Number    int    `json:"number"`
+			State     string `json:"state"`
+			UpdatedAt string `json:"updated_at"`
+			Head      struct {
+				SHA string `json:"sha"`
+			} `json:"head"`
+		}
+		if err := json.Unmarshal(r, &p); err != nil {
+			return nil, err
+		}
+		if p.State != "open" {
+			continue
+		}
+		ts, _ := time.Parse(time.RFC3339, p.UpdatedAt)
+		out = append(out, OpenPR{Number: p.Number, HeadSHA: p.Head.SHA, UpdatedAt: ts})
+	}
+	return out, nil
+}
+
+// HasTerminalCiteCheck reports whether headSHA has a Cite check run in a
+// terminal state, and returns its id so the reaper can update it. Check runs
+// are looked up by head SHA — never by event metadata (§11).
+func (c *Client) HasTerminalCiteCheck(ctx context.Context, headSHA string) (bool, int64, error) {
+	var out struct {
+		TotalCount int `json:"total_count"`
+		CheckRuns  []struct {
+			ID         int64  `json:"id"`
+			Name       string `json:"name"`
+			Status     string `json:"status"`
+			App        *struct {
+				Slug string `json:"slug"`
+			} `json:"app"`
+		} `json:"check_runs"`
+	}
+	err := c.do(ctx, http.MethodGet,
+		fmt.Sprintf("repos/%s/%s/commits/%s/check-runs", c.owner, c.repo, url.PathEscape(headSHA)),
+		url.Values{"per_page": []string{"100"}}, nil, &out)
+	if err != nil {
+		return false, 0, err
+	}
+	for _, cr := range out.CheckRuns {
+		if cr.Name != "cite" {
+			continue
+		}
+		switch cr.Status {
+		case "completed":
+			return true, cr.ID, nil
+		default:
+			return false, cr.ID, nil
+		}
+	}
+	return false, 0, nil
 }

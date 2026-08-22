@@ -26,9 +26,9 @@ func main() {
 	case "soak":
 		err = runSoak(os.Args[2:])
 	case "reaper":
-		err = fmt.Errorf("reaper: not implemented yet")
+		err = runReaper(os.Args[2:])
 	case "canary":
-		err = fmt.Errorf("canary: not implemented yet")
+		err = runCanary(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("cite " + version)
 		return
