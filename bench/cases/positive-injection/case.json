@@ -1,0 +1,23 @@
+{
+  "name": "positive-injection",
+  "description": "Planted defect: user-controlled query input flows into a shell command. The recorded response carries one certain injection finding whose evidence quote matches the added line exactly.",
+  "base": [
+    {
+      "path": "app/handler.go",
+      "content": "package app\n\nimport (\n\t\"net/http\"\n)\n\nfunc Hello(w http.ResponseWriter, r *http.Request) {\n\tw.Write([]byte(\"hello\"))\n}\n"
+    }
+  ],
+  "patch": "diff --git a/app/handler.go b/app/handler.go\n--- a/app/handler.go\n+++ b/app/handler.go\n@@ -3,4 +3,9 @@\n import (\n+\t\"os/exec\"\n \t\"net/http\"\n )\n \n+func Run(w http.ResponseWriter, r *http.Request) {\n+\texec.Command(\"sh\", \"-c\", r.URL.Query().Get(\"q\"))\n+}\n+",
+  "recorded_responses": [
+    {
+      "path": "app/handler.go",
+      "response_json": "{\"schema_version\":1,\"path\":\"app/handler.go\",\"outcome\":\"reviewed\",\"findings\":[{\"id\":\"inj-1\",\"category\":\"injection\",\"anchor\":{\"start_line\":9,\"end_line\":9},\"title\":\"User-controlled input is passed to a shell\",\"body\":\"The query parameter q flows into exec.Command with sh -c, so any shell metacharacter in q executes in the service context.\",\"impact\":\"Remote code execution in the deployment context of the service.\",\"evidence\":[{\"line\":9,\"quote\":\"exec.Command(\\\"sh\\\", \\\"-c\\\", r.URL.Query().Get(\\\"q\\\"))\"}],\"external_claims\":[],\"introduced_by\":\"added_line\",\"confidence\":\"certain\",\"fix\":{\"shape\":\"substitute_token\",\"start_line\":9,\"end_line\":9,\"original\":\"r.URL.Query().Get(\\\"q\\\")\",\"replacement\":\"filepath.Clean(r.URL.Query().Get(\\\"q\\\"))\"}}]}"
+    }
+  ],
+  "expect": {
+    "schema_valid": true,
+    "anchors_in_diff": true,
+    "fingerprints_stable": true,
+    "replay_zero_new_threads": true
+  }
+}
