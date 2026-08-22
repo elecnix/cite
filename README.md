@@ -30,7 +30,11 @@ jobs:
 ```
 
 No `actions/checkout`. No `with:` block. No configuration file. The provider is
-inferred from which key is present.
+inferred from which key is present — and with `models: read` permission and no
+key at all, Cite runs on GitHub's models endpoint with the ambient token:
+rate-limited, meant for the first review before you have decided anything
+([examples/zero-secret.yml](examples/zero-secret.yml)). Bring-your-own-key is
+the upgrade.
 
 Already have instruction files (`.github/copilot-instructions.md`,
 `AGENTS.md`, `*.instructions.md`)? Cite reads them from the base ref and tells
@@ -53,6 +57,10 @@ cite review --pr owner/repo#123 --dry-run     # a real PR; prints, posts nothing
 cite doctor                                   # which instruction files reached which paths
 cite validate                                 # schema-check the config
 cite soak bench/cases                         # pipeline regression harness
+cite canary                                   # ping every provider/fallback leg
+cite bypass --pr owner/repo#N                 # break-glass: conclude + log (§11)
+cite listen --pr owner/repo#N --comment-id ID # handle an "@cite review" comment
+cite signals --pr owner/repo#N                # ingest 👎 reactions into the ledger
 ```
 
 ## Documentation
