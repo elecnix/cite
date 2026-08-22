@@ -135,8 +135,6 @@ func reviewResponseSchema() json.RawMessage {
 	finding := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
-		"required": []any{"id", "category", "anchor", "title", "body", "impact",
-			"evidence", "external_claims", "introduced_by", "confidence", "fix"},
 		"properties": map[string]any{
 			"id": map[string]any{"type": "string"},
 			"category": map[string]any{"type": "string", "enum": []any{
@@ -184,13 +182,35 @@ func reviewResponseSchema() json.RawMessage {
 			"confidence": map[string]any{"type": "string", "enum": []any{
 				"certain", "likely", "question",
 			}},
-			"fix": map[string]any{"type": []any{"object", "null"}},
+			"fix": map[string]any{
+				// Nullable via anyOf: strict mode rejects bare type arrays.
+				"anyOf": []any{
+					map[string]any{
+						"type":                 "object",
+						"additionalProperties": false,
+						"required":             []any{"shape", "start_line", "end_line", "original", "replacement"},
+						"properties": map[string]any{
+							"shape": map[string]any{"type": "string", "enum": []any{
+								"delete_lines", "substitute_token", "shell_quoting", "add_guard",
+							}},
+							"start_line":  map[string]any{"type": "integer"},
+							"end_line":    map[string]any{"type": "integer"},
+							"original":    map[string]any{"type": "string"},
+							"replacement": map[string]any{"type": "string"},
+						},
+					},
+					map[string]any{"type": "null"},
+				},
+			},
 		},
+		// Strict mode requires every property to be listed in required.
+		"required": []any{"id", "category", "anchor", "title", "body", "impact",
+			"evidence", "evidence_kind", "missing_assertion", "external_claims",
+			"introduced_by", "confidence", "fix"},
 	}
 	root := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
-		"required":             []any{"schema_version", "path", "outcome", "findings"},
 		"properties": map[string]any{
 			"schema_version": map[string]any{"type": "integer"},
 			"path":           map[string]any{"type": "string"},
@@ -204,6 +224,8 @@ func reviewResponseSchema() json.RawMessage {
 				"items":    finding,
 			},
 		},
+		// Strict mode requires every property to be listed in required.
+		"required": []any{"schema_version", "path", "outcome", "not_reviewable_reason", "findings"},
 	}
 	return json.RawMessage(canonicalJSON(root))
 }

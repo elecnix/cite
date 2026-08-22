@@ -231,6 +231,11 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 	if err != nil {
 		return nil, err
 	}
+	if os.Getenv("CITE_DEBUG") != "" {
+		// Debug aid: dump the exact request body (without the key, which is
+		// header-only) so a provider 400 can be replayed verbatim.
+		_ = os.WriteFile("/tmp/cite-last-request.json", body, 0o600)
+	}
 	httpReqBody := bytes.NewReader(body)
 	httpClient := c.HTTP
 	if httpClient == nil {
@@ -261,19 +266,31 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 			Error *struct {
 				Code    any    `json:"code"`
 				Message string `json:"message"`
+				Metadata *struct {
+					Raw string `json:"raw"`
+				} `json:"metadata"`
 			} `json:"error"`
 		}
 		_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&b)
 		code := "provider_error"
 		msg := fmt.Sprintf("HTTP %d", resp.StatusCode)
-		if b.Error != nil && b.Error.Message != "" {
-			// Truncate and strip anything header-shaped.
+		if b.Error != nil {
 			m := b.Error.Message
-			if len(m) > 200 {
-				m = m[:200]
+			// Gateways (e.g. OpenRouter) wrap the upstream error; the raw
+			// payload is where the actionable reason lives.
+			if b.Error.Metadata != nil && b.Error.Metadata.Raw != "" {
+				raw := strings.TrimSpace(b.Error.Metadata.Raw)
+				raw = strings.ReplaceAll(raw, "\n", " ")
+				if len(raw) > len(m) {
+					m = raw
+				}
 			}
-			m = strings.ReplaceAll(m, "\n", " ")
-			msg += ": " + m
+			if m != "" {
+				if len(m) > 300 {
+					m = m[:300]
+				}
+				msg += ": " + m
+			}
 		}
 		switch {
 		case resp.StatusCode == http.StatusTooManyRequests:
