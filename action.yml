@@ -1,9 +1,10 @@
 # Cite — an open code reviewer for GitHub.
 #
 # The happy path needs no `with:` block and no `actions/checkout` OF THE PULL
-# REQUEST HEAD. This composite action checks out only its own trusted source
-# (the ref the caller pinned), builds it, and reviews the pull request from
-# the GitHub API. No head-controlled code is ever executed (§12 I1).
+# REQUEST HEAD. This composite action downloads its own release binary — a
+# fixed artifact, not head-controlled code — and reviews the pull request
+# from the GitHub API. Nothing from the pull request head is ever executed
+# or built (§12 I1).
 name: 'Cite'
 description: >
   Reviews pull requests with a large language model you choose, posts a real
@@ -17,33 +18,38 @@ branding:
 
 inputs:
   model_api_key:
-    description: 'API key for the model provider. Optional when a provider is inferred from the environment.'
+    description: 'API key for the model provider.'
     required: false
   config_path:
-    description: 'Path to .github/cite.yml relative to the base ref. Leave unset.'
+    description: 'Path to .github/cite.yml relative to the base ref. Leave unset for defaults.'
     required: false
     default: '.github/cite.yml'
   dry_run:
     description: 'Set to "true" to print findings without posting.'
     required: false
     default: 'false'
+  version:
+    description: 'Cite release tag to download.'
+    required: false
+    default: 'v0.1.1'
 
 runs:
   using: 'composite'
   steps:
-    # Trusted checkout: this action's own source at the ref the caller
-    # pinned. This is NOT the pull request head.
-    - name: Check out Cite itself
-      uses: actions/checkout@v4
-      with:
-        repository: ${{ github.action_repository }}
-        ref: ${{ github.action_ref }}
-        persist-credentials: false
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version-file: 'go.mod'
+    - name: Download Cite binary
+      shell: bash
+      env:
+        CITE_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        case "${RUNNER_ARCH}" in
+          X64) arch=amd64 ;;
+          ARM64) arch=arm64 ;;
+          *) echo "unsupported runner arch: ${RUNNER_ARCH}" >&2; exit 1 ;;
+        esac
+        url="https://github.com/elecnix/cite/releases/download/${CITE_VERSION}/cite-linux-${arch}"
+        curl -fsSL --retry 3 -o /usr/local/bin/cite "$url"
+        chmod +x /usr/local/bin/cite
 
     - name: Run Cite review
       shell: bash
@@ -54,16 +60,12 @@ runs:
         CITE_DRY_RUN: ${{ inputs.dry_run }}
       run: |
         set -euo pipefail
-        ARGS=""
-        if [ -n "${PR_NUMBER:-}" ] && [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-          ARGS="--pr $GITHUB_REPOSITORY#$PR_NUMBER"
-        elif [ -n "${CITE_DIFF_FILE:-}" ]; then
-          ARGS="--diff $CITE_DIFF_FILE"
-        else
-          echo "cite: no pull request context found (event: ${GITHUB_EVENT_NAME:-unknown})" >&2
-          exit 1
+        if [ -z "${PR_NUMBER:-}" ]; then
+          echo "cite: no pull request context (event: ${GITHUB_EVENT_NAME:-unknown}); nothing to review" >&2
+          exit 0
         fi
+        ARGS="--pr $GITHUB_REPOSITORY#$PR_NUMBER --config $CITE_CONFIG_PATH"
         if [ "$CITE_DRY_RUN" = "true" ]; then
           ARGS="$ARGS --dry-run"
         fi
-        go run ./cmd/cite review $ARGS --config "$CITE_CONFIG_PATH"
+        cite review $ARGS
