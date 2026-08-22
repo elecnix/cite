@@ -1,0 +1,43 @@
+# examples/blocking.yml
+#
+# The gate. `gate: block` in .github/cite.yml makes the check run conclude
+# failure when a finding blocks — so branch protection can require it before
+# merge.
+#
+# Read docs/security.md first. The check run is fail-closed: PASS requires every
+# in-scope file reviewed (or explicitly skipped with a reason) and nothing
+# blocking. Provider outage, incomplete coverage, and zero in-scope files all
+# conclude COULD_NOT_EVALUATE — a failure, never a green.
+#
+# Recommendation from the plan: run with `gate: comment` for the first month,
+# read what it posts, then flip this.
+
+name: review
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: cite-review/cite@v1
+        env:
+          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
+
+# --- .github/cite.yml -------------------------------------------------------
+#
+# gate: block
+#
+# What "blocks" means: a finding blocks only when it is in a category on the
+# blocking list, its evidence quote matches the file, the anchor is on an added
+# line, every external claim verified, and the verification pass supported it.
+# There is no severity scale; blocking is computed in code
+# (docs/noise.md). Repository configuration may shrink the blocking set and may
+# never grow it.
+#
+# The review itself is always event: COMMENT, never REQUEST_CHANGES — blocking
+# lives in the check run or nowhere. Break-glass: a label any author can apply
+# concludes the check with BYPASSED and is logged; a scheduled job re-reviews
+# bypassed merge commits afterwards. See docs/security.md.

@@ -1,0 +1,46 @@
+# examples/byo-model.yml
+#
+# Bring your own model: a private gateway, a self-hosted endpoint, or any
+# provider reachable over one of the three supported wire protocols.
+#
+# The workflow is identical to minimal.yml — the model choice lives in
+# .github/cite.yml, read from the BASE ref, never from the pull request head
+# (see docs/security.md, invariant I3).
+
+name: review
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: cite-review/cite@v1
+        env:
+          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
+
+# --- .github/cite.yml -------------------------------------------------------
+# The configuration that goes with this workflow:
+#
+# model: gateway/vendor/model-x
+# providers:
+#   gateway:
+#     base_url: https://gateway.example.invalid/v1
+#     api: openai-completions   # openai-completions | openai-responses | anthropic-messages
+#     api_key: $MODEL_API_KEY   # credential expression, never a literal secret
+#     headers:
+#       x-tenant: acme
+#     models:
+#       - id: vendor/model-x    # the only required field
+#         context_window: 262144
+#         max_tokens: 8192
+#         cost: { input: 5, output: 30, cache_read: 0.5, cache_write: 6.25 }
+# roles:
+#   review:   { model: gateway/vendor/model-x, timeout: 90s, max_output_tokens: 8192, concurrency: 8 }
+#   triage:   { model: gateway/cheap-model,    timeout: 30s }
+#   assemble: { model: gateway/cheap-model,    timeout: 60s }
+# fallback: [gateway/vendor/model-x, other/backup-model]
+#
+# Validate before merging: `cite validate`

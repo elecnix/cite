@@ -1,0 +1,71 @@
+# examples/fork-safe.yml
+#
+# Fork pull requests cannot be handled by one workflow: the job that holds the
+# model key must never touch pull-request-head code (docs/security.md,
+# invariant I1), and `pull_request` events on forks get no secrets.
+#
+# The pattern is two workflows:
+#
+#   1. cite-diff      on `pull_request`. Untrusted side. Runs for fork PRs too,
+#                     with a read-only token and NO secrets. Captures the diff
+#                     as inert data.
+#   2. cite-review    on `workflow_run`. Trusted side. Runs in the BASE
+#                     repository context with MODEL_API_KEY. It takes the pull
+#                     request number ONLY from the authenticated workflow_run
+#                     event metadata — never from artifact contents, cache, or
+#                     comment text (invariant I2) — re-fetches the diff by API,
+#                     and creates the check run explicitly on the PULL REQUEST
+#                     HEAD SHA, because `workflow_run` attaches checks to the
+#                     default branch by default.
+
+# ---------------------------------------------------------------------------
+# Workflow 1 of 2: .github/workflows/cite-diff.yml
+# ---------------------------------------------------------------------------
+name: cite-diff
+on: pull_request
+permissions:
+  contents: read          # read-only token; no secrets in this job, ever
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: cite-review/cite@v1
+        # No MODEL_API_KEY here. This job publishes nothing and holds nothing;
+        # it exists so the trusted side has a triggering run and so fork PRs
+        # are not silently skipped.
+
+# ---------------------------------------------------------------------------
+# Workflow 2 of 2: .github/workflows/cite-review.yml
+# ---------------------------------------------------------------------------
+name: cite-review
+on:
+  workflow_run:
+    workflows: [cite-diff]
+    types: [completed]
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+concurrency:
+  # Single writer per pull request; GitHub's queue is the database.
+  group: cite-pr-${{ github.event.workflow_run.pull_requests[0].number }}
+  cancel-in-progress: false   # publishing is short and uncancellable
+jobs:
+  review:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Review and publish
+        uses: cite-review/cite@v1
+        env:
+          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
+        with:
+          workflow_run_event: true   # resolve PR number + head SHA from the
+                                     # authenticated event only; create the
+                                     # check run on the PR head SHA
+      # Deliberately absent from BOTH workflows:
+      # - actions/checkout            no head code executes in any privileged job
+      # - artifact download as input  trust is never taken from an
+      #                               attacker-writable channel (I2); the diff
+      #                               is fetched by API from the authoritative
+      #                               pull request number
