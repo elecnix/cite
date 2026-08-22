@@ -5,7 +5,9 @@ package main
 //	listen  — the one keyword: "@cite review" on an issue comment re-runs
 //	          the review, authorised from authenticated API metadata.
 //	signals — walk review comments for 👎 reactions on Cite findings and
-//	          record dismissals in the sticky-comment ledger.
+//	          record dismissals in the sticky-comment ledger; disambiguate
+//	          resolved threads mechanically: quoted span changed since →
+//	          accepted-and-fixed, span byte-identical → dismissed (§14).
 //
 // Both are read-mostly reconcilers: they mutate only the ledger blob inside
 // Cite's own sticky comment and never touch reviews or check runs.
@@ -22,6 +24,7 @@ import (
 	"time"
 
 	"github.com/elecnix/cite/internal/githubclient"
+	"github.com/elecnix/cite/internal/metrics"
 	"github.com/elecnix/cite/internal/publisher"
 )
 
@@ -139,6 +142,14 @@ func runSignals(args []string) error {
 	c := githubclient.New(token, "", nil).WithRepo(owner, repo)
 	ctx := context.Background()
 
+	// The head SHA for span-change comparisons comes only from
+	// authenticated API metadata (I2), never from thread or comment text.
+	pr, err := c.GetPR(ctx, num)
+	if err != nil {
+		return fmt.Errorf("fetching PR #%d: %w", num, err)
+	}
+	headSHA := pr.HeadSHA
+
 	comments, err := c.ReviewComments(ctx, num)
 	if err != nil {
 		return err
@@ -192,28 +203,52 @@ func runSignals(args []string) error {
 	if err != nil {
 		return err
 	}
-	citeThreads, resolved := 0, 0
+	citeThreads, resolvedCount, accepted, byResolution := 0, 0, 0, 0
 	for _, t := range threads {
 		if len(t.Comments) == 0 {
 			continue
 		}
-		if _, _, ok := parseCiteCommentBody(t.Comments[0].Body); !ok {
+		fp, tf, ok := parseCiteCommentBody(t.Comments[0].Body)
+		if !ok {
 			continue
 		}
 		citeThreads++
-		if t.IsResolved {
-			resolved++
+		if !t.IsResolved {
+			continue
+		}
+		resolvedCount++
+		// §14: a human resolving a thread means handled, disambiguated
+		// mechanically. If the quoted span changed in a later push it was
+		// accepted-and-fixed; if it is still identical, the human read it
+		// and said no — a dismissal. No evidence data means unverifiable:
+		// record neither.
+		if tf == nil || len(tf.Evidence) == 0 {
+			continue
+		}
+		content, _, err := c.GetFileContent(ctx, headSHA, tf.Path)
+		if err != nil {
+			return fmt.Errorf("fetching %s at head for resolution check: %w", tf.Path, err)
+		}
+		if metrics.SpanChanged(tf.Evidence, content) {
+			accepted++
+			ledger.AddAcceptedFixed(fp, repoFull, now)
+			fmt.Printf("resolved %s with the span changed → accepted-and-fixed recorded\n", fp)
+		} else {
+			byResolution++
+			ledger.Add(fp, repoFull, "thread-resolution", "UNKNOWN", now)
+			fmt.Printf("resolved %s with the span identical → dismissal recorded\n", fp)
 		}
 	}
 
-	fmt.Printf("%s#%d: %d Cite thread(s), %d resolved / %d open; %d dismissal(s) seen\n",
-		repoFull, num, citeThreads, resolved, citeThreads-resolved, dismissals)
+	fmt.Printf("%s#%d: %d Cite thread(s), %d resolved / %d open; "+
+		"%d 👎 dismissal(s), %d accepted-and-fixed, %d dismissed-by-resolution\n",
+		repoFull, num, citeThreads, resolvedCount, citeThreads-resolvedCount, dismissals, accepted, byResolution)
 
 	if *dryRun {
 		fmt.Println("dry-run: ledger not persisted")
 		return nil
 	}
-	if dismissals > 0 {
+	if dismissals > 0 || accepted > 0 || byResolution > 0 {
 		if err := updateStickyLedger(ctx, c, num, ledger); err != nil {
 			return err
 		}
