@@ -85,6 +85,9 @@ type Reviewer struct {
 	retryLeft map[string]int // run-global retry token bucket, per unit type
 	filesMu   sync.Mutex
 	finalized map[string]bool // manifest paths with a recorded terminal state
+
+	usageMu sync.Mutex
+	usage   model.Usage // run-total of every completion response's counters (§15)
 }
 
 // New builds a Reviewer.
@@ -123,6 +126,25 @@ const (
 	// provider calls (§7).
 	defaultRetriesPerUnitType = 3
 )
+
+// accumulateUsage folds one response's token counters into the run total.
+// Calls arrive concurrently from the review worker pool, so the total is
+// mutex-protected like the other run-scoped state.
+func (r *Reviewer) accumulateUsage(u model.Usage) {
+	r.usageMu.Lock()
+	defer r.usageMu.Unlock()
+	r.usage.InputTokens += u.InputTokens
+	r.usage.OutputTokens += u.OutputTokens
+	r.usage.CacheReadTokens += u.CacheReadTokens
+	r.usage.CacheWriteTokens += u.CacheWriteTokens
+}
+
+// totalUsage returns the accumulated run-total.
+func (r *Reviewer) totalUsage() model.Usage {
+	r.usageMu.Lock()
+	defer r.usageMu.Unlock()
+	return r.usage
+}
 
 func (r *Reviewer) logf(format string, args ...any) {
 	if r.o.Logger != nil {
@@ -179,6 +201,7 @@ func (r *Reviewer) completeWithRetry(ctx context.Context, unit string, req model
 		resp, err := r.o.Client.Complete(cctx, req)
 		cancel()
 		if err == nil {
+			r.accumulateUsage(resp.Usage)
 			return resp, nil
 		}
 		if errors.Is(err, model.ErrDeterministic) {
@@ -367,6 +390,7 @@ func (r *Reviewer) Run(ctx context.Context, in Inputs) (*model.RunRecord, error)
 	}
 
 	rec.Coverage = scope.ComputeCoverage(rec.Files, len(in.Manifest))
+	rec.Usage = r.totalUsage()
 	sort.SliceStable(rec.Files, func(i, j int) bool { return rec.Files[i].Path < rec.Files[j].Path })
 	return rec, runErr
 }

@@ -385,6 +385,13 @@ type RunRecord struct {
 
 	// Samples is 1: a green is one sample (§8).
 	Samples int `json:"samples"`
+
+	// Usage is the run-total of every completion response's token counters,
+	// accumulated in the reviewer where responses arrive. CostUSD is derived
+	// from the declared per-million rates (§6); it is 0 when no rates are
+	// declared for the model, never guessed.
+	Usage   Usage   `json:"usage"`
+	CostUSD float64 `json:"cost_usd"`
 }
 
 // InstructionUsage records which instruction sections survived triage.
