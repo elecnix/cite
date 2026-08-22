@@ -120,3 +120,64 @@ func TestRequestCarriesStructuredOutputAndSeed(t *testing.T) {
 		t.Fatalf("usage not surfaced: %+v", resp.Usage)
 	}
 }
+
+func TestNewClientPrefersModelAPIKey(t *testing.T) {
+	// The bring-your-own-key path is unchanged: MODEL_API_KEY wins over the
+	// ambient GITHUB_TOKEN.
+	t.Setenv("MODEL_API_KEY", "sk-test")
+	t.Setenv("GITHUB_TOKEN", "gh-token")
+	c, err := NewOpenAICompatClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BaseURL != "https://api.openai.com/v1" || c.APIKey != "sk-test" || c.Model != "gpt-5-mini" {
+		t.Fatalf("MODEL_API_KEY path changed: %+v", c)
+	}
+}
+
+func TestNewClientFallsBackToGitHubModels(t *testing.T) {
+	// Zero-secret first run (§1): no MODEL_API_KEY, ambient GITHUB_TOKEN
+	// present → GitHub's models endpoint with the default model id. Pure
+	// construction assertions; no network.
+	t.Setenv("MODEL_API_KEY", "")
+	t.Setenv("MODEL_BASE_URL", "")
+	t.Setenv("MODEL_ID", "")
+	t.Setenv("GITHUB_TOKEN", "gh-ambient")
+	c, err := NewOpenAICompatClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BaseURL != "https://models.github.ai/inference" {
+		t.Fatalf("base URL: %q", c.BaseURL)
+	}
+	if c.APIKey != "gh-ambient" {
+		t.Fatalf("ambient token not used: %q", c.APIKey)
+	}
+	if c.Model != "openai/gpt-4o-mini" {
+		t.Fatalf("default model: %q", c.Model)
+	}
+}
+
+func TestNewClientGitHubModelsHonoursModelID(t *testing.T) {
+	t.Setenv("MODEL_API_KEY", "")
+	t.Setenv("MODEL_ID", "openai/gpt-4.1-mini")
+	t.Setenv("GITHUB_TOKEN", "gh-ambient")
+	c, err := NewOpenAICompatClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Model != "openai/gpt-4.1-mini" || c.BaseURL != "https://models.github.ai/inference" {
+		t.Fatalf("MODEL_ID override: %+v", c)
+	}
+}
+
+func TestNewClientErrorsWithoutAnyKey(t *testing.T) {
+	t.Setenv("MODEL_API_KEY", "")
+	t.Setenv("MODEL_BASE_URL", "")
+	t.Setenv("MODEL_ID", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	c, err := NewOpenAICompatClient()
+	if err == nil || c != nil {
+		t.Fatalf("want error with no key at all, got %v %v", c, err)
+	}
+}
