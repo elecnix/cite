@@ -1,0 +1,42 @@
+# Dogfooding: Cite reviews its own pull requests (PLAN §17, "shadow mode").
+#
+# This uses Cite's own released composite action — the same install path a
+# consumer copies from the README — on every pull request of this
+# repository. The default gate is `comment`: reviews post as COMMENT and the
+# check run is always success or neutral in v0.1/v0.2, so this can never
+# block a merge; it exists to measure the tool on the code that builds it.
+#
+# Security posture mirrors the documented install (§12): no checkout of the
+# pull request head — the action fetches everything it needs from the GitHub
+# API — and the model key arrives as a secret, never in the diff.
+
+name: review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+concurrency:
+  # One review per pull request at a time; superseded runs may be cancelled
+  # freely because publishing is idempotent (fingerprint reconciliation).
+  group: cite-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Fork pull requests receive a read-only github.token, so posting the
+    # review would fail; Cite's own fork-safe two-workflow split (§12) is
+    # deliberately not wired up for its own repository yet.
+    if: github.event.pull_request.head.repo.fork == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Review this pull request with Cite
+        uses: elecnix/cite@v0.2.1
+        with:
+          model_id: deepseek/deepseek-v4-flash-0731
+          model_base_url: https://openrouter.ai/api/v1
+          model_api_key: ${{ secrets.MODEL_API_KEY }}
