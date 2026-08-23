@@ -83,7 +83,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p dist
-          gh run download "${{ github.run_id }}" --dir dist
+          gh run download -R "$GITHUB_REPOSITORY" "${{ github.run_id }}" --dir dist
           find dist -type f -name 'cite-*' -exec mv {} dist/ \;
           ls -l dist
 
