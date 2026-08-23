@@ -149,7 +149,7 @@ func (r *Reviewer) runTriage(ctx context.Context, in *Inputs) (flagged map[strin
 		return nil, false
 	}
 	var tr triageResult
-	if err := json.Unmarshal([]byte(resp.Text), &tr); err != nil {
+	if err := json.Unmarshal(model.UnwrapJSON([]byte(resp.Text)), &tr); err != nil {
 		r.logf("triage output unparsable (%v); falling back to reviewing all files batched", err)
 		return nil, false
 	}

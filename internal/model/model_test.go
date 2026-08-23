@@ -159,3 +159,44 @@ func TestMinCacheHitRateFloor(t *testing.T) {
 		t.Fatal("60% must meet the floor")
 	}
 }
+
+// A model that wraps its schema-constrained answer in a markdown code fence
+// was failing the whole file with
+// `schema: invalid character '`' looking for beginning of value`. The fence is
+// a transport artifact, not a contract violation.
+func TestParseFileReviewAcceptsFencedJSON(t *testing.T) {
+	body := `{"schema_version":1,"path":"a.go","outcome":"reviewed","findings":[]}`
+	for _, tc := range []struct{ name, in string }{
+		{"bare", body},
+		{"json fence", "```json\n" + body + "\n```"},
+		{"plain fence", "```\n" + body + "\n```"},
+		{"fence with surrounding blank lines", "\n\n```json\n" + body + "\n```\n\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fr, err := ParseFileReview([]byte(tc.in))
+			if err != nil {
+				t.Fatalf("ParseFileReview: %v", err)
+			}
+			if fr.Path != "a.go" || fr.Outcome != OutcomeReviewed {
+				t.Errorf("got %+v", fr)
+			}
+		})
+	}
+}
+
+// Unwrapping must not become repair: anything that is not exactly one fenced
+// block is left alone and fails the schema check as before.
+func TestUnwrapJSONLeavesNonFencedInputAlone(t *testing.T) {
+	for _, in := range []string{
+		`{"schema_version":1}`,
+		"",
+		"```",
+		"```json\n{}",                           // no closing fence
+		"```json\n{}\n```\nand then some prose", // trailing prose
+		"here is my answer:\n```json\n{}\n```",  // leading prose
+	} {
+		if got := string(UnwrapJSON([]byte(in))); got != in {
+			t.Errorf("UnwrapJSON(%q) = %q, want it untouched", in, got)
+		}
+	}
+}
