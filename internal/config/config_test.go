@@ -508,3 +508,48 @@ func TestSchemaJSONIsEmbeddedAndValid(t *testing.T) {
 		t.Errorf("schema maximum = %v, want 20", mc["maximum"])
 	}
 }
+
+// ModelMaxTokens keeps the promise docs/configuration.md makes for a model
+// entry's max_tokens ("default output cap for calls using this model"). The
+// field was parsed and then read by nothing.
+func TestModelMaxTokensResolvesThroughProvider(t *testing.T) {
+	src := `
+model: openai/gpt-5-mini
+providers:
+  gateway:
+    base_url: https://gateway.example.invalid/v1
+    api: openai-completions
+    models:
+      - id: vendor/model-x
+        max_tokens: 8192
+      - id: cheap-model
+roles:
+  review:   { model: gateway/vendor/model-x }
+  triage:   { model: gateway/cheap-model }
+`
+	c := mustParse(t, src)
+
+	// The first '/' splits provider from id, so "gateway/vendor/model-x"
+	// resolves to provider "gateway", id "vendor/model-x".
+	if got := c.ModelMaxTokens(model.RoleReview); got != 8192 {
+		t.Errorf("ModelMaxTokens(review) = %d, want 8192", got)
+	}
+	// An entry that declares no max_tokens yields 0, meaning "no opinion":
+	// the caller keeps its built-in default.
+	if got := c.ModelMaxTokens(model.RoleTriage); got != 0 {
+		t.Errorf("ModelMaxTokens(triage) = %d, want 0", got)
+	}
+	// assemble has no role entry, so it falls back to the top-level model,
+	// which names no declared provider.
+	if got := c.ModelMaxTokens(model.RoleAssemble); got != 0 {
+		t.Errorf("ModelMaxTokens(assemble) = %d, want 0", got)
+	}
+	// A config with no providers at all has nothing to resolve against.
+	if got := Default().ModelMaxTokens(model.RoleReview); got != 0 {
+		t.Errorf("Default().ModelMaxTokens(review) = %d, want 0", got)
+	}
+	var nilCfg *Config
+	if got := nilCfg.ModelMaxTokens(model.RoleReview); got != 0 {
+		t.Errorf("nil.ModelMaxTokens(review) = %d, want 0", got)
+	}
+}
