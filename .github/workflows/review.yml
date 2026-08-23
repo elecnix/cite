@@ -38,5 +38,5 @@ jobs:
         uses: elecnix/cite@v0.2.1
         with:
           model_id: deepseek/deepseek-v4-flash-0731
-        env:
-          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
+          model_base_url: https://openrouter.ai/api/v1
+          model_api_key: ${{ secrets.MODEL_API_KEY }}
