@@ -271,3 +271,49 @@ func TestNeedsReaper(t *testing.T) {
 		t.Fatalf("empty input should reap nothing")
 	}
 }
+
+// The check-run summary is the one surface a human sees on every run (the
+// sticky comment is machine state; the run record is the artifact). Cost and
+// cache behaviour belong there: §7 calls caching failure silent, and §15's
+// "cost you can see" is the number to put in front of a buyer.
+func TestCheckRunPayloadReportsCostAndCacheHit(t *testing.T) {
+	rec := baseRecord()
+	rec.Model = "deepseek/deepseek-v4-flash-0731"
+	rec.CostUSD = 0.0123
+	rec.Usage = model.Usage{
+		InputTokens: 16000, OutputTokens: 900,
+		CacheReadTokens: 9800, CacheWriteTokens: 1200,
+	}
+	_, summary := CheckRunPayload(rec, model.VerdictPass, "all clear")
+
+	if !strings.Contains(summary, "cost: $0.0123") {
+		t.Errorf("summary missing cost line:\n%s", summary)
+	}
+	if !strings.Contains(summary, "deepseek/deepseek-v4-flash-0731") {
+		t.Errorf("summary missing model id:\n%s", summary)
+	}
+	// 9800/16000 = 61.25% — above the floor and worth showing.
+	if !strings.Contains(summary, "61% cache-hit") {
+		t.Errorf("summary missing cache-hit percentage:\n%s", summary)
+	}
+}
+
+func TestCheckRunPayloadOmitsCostLineWithoutUsage(t *testing.T) {
+	rec := baseRecord()
+	_, summary := CheckRunPayload(rec, model.VerdictPass, "fine")
+	if strings.Contains(summary, "cost:") || strings.Contains(summary, "cache-hit") {
+		t.Errorf("no usage recorded ⇒ no cost/cache lines:\n%s", summary)
+	}
+}
+
+func TestCheckRunPayloadCacheHitBelowFloorStillShown(t *testing.T) {
+	// A cold miss must be visible, not hidden: the whole point of printing
+	// the rate is that a regression shows up on the check itself.
+	rec := baseRecord()
+	rec.CostUSD = 0.5
+	rec.Usage = model.Usage{InputTokens: 10000, OutputTokens: 900, CacheReadTokens: 500}
+	_, summary := CheckRunPayload(rec, model.VerdictFound, "found")
+	if !strings.Contains(summary, "5% cache-hit") {
+		t.Errorf("low cache-hit must still render:\n%s", summary)
+	}
+}

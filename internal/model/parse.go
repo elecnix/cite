@@ -43,9 +43,56 @@ func UnwrapJSON(data []byte) []byte {
 // ParseFileReview validates a raw model response against the closed schema.
 // Structured output is enforced by the provider where available; this is the
 // second gate. A schema violation is a parse failure, not a best-effort read.
+// escapeRawControlCharsInStrings rewrites raw control characters (tab,
+// newline, carriage return — anything < 0x20) that appear INSIDE JSON string
+// literals into their escaped forms, leaving structural whitespace and
+// already-valid escapes untouched.
+//
+// Why this exists: models routinely copy the envelope's tab-indented code
+// lines into evidence quotes and emit a literal tab inside a string literal.
+// Strict decoding rejects it, §7 classifies the failure as deterministic,
+// and every retry reproduces it byte-identically — one unescaped tab cost a
+// whole file's review in production. Escaping is semantics-preserving: the
+// decoded string is identical to what an escaped emission would decode to.
+func escapeRawControlCharsInStrings(data []byte) []byte {
+	out := make([]byte, 0, len(data)+8)
+	inString := false
+	escaped := false
+	for _, c := range data {
+		if escaped {
+			// This byte is part of an escape sequence; pass both through.
+			out = append(out, c)
+			escaped = false
+			continue
+		}
+		switch {
+		case inString && c == '\\':
+			out = append(out, c)
+			escaped = true
+		case c == '"':
+			inString = !inString
+			out = append(out, c)
+		case inString && c < 0x20:
+			switch c {
+			case '\t':
+				out = append(out, '\\', 't')
+			case '\n':
+				out = append(out, '\\', 'n')
+			case '\r':
+				out = append(out, '\\', 'r')
+			default:
+				out = append(out, []byte(fmt.Sprintf("\\u%04x", c))...)
+			}
+		default:
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func ParseFileReview(data []byte) (*FileReview, error) {
 	var fr FileReview
-	if err := json.Unmarshal(UnwrapJSON(data), &fr); err != nil {
+	if err := json.Unmarshal(escapeRawControlCharsInStrings(UnwrapJSON(data)), &fr); err != nil {
 		return nil, fmt.Errorf("schema: %w", err)
 	}
 	if fr.SchemaVersion != SchemaVersion {
