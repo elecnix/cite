@@ -4,6 +4,14 @@ Releases are tag-driven: pushing a `v*` tag is the only step a maintainer takes.
 
 ## Cut a release
 
+Before tagging, bump the composite action's download default so the tag
+and `action.yml` agree — the workflow fails the release if they drift:
+
+```sh
+# in the same change as the release:
+#   action.yml: inputs.version.default → vX.Y.Z
+```
+
 ```sh
 git tag vX.Y.Z
 git push origin vX.Y.Z
