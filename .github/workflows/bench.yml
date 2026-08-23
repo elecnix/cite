@@ -1,0 +1,45 @@
+# TEMPORARY autoresearch bench: build cite at HEAD and time a real dry-run
+# review against an actual pull request. Measures end-to-end reviewer latency
+# for candidate code changes without cutting a release.
+#
+# This workflow exists only on the experiment branch and must be removed
+# before the final PR is marked ready.
+name: bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'PR number to review in dry-run mode'
+        required: true
+        default: '27'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version-file: go.mod
+      - name: Build cite at HEAD
+        run: go build -o /usr/local/bin/cite ./cmd/cite
+      - name: Time dry-run review
+        env:
+          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
+          MODEL_BASE_URL: https://openrouter.ai/api/v1
+          MODEL_ID: deepseek/deepseek-v4-flash-0731
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          cite review --pr "${{ github.repository }}#${{ inputs.pr }}" --dry-run || rc=$?
+          end=$(date +%s)
+          echo "BENCH_REVIEW_S=$((end-start)) RC=${rc:-0}" >> "$GITHUB_STEP_SUMMARY"
+          exit ${rc:-0}
