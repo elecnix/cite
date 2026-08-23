@@ -53,6 +53,21 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Verify action.yml default matches the tag
+        run: |
+          set -euo pipefail
+          # The composite action downloads its own release binary, and the
+          # version input selects which one. If the default here lags the
+          # tag being released, every consumer who pins uses: alone silently
+          # keeps running the previous release's binary (that is exactly how
+          # v0.2.0 shipped pointing at v0.1.3). Fail the release instead.
+          default=$(grep -A4 '^  version:' action.yml | grep -oP "default: '\K[^']+" | head -1)
+          echo "action.yml version default: ${default}; releasing ${GITHUB_REF_NAME}"
+          if [ "$default" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::action.yml version default (${default}) does not match the release tag (${GITHUB_REF_NAME}). Bump the default in the same change that cuts the release."
+            exit 1
+          fi
+
       - name: Build static binary
         env:
           GOOS: ${{ matrix.goos }}
