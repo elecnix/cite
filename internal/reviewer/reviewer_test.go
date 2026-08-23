@@ -847,3 +847,117 @@ func (u *usageClient) Complete(ctx context.Context, req model.CompletionRequest)
 }
 
 func (u *usageClient) ModelID() string { return u.inner.ModelID() }
+
+// --- output-token cap -------------------------------------------------------
+
+// reviewCallMaxTokens runs one review and returns the MaxOutputTokens the
+// per-file review call was actually issued with.
+func reviewCallMaxTokens(t *testing.T, o Options, c *fakeClient) int {
+	t.Helper()
+	if _, err := runOnce(t, baseInputs(), o); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, req := range c.calls {
+		if !isTriageCall(req) && requestPath(req) == "a.go" {
+			return req.MaxOutputTokens
+		}
+	}
+	t.Fatal("no review call for a.go was issued")
+	return 0
+}
+
+// A per-file review must have room for the schema's worst case: MaxCommentsCap
+// findings, each with title/body/impact/evidence/fix, plus reasoning tokens
+// billed against the same budget. The old 4096 could not hold ten such
+// findings, so large files died with
+// "deterministic failure: output truncated at token cap (finish_reason=length)"
+// and took the whole run to COULD_NOT_EVALUATE.
+func TestReviewOutputCapFitsWorstCaseFindings(t *testing.T) {
+	c := &fakeClient{fn: defaultScript("a.go")}
+	got := reviewCallMaxTokens(t, baseOptions(c), c)
+
+	// ~600 output tokens for a rich finding, at the hard comment cap.
+	const worstCase = 600 * config.MaxCommentsCap
+	if got < worstCase {
+		t.Errorf("review call MaxOutputTokens = %d, want at least %d "+
+			"(%d findings x ~600 tokens); a cap this small truncates large files",
+			got, worstCase, config.MaxCommentsCap)
+	}
+	if got != defaultReviewMaxTokens {
+		t.Errorf("review call MaxOutputTokens = %d, want the default %d", got, defaultReviewMaxTokens)
+	}
+}
+
+// docs/configuration.md documents a model entry's max_tokens as the "default
+// output cap for calls using this model". It was parsed and then never read by
+// anything: a documented promise with no implementation behind it.
+func TestModelEntryMaxTokensSetsTheCap(t *testing.T) {
+	cfg := mustCfg(t, `
+model: openai/gpt-5-mini
+providers:
+  gateway:
+    base_url: https://gateway.example.invalid/v1
+    api: openai-completions
+    models:
+      - id: roomy
+        max_tokens: 65536
+      - id: narrow
+        max_tokens: 1024
+roles:
+  review: { model: gateway/roomy }
+`)
+	c := &fakeClient{fn: defaultScript("a.go")}
+	if got := reviewCallMaxTokens(t, Options{Cfg: cfg, Client: c}, c); got != 65536 {
+		t.Errorf("review call MaxOutputTokens = %d, want 65536 from the model entry", got)
+	}
+
+	// The same lookup must lower the cap on a model that cannot emit more:
+	// requesting more than the model advertises is a 400, not a bigger answer.
+	cfg2 := mustCfg(t, `
+model: openai/gpt-5-mini
+providers:
+  gateway:
+    base_url: https://gateway.example.invalid/v1
+    api: openai-completions
+    models:
+      - id: narrow
+        max_tokens: 1024
+roles:
+  review: { model: gateway/narrow }
+`)
+	c2 := &fakeClient{fn: defaultScript("a.go")}
+	if got := reviewCallMaxTokens(t, Options{Cfg: cfg2, Client: c2}, c2); got != 1024 {
+		t.Errorf("review call MaxOutputTokens = %d, want 1024 from the model entry", got)
+	}
+}
+
+// An explicit roles.review.max_output_tokens is an operator instruction and
+// wins over the model entry. Silently shrinking a number someone wrote down
+// would be the invisible behaviour change §6 forbids.
+func TestRoleMaxOutputTokensBeatsModelEntry(t *testing.T) {
+	cfg := mustCfg(t, `
+model: openai/gpt-5-mini
+providers:
+  gateway:
+    base_url: https://gateway.example.invalid/v1
+    api: openai-completions
+    models:
+      - id: roomy
+        max_tokens: 65536
+roles:
+  review: { model: gateway/roomy, max_output_tokens: 4096 }
+`)
+	c := &fakeClient{fn: defaultScript("a.go")}
+	if got := reviewCallMaxTokens(t, Options{Cfg: cfg, Client: c}, c); got != 4096 {
+		t.Errorf("review call MaxOutputTokens = %d, want the explicit 4096", got)
+	}
+}
+
+func mustCfg(t *testing.T, src string) *config.Config {
+	t.Helper()
+	cfg, err := config.Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("config.Parse: %v", err)
+	}
+	return cfg
+}

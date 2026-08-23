@@ -94,7 +94,9 @@ this is not a credential channel.
 Each entry has exactly **one required field, `id`**. Everything else defaults:
 
 - `context_window` — input token limit
-- `max_tokens` — default output cap for calls using this model
+- `max_tokens` — default output cap for calls using this model. Overrides the
+  built-in default in either direction; see
+  [the output cap](#the-output-cap).
 - `cost` — per-million-token rates: `input`, `output`, `cache_read`,
   `cache_write`
 
@@ -123,6 +125,29 @@ roles:
 Timeouts and concurrency are **per role**, not global, because a slow local model
 and a fast hosted one cannot share one number. Unspecified fields inherit sane
 defaults; `concurrency` is capped at 16 regardless of configuration.
+
+### The output cap
+
+The output cap resolves most-specific-first, in three layers:
+
+1. `roles.<role>.max_output_tokens` — an explicit instruction, and it wins
+   outright. Cite will not silently shrink a number you wrote down.
+2. the `max_tokens` of the model the role resolves to — what the model says it
+   can emit. This both raises the cap on a roomy model and lowers it on a narrow
+   one, and it is the only way Cite can know a ceiling it cannot query.
+3. the built-in default: **32768** for `review`, 8192 for `triage`.
+
+The review default is sized for the schema's worst case — `max_comments`'s hard
+cap of 20 findings, each with a title, body, impact, quoted evidence and an
+optional fix, plus whatever reasoning tokens the provider bills against the same
+budget.
+
+**If the cap is too small, the file errors; it is never quietly shortened.** A
+response cut off at the cap comes back as `finish_reason=length`, which is a
+deterministic failure: the file is recorded as errored, and coverage is
+incomplete, so the gate reports `COULD_NOT_EVALUATE` rather than a clean pass on
+a review that stopped halfway. If your model advertises a smaller ceiling than
+the default, declare its `max_tokens` under the provider's `models` entry.
 
 ## Fallback
 

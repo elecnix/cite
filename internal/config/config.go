@@ -315,6 +315,36 @@ func (c *Config) Role(role model.Role) model.RoleConfig {
 	return rc
 }
 
+// ModelMaxTokens returns the output cap advertised by the model a role
+// resolves to, or 0 when no providers are declared or the entry omits
+// max_tokens. docs/configuration.md calls max_tokens "default output cap for
+// calls using this model"; this is where that promise is kept.
+//
+// Reference resolution matches checkModelRefs exactly — the FIRST '/'
+// separates provider from model id, so "gateway/vendor/model-x" is provider
+// "gateway", id "vendor/model-x". A reference that fails to resolve yields 0
+// rather than an error: validation already rejects those, and a cap lookup
+// must never be the thing that fails a run.
+func (c *Config) ModelMaxTokens(role model.Role) int {
+	if c == nil || len(c.Providers) == 0 {
+		return 0
+	}
+	provider, id, hasSlash := strings.Cut(c.Role(role).Model, "/")
+	if !hasSlash {
+		return 0
+	}
+	p, ok := c.Providers[provider]
+	if !ok || p == nil {
+		return 0
+	}
+	for _, m := range p.Models {
+		if m.ID == id {
+			return m.MaxTokens
+		}
+	}
+	return 0
+}
+
 func sortedProviderNames(m map[string]*model.Provider) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

@@ -7,12 +7,45 @@ import (
 	"strings"
 )
 
+// UnwrapJSON removes a surrounding markdown code fence from a model response.
+//
+// Providers that honour a response schema return bare JSON, but some wrap it
+// in ```json ... ``` anyway, and the run then died on
+// `schema: invalid character '`' looking for beginning of value` — a
+// transport artifact reported as if the model had broken the contract.
+//
+// This is unwrapping, not repair. Valid JSON never begins with a backtick, so
+// the guard cannot touch a well-formed response, and whatever the fence
+// contains still faces the full schema check unchanged. Anything that is not
+// exactly one fenced block is returned untouched, to fail as it did before.
+func UnwrapJSON(data []byte) []byte {
+	trimmed := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(trimmed, "```") {
+		return data
+	}
+	// Drop the opening fence line, which may carry an info string ("json").
+	nl := strings.IndexByte(trimmed, '\n')
+	if nl < 0 {
+		return data
+	}
+	body := trimmed[nl+1:]
+	// Drop the closing fence. Trailing prose after it is not a fenced block.
+	end := strings.LastIndex(body, "```")
+	if end < 0 {
+		return data
+	}
+	if strings.TrimSpace(body[end+3:]) != "" {
+		return data
+	}
+	return []byte(body[:end])
+}
+
 // ParseFileReview validates a raw model response against the closed schema.
 // Structured output is enforced by the provider where available; this is the
 // second gate. A schema violation is a parse failure, not a best-effort read.
 func ParseFileReview(data []byte) (*FileReview, error) {
 	var fr FileReview
-	if err := json.Unmarshal(data, &fr); err != nil {
+	if err := json.Unmarshal(UnwrapJSON(data), &fr); err != nil {
 		return nil, fmt.Errorf("schema: %w", err)
 	}
 	if fr.SchemaVersion != SchemaVersion {

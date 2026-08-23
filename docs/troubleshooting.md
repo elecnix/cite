@@ -92,6 +92,13 @@ summary names the cause:
 - **A file errored or the provider was unavailable.** Retry the run; if it
   recurs, check the fallback configuration in
   [configuration.md](configuration.md#fallback).
+- **`output truncated at token cap (finish_reason=length)`.** The review of that
+  file did not fit in the output budget. This is deterministic, so it is not
+  retried — it would truncate identically. Raise
+  `roles.review.max_output_tokens`, or declare the model's real `max_tokens`
+  under its provider entry; see
+  [the output cap](configuration.md#the-output-cap). A truncated review is
+  always reported as an error, never accepted as a short clean one.
 - **Zero in-scope files.** A pull request that changed files but resolved to an
   empty in-scope set is treated as a possible path-filter bypass, never as a
   pass.

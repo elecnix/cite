@@ -167,10 +167,29 @@ func (r *Reviewer) tryRetry(unit string) bool {
 // roleSettings resolves effective role configuration with the §7 defaults:
 // timeouts are per role because a slow local model and a fast hosted one
 // cannot share one number.
+//
+// The output cap resolves most-specific-first, in three layers:
+//
+//  1. roles.<role>.max_output_tokens — an explicit operator instruction, and
+//     it wins outright. Silently shrinking a number someone wrote down would
+//     be exactly the kind of invisible behaviour change §6 forbids.
+//  2. the resolved model entry's max_tokens — what the model says it can
+//     emit. This both raises the cap on a roomy model and lowers it on a
+//     narrow one, which is the only way Cite can know a ceiling it cannot
+//     query.
+//  3. the built-in default.
+//
+// A cap that is still too small truncates, and a truncation stays terminal
+// and reported (model.ErrDeterministic → FileErrored → COULD_NOT_EVALUATE).
+// Raising the ceiling must never turn a truncation into a silent partial
+// review.
 func (r *Reviewer) roleSettings(role model.Role, defTimeout time.Duration, defConcurrency, defMaxTokens int) (timeout time.Duration, concurrency, maxTokens int) {
 	timeout, concurrency, maxTokens = defTimeout, defConcurrency, defMaxTokens
 	if r.o.Cfg == nil {
 		return
+	}
+	if n := r.o.Cfg.ModelMaxTokens(role); n > 0 {
+		maxTokens = n
 	}
 	spec, ok := r.o.Cfg.Roles[role]
 	if !ok {
