@@ -9,9 +9,18 @@
 # 400-line test file took >120s on the first dogfooded run). An explicit value
 # keeps this repo's behaviour stable against future recalibration of that
 # derivation.
+#
+# The triage role's timeout is pinned explicitly at 120s here. Dogfooding
+# showed triage calls against DeepSeek also exceed their 30s default —
+# provider queueing / time-to-first-token, same failure mode as the review
+# deadline. Unlike the review timeout there is no derived fallback for triage
+# in the released v0.2.x binary this repo's CI runs, so it has to be set
+# explicitly.
 
 model: deepseek/deepseek-v4-flash-0731
 
 roles:
   review:
     timeout: 300s
+  triage:
+    timeout: 120s
