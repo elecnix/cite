@@ -13,6 +13,10 @@ on:
         description: 'PR number to review in dry-run mode'
         required: true
         default: '27'
+      model:
+        description: 'Model id passed to MODEL_ID (empty = deepseek default)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -35,7 +39,7 @@ jobs:
         env:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
           MODEL_BASE_URL: https://openrouter.ai/api/v1
-          MODEL_ID: deepseek/deepseek-v4-flash-0731
+          MODEL_ID: ${{ inputs.model != '' && inputs.model || 'deepseek/deepseek-v4-flash-0731' }}
         run: |
           set -euo pipefail
           start=$(date +%s)
