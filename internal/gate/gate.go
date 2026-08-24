@@ -162,6 +162,12 @@ func CheckRunPayload(rec *model.RunRecord, verdict model.Verdict, reason string)
 	}
 	sb.WriteString(fmt.Sprintf("%s — %s", verdict, reason))
 
+	if rec != nil && (rec.CostUSD > 0 || rec.Usage.InputTokens > 0) {
+		line := fmt.Sprintf("\ncost: $%.4f · %s · %d%% cache-hit",
+			rec.CostUSD, rec.Model,
+			int(100*rec.Usage.CacheHitRate()))
+		sb.WriteString(line)
+	}
 	if rec != nil {
 		agg := skippedAggregate(rec.Files)
 		if len(agg) > 0 {

@@ -1,0 +1,14 @@
+# Cite's own configuration. Optional by contract (§6) — everything here
+# exists because dogfooding on this repository showed a need, not as an
+# example.
+#
+# The review role's default timeout is 120s. DeepSeek via OpenRouter
+# occasionally exceeds that on large files (a 400-line test file took >120s
+# on the first dogfooded run), so the deadline is raised for this repo
+# rather than weakening the default for everyone.
+
+model: deepseek/deepseek-v4-flash-0731
+
+roles:
+  review:
+    timeout: 300s
