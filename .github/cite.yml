@@ -2,13 +2,25 @@
 # exists because dogfooding on this repository showed a need, not as an
 # example.
 #
-# The review role's default timeout is 120s. DeepSeek via OpenRouter
-# occasionally exceeds that on large files (a 400-line test file took >120s
-# on the first dogfooded run), so the deadline is raised for this repo
-# rather than weakening the default for everyone.
+# The review role's timeout is pinned explicitly at 300s here. The default no
+# longer needs the bump — it now derives from the output-token cap (~316s for
+# the 32768-token default), which came out of issue #28 after DeepSeek via
+# OpenRouter occasionally exceeded the old fixed 120s on large files (a
+# 400-line test file took >120s on the first dogfooded run). An explicit value
+# keeps this repo's behaviour stable against future recalibration of that
+# derivation.
+#
+# The triage role's timeout is pinned explicitly at 120s here. Dogfooding
+# showed triage calls against DeepSeek also exceed their 30s default —
+# provider queueing / time-to-first-token, same failure mode as the review
+# deadline. Unlike the review timeout there is no derived fallback for triage
+# in the released v0.2.x binary this repo's CI runs, so it has to be set
+# explicitly.
 
 model: deepseek/deepseek-v4-flash-0731
 
 roles:
   review:
     timeout: 300s
+  triage:
+    timeout: 120s

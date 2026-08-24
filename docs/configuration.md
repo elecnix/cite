@@ -126,6 +126,39 @@ Timeouts and concurrency are **per role**, not global, because a slow local mode
 and a fast hosted one cannot share one number. Unspecified fields inherit sane
 defaults; `concurrency` is capped at 16 regardless of configuration.
 
+### The review timeout derives from the output cap
+
+`review` has no fixed timeout default. When `roles.review.timeout` is unset,
+the deadline is derived from the same resolved output cap the call is bounded
+by (issue #28):
+
+```
+timeout = 60s base + max_output_tokens ÷ 128 tok/s
+```
+
+The assumed generation rate (128 tokens per second) is deliberately
+conservative — sized for a mid-tier hosted model, not a top-tier endpoint. A
+faster provider simply finishes early; sizing on a fast rate would turn
+slow-but-correct runs into deadline failures.
+
+- the built-in **32768**-token cap yields **≈316s**;
+- the historical 4096-token cap yielded ≈92s, close to the old fixed 120s, so
+  small-cap configurations keep roughly the pre-derivation behaviour;
+- an explicit `roles.review.max_output_tokens` or a model entry's `max_tokens`
+  moves the deadline with it.
+
+An explicit `roles.review.timeout` always wins over the derivation. Triage and
+assemble keep their fixed defaults — **120s** and 60s respectively; their
+output is bounded regardless of file size. Triage's default is deliberately
+generous for its size because providers queue requests and stall before the
+first byte: a triage call that would have finished at ~35s against a large
+hosted model dies at a 30s deadline and drags the whole file to
+COULD_NOT_EVALUATE.
+
+When a review call does hit its deadline, the error says so and names the
+knobs: raise `roles.review.timeout`, or lower the output cap that drives the
+derived deadline.
+
 ### The output cap
 
 The output cap resolves most-specific-first, in three layers:

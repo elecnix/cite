@@ -29,15 +29,11 @@ const (
 	// max_tokens overrides them in either direction (see roleSettings).
 	//
 	// A per-file review must be able to emit the schema's worst case without
-	// running out of room. That worst case is MaxCommentsCap (20) findings,
-	// each carrying title, body, impact, one or more quoted evidence spans
-	// and an optional fix — call it ~600 output tokens for a rich finding, so
-	// ~12k for a full file, before any reasoning tokens the provider bills
-	// against the same budget. 4096 could not hold even ten such findings,
-	// and large files were failing the whole run with
-	// "output truncated at token cap (finish_reason=length)". 32768 clears
-	// the worst case with room for reasoning.
-	defaultReviewMaxTokens = 32768
+	// running out of room — see DefaultReviewMaxOutputTokens in internal/config
+	// for the sizing rationale. The review deadline derives from this same cap
+	// (config.DerivedReviewTimeout, issue #28), so the two numbers are
+	// calibrated together.
+	defaultReviewMaxTokens = config.DefaultReviewMaxOutputTokens
 	// Triage emits one path plus one sentence per flagged file, so it scales
 	// with file count rather than file size; 2048 is tight on a
 	// hundred-file pull request.
