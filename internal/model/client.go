@@ -129,6 +129,14 @@ type CompletionRequest struct {
 	// ResponseSchema, when set, requests provider-enforced structured output
 	// rather than JSON-in-prose plus a validator.
 	ResponseSchema json.RawMessage
+
+	// RequireParameters adds a top-level "provider": {"require_parameters":
+	// true} to the chat completion request. Routers such as OpenRouter then
+	// only pick endpoints that support every request parameter (structured
+	// outputs here); when none does, the call fails with a routing error
+	// instead of the endpoint silently dropping response_format and returning
+	// an empty body.
+	RequireParameters bool
 }
 
 // Usage records token counters, including cache behaviour, which CI asserts on
@@ -260,6 +268,9 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 				"schema": json.RawMessage(req.ResponseSchema),
 			},
 		}
+	}
+	if req.RequireParameters {
+		httpReq["provider"] = map[string]any{"require_parameters": true}
 	}
 	body, err := json.Marshal(httpReq)
 	if err != nil {

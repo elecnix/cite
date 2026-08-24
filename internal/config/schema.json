@@ -23,6 +23,11 @@
       "type": "boolean",
       "default": false
     },
+    "require_parameters": {
+      "type": "boolean",
+      "default": false,
+      "description": "Ask OpenRouter-style routers to route only to endpoints that support every request parameter (structured outputs here). When no endpoint qualifies you get a routing error instead of silently dropped parameters."
+    },
     "gate": {
       "type": "string",
       "enum": ["comment", "block"],

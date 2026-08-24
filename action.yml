@@ -29,9 +29,14 @@ inputs:
     required: false
     default: 'false'
   version:
-    description: 'Cite release tag to download. Defaults to the version of this action; keep it in lockstep with the release tag (the release workflow fails if they drift).'
+    description: >
+      Cite release tag to download, e.g. v0.3.0. Leave empty (the default) to
+      always track the latest published release: the binary is downloaded via
+      the releases/latest redirect, so no API call is needed and new releases
+      are picked up automatically. Set an explicit tag to pin a version for
+      reproducibility.
     required: false
-    default: 'v0.3.0'
+    default: ''
   model_base_url:
     description: 'Provider base URL, e.g. https://openrouter.ai/api/v1. Empty means the OpenAI default.'
     required: false
@@ -55,7 +60,13 @@ runs:
           ARM64) arch=arm64 ;;
           *) echo "unsupported runner arch: ${RUNNER_ARCH}" >&2; exit 1 ;;
         esac
-        url="https://github.com/elecnix/cite/releases/download/${CITE_VERSION}/cite-linux-${arch}"
+        if [ -n "$CITE_VERSION" ]; then
+          url="https://github.com/elecnix/cite/releases/download/${CITE_VERSION}/cite-linux-${arch}"
+        else
+          # No version input: track the latest release via the releases/latest
+          # redirect — no API call, works with the same curl flags.
+          url="https://github.com/elecnix/cite/releases/latest/download/cite-linux-${arch}"
+        fi
         curl -fsSL --retry 3 -o /usr/local/bin/cite "$url"
         chmod +x /usr/local/bin/cite
 

@@ -34,6 +34,11 @@ func buildConfig(tree interface{}, probs *[]Problem) *Config {
 			c.Nits = b
 		}
 	}
+	if v, ok := m["require_parameters"]; ok {
+		if b, ok := v.(bool); ok {
+			c.RequireParameters = b
+		}
+	}
 	if v, ok := m["gate"]; ok {
 		c.Gate = asString(v)
 	}

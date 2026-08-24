@@ -4,13 +4,7 @@ Releases are tag-driven: pushing a `v*` tag is the only step a maintainer takes.
 
 ## Cut a release
 
-Before tagging, bump the composite action's download default so the tag
-and `action.yml` agree — the workflow fails the release if they drift:
-
-```sh
-# in the same change as the release:
-#   action.yml: inputs.version.default → vX.Y.Z
-```
+Tagging alone cuts the release — no pre-release bump PR is needed:
 
 ```sh
 git tag vX.Y.Z
@@ -30,6 +24,12 @@ The [`release` workflow](../.github/workflows/release.yml) then runs automatical
    binary to the GitHub release for the tag, with generated release notes.
 
 Every action step in the workflow is pinned to a full-length commit SHA.
+
+Consumers of the composite action who pass no explicit `version:` input
+automatically pick up the new release: the binary is downloaded via the
+`releases/latest` redirect. Consumers who want reproducibility pin the action
+to a full commit SHA (`uses: elecnix/cite@<full-sha>`) or pass an explicit
+`version:` release tag.
 
 ## Verify a release as a consumer
 

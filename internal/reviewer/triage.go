@@ -133,20 +133,32 @@ func (r *Reviewer) runTriage(ctx context.Context, in *Inputs) (flagged map[strin
 	b.WriteString("</diff_excerpts>\n")
 
 	req := model.CompletionRequest{
-		System:          triageSystemPrompt,
-		User:            b.String(),
-		MaxOutputTokens: maxTokens,
-		Temperature:     pinnedTemperature,
-		ResponseSchema:  triageResponseSchema(),
-	}
-	resp, err := r.completeWithRetry(ctx, unitTriage, req, timeout)
-	if err != nil {
-		r.logf("triage call failed (%v); falling back to reviewing all files batched", err)
-		return nil, false
+		System:            triageSystemPrompt,
+		User:              b.String(),
+		MaxOutputTokens:   maxTokens,
+		Temperature:       pinnedTemperature,
+		ResponseSchema:    triageResponseSchema(),
+		RequireParameters: requireParameters(r.o.Cfg),
 	}
 	var tr triageResult
-	if err := json.Unmarshal(model.UnwrapJSON([]byte(resp.Text)), &tr); err != nil {
-		r.logf("triage output unparsable (%v); falling back to reviewing all files batched", err)
+	for {
+		resp, err := r.completeWithRetry(ctx, unitTriage, req, timeout)
+		if err != nil {
+			r.logf("triage call failed (%v); falling back to reviewing all files batched", err)
+			return nil, false
+		}
+		uerr := json.Unmarshal(model.UnwrapJSON([]byte(resp.Text)), &tr)
+		if uerr == nil {
+			break
+		}
+		// Same blank-body rule as reviewFile: an empty body is transient
+		// provider garbage with no claim to invite back, so it draws from
+		// the same run-global bucket before the batched fallback kicks in.
+		if strings.TrimSpace(resp.Text) == "" && r.tryRetry(unitTriage) {
+			r.logf("triage response was empty (%v); retrying from run-global bucket", uerr)
+			continue
+		}
+		r.logf("triage output unparsable (%v); falling back to reviewing all files batched", uerr)
 		return nil, false
 	}
 	if tr.SchemaVersion != model.SchemaVersion {

@@ -164,6 +164,16 @@ func (r *Reviewer) tryRetry(unit string) bool {
 	return true
 }
 
+// requireParameters reads the require_parameters knob off the loaded
+// configuration. Cfg is required on Options, but the nil guard keeps a
+// misconstructed Reviewer from panicking mid-run (mirrors roleSettings).
+func requireParameters(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	return cfg.RequireParameters
+}
+
 // roleSettings resolves effective role configuration with the §7 defaults:
 // timeouts are per role because a slow local model and a fast hosted one
 // cannot share one number.
@@ -505,37 +515,54 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 	payload := strings.TrimPrefix(full, prefix+"\n\n")
 
 	req := model.CompletionRequest{
-		System:          systemPrompt(), // segment A: stable across runs and repos
-		User:            r.segB + cacheBreakpoint + payload,
-		MaxOutputTokens: maxTokens, // bounded by an output-token cap, never an inactivity timeout (§7)
-		Temperature:     pinnedTemperature,
-		ResponseSchema:  reviewResponseSchema(),
+		System:            systemPrompt(), // segment A: stable across runs and repos
+		User:              r.segB + cacheBreakpoint + payload,
+		MaxOutputTokens:   maxTokens, // bounded by an output-token cap, never an inactivity timeout (§7)
+		Temperature:       pinnedTemperature,
+		ResponseSchema:    reviewResponseSchema(),
+		RequireParameters: requireParameters(r.o.Cfg),
 	}
-	resp, err := r.completeWithRetry(ctx, unitReview, req, timeout)
-	if err != nil {
-		reason := "model_error"
-		if errors.Is(err, model.ErrDeterministic) {
-			reason = "deterministic_failure"
-		} else if ctx.Err() != nil {
-			reason = "canceled"
-		} else if errors.Is(err, model.ErrDeadline) {
-			reason = "deadline_exceeded"
-			// Name the knob, not just the symptom (issue #28): a bare
-			// "context deadline exceeded" gives an operator nothing to turn.
-			err = fmt.Errorf("%w: the call hit its configured %.0fs review deadline; raise roles.review.timeout in .github/cite.yml, or lower the output-token cap that drives the derived deadline (roles.review.max_output_tokens, or the model entry's max_tokens)", err, timeout.Seconds())
+	var fr *model.FileReview
+	var perr error
+	for {
+		resp, err := r.completeWithRetry(ctx, unitReview, req, timeout)
+		if err != nil {
+			reason := "model_error"
+			if errors.Is(err, model.ErrDeterministic) {
+				reason = "deterministic_failure"
+			} else if ctx.Err() != nil {
+				reason = "canceled"
+			} else if errors.Is(err, model.ErrDeadline) {
+				reason = "deadline_exceeded"
+				// Name the knob, not just the symptom (issue #28): a bare
+				// "context deadline exceeded" gives an operator nothing to turn.
+				err = fmt.Errorf("%w: the call hit its configured %.0fs review deadline; raise roles.review.timeout in .github/cite.yml, or lower the output-token cap that drives the derived deadline (roles.review.max_output_tokens, or the model entry's max_tokens)", err, timeout.Seconds())
+			}
+			r.logf("review of %s ended in error: %v", e.Path, err)
+			r.recordFile(rec, model.FileOutcome{
+				Path: e.Path, OldPath: e.OldPath, Status: e.Status,
+				State: model.FileErrored, Reason: reason,
+			})
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return nil // one dead unit must not kill the run (partial results §7)
 		}
-		r.logf("review of %s ended in error: %v", e.Path, err)
-		r.recordFile(rec, model.FileOutcome{
-			Path: e.Path, OldPath: e.OldPath, Status: e.Status,
-			State: model.FileErrored, Reason: reason,
-		})
-		if ctx.Err() != nil {
-			return ctx.Err()
+
+		fr, perr = model.ParseFileReview([]byte(resp.Text))
+		if perr == nil || strings.TrimSpace(resp.Text) != "" {
+			break
 		}
-		return nil // one dead unit must not kill the run (partial results §7)
+		// A blank body is transient provider garbage, not a confident wrong
+		// answer: nothing was generated, so there is no claim for a re-ask to
+		// invite back. It draws from the same run-global bucket as a deadline
+		// expiry; with retries exhausted it stays terminal as parse_failure.
+		if !r.tryRetry(unitReview) {
+			break
+		}
+		r.logf("review of %s response was empty (%v); retrying from run-global bucket", e.Path, perr)
 	}
 
-	fr, perr := model.ParseFileReview([]byte(resp.Text))
 	if perr != nil || (fr.Path != "" && fr.Path != e.Path) {
 		// A schema violation or wrong-path echo is terminal for this unit:
 		// re-asking invites a matching quote for the same wrong claim (§8).

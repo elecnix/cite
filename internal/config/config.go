@@ -116,6 +116,11 @@ type Config struct {
 	Gate          string
 	CompatProfile string
 
+	// RequireParameters asks OpenRouter-style routers to pick only endpoints
+	// that support every request parameter (notably response_format
+	// json_schema). Off by default; see docs/configuration.md.
+	RequireParameters bool
+
 	// BlockingCategories is the repository's shrinking of the default set
 	// (§8): it may shrink from DefaultBlockingCategories() and may never
 	// grow. convention can never block in any configuration.
