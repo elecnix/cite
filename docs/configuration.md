@@ -148,8 +148,12 @@ slow-but-correct runs into deadline failures.
   moves the deadline with it.
 
 An explicit `roles.review.timeout` always wins over the derivation. Triage and
-assemble keep their fixed defaults; their output is bounded regardless of file
-size.
+assemble keep their fixed defaults — **120s** and 60s respectively; their
+output is bounded regardless of file size. Triage's default is deliberately
+generous for its size because providers queue requests and stall before the
+first byte: a triage call that would have finished at ~35s against a large
+hosted model dies at a 30s deadline and drags the whole file to
+COULD_NOT_EVALUATE.
 
 When a review call does hit its deadline, the error says so and names the
 knobs: raise `roles.review.timeout`, or lower the output cap that drives the

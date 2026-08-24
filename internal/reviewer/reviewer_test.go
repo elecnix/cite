@@ -1049,8 +1049,8 @@ func TestUnsetCapDerivesFromDefaultReviewMaxTokens(t *testing.T) {
 }
 
 // End to end: the deadline carried by the actual review call is the derived
-// one, not the old fixed 120s. Triage keeps its own fixed 30s default — the
-// derivation is review-only.
+// one, not the old fixed 120s. Triage keeps its own fixed default (120s) —
+// the derivation is review-only.
 func TestReviewCallCarriesDerivedDeadline(t *testing.T) {
 	dc := &deadlineClient{Client: &fakeClient{fn: defaultScript("a.go")}}
 	rec, err := runOnce(t, baseInputs(), Options{Cfg: config.Default(), Client: dc})

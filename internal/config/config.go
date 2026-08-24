@@ -41,8 +41,16 @@ const (
 // raising the cap to 32768 (DefaultReviewMaxOutputTokens below) allowed
 // responses eight times longer to finish, and they died at "context deadline
 // exceeded" — surfacing as COULD_NOT_EVALUATE — before emitting a verdict.
+//
+// Triage keeps a fixed timeout, but 30s proved too tight for real providers:
+// that number assumed fast hosted models, while providers queue requests and
+// stall long before the first byte — dogfooding CI saw triage calls against a
+// large model die at "context deadline exceeded" twice in ~30s intervals. A
+// call that would have succeeded at 35s instead drags its whole file to
+// COULD_NOT_EVALUATE, so the budget covers provider queueing plus
+// time-to-first-token.
 const (
-	DefaultTriageTimeout     = 30 * time.Second
+	DefaultTriageTimeout     = 120 * time.Second
 	DefaultAssembleTimeout   = 60 * time.Second
 	DefaultReviewConcurrency = 8
 )
@@ -323,8 +331,8 @@ func (c *Config) checkModelRefs(probs *[]Problem) {
 }
 
 // Role resolves the effective settings for one of the three roles (review,
-// triage, assemble). Defaults: review concurrency 8, triage timeout 30s,
-// assemble timeout 60s. The review timeout has no fixed default: it derives
+// triage, assemble). Defaults: review concurrency 8, triage timeout 120s
+// (queueing + time-to-first-token headroom), assemble timeout 60s. The review timeout has no fixed default: it derives
 // from the resolved output cap (60s base + tokens ÷ 128 tok/s, issue #28)
 // unless an explicit roles.review.timeout is configured. An unset role model
 // falls back to c.Model.
@@ -364,7 +372,7 @@ func (c *Config) Role(role model.Role) model.RoleConfig {
 	case model.RoleTriage:
 		if rc.Timeout <= 0 {
 			rc.Timeout = DefaultTriageTimeout
-			rc.TimeoutStr = "30s"
+			rc.TimeoutStr = "120s"
 		}
 	case model.RoleAssemble:
 		if rc.Timeout <= 0 {

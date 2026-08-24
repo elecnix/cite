@@ -235,7 +235,7 @@ func TestRoleDefaults(t *testing.T) {
 		// cap (issue #28). With no providers and no role spec, the cap is
 		// the built-in 32768, so 60s + 32768/128s = 316s.
 		{model.RoleReview, DerivedReviewTimeout(0), 8},
-		{model.RoleTriage, 30 * time.Second, 0},
+		{model.RoleTriage, 120 * time.Second, 0},
 		{model.RoleAssemble, 60 * time.Second, 0},
 	}
 	for _, tc := range cases {
@@ -268,7 +268,7 @@ roles:
 		t.Errorf("Role(review).Model = %q, want fallback to top-level model", rc.Model)
 	}
 	rc = c.Role(model.RoleTriage)
-	if rc.Model != "gpt-5-nano" || rc.Timeout != 30*time.Second {
+	if rc.Model != "gpt-5-nano" || rc.Timeout != 120*time.Second {
 		t.Errorf("Role(triage) = %+v", rc)
 	}
 }
