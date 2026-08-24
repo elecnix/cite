@@ -179,12 +179,20 @@ func (r *Reviewer) tryRetry(unit string) bool {
 //     query.
 //  3. the built-in default.
 //
+// The review deadline has no fixed default: when no explicit timeout is
+// configured it derives from the SAME resolved cap (issue #28) via
+// config.DerivedReviewTimeout, so a larger token budget buys proportionally
+// more wall clock instead of dying at "context deadline exceeded". Triage and
+// assemble keep their fixed defaults; they emit bounded output regardless of
+// file size.
+//
 // A cap that is still too small truncates, and a truncation stays terminal
 // and reported (model.ErrDeterministic → FileErrored → COULD_NOT_EVALUATE).
 // Raising the ceiling must never turn a truncation into a silent partial
 // review.
 func (r *Reviewer) roleSettings(role model.Role, defTimeout time.Duration, defConcurrency, defMaxTokens int) (timeout time.Duration, concurrency, maxTokens int) {
 	timeout, concurrency, maxTokens = defTimeout, defConcurrency, defMaxTokens
+	explicitTimeout := false
 	if r.o.Cfg == nil {
 		return
 	}
@@ -192,19 +200,25 @@ func (r *Reviewer) roleSettings(role model.Role, defTimeout time.Duration, defCo
 		maxTokens = n
 	}
 	spec, ok := r.o.Cfg.Roles[role]
-	if !ok {
-		return
-	}
-	if spec.Timeout != "" {
-		if d, err := time.ParseDuration(spec.Timeout); err == nil && d > 0 {
-			timeout = d
+	if ok {
+		if spec.Timeout != "" {
+			if d, err := time.ParseDuration(spec.Timeout); err == nil && d > 0 {
+				timeout = d
+				explicitTimeout = true
+			}
+		}
+		if spec.Concurrency > 0 {
+			concurrency = spec.Concurrency
+		}
+		if spec.MaxOutputTokens > 0 {
+			maxTokens = spec.MaxOutputTokens
 		}
 	}
-	if spec.Concurrency > 0 {
-		concurrency = spec.Concurrency
-	}
-	if spec.MaxOutputTokens > 0 {
-		maxTokens = spec.MaxOutputTokens
+	if !explicitTimeout && role == model.RoleReview {
+		// Issue #28: scale the deadline to the resolved output cap. An unset
+		// cap (maxTokens <= 0) falls back to the built-in 32768-token default
+		// inside DerivedReviewTimeout.
+		timeout = config.DerivedReviewTimeout(maxTokens)
 	}
 	return
 }
@@ -213,7 +227,9 @@ func (r *Reviewer) roleSettings(role model.Role, defTimeout time.Duration, defCo
 // are terminal (a truncated response truncates identically on retry);
 // transient failures consume from the run-global bucket. The per-request
 // deadline comes from the role config, set at this call site — never
-// inherited from an SDK.
+// inherited from an SDK. A deadline expiry is named as such in the retry log
+// together with the knob that controls it, so "context deadline exceeded"
+// never reaches an operator without its remedy (issue #28).
 func (r *Reviewer) completeWithRetry(ctx context.Context, unit string, req model.CompletionRequest, timeout time.Duration) (*model.CompletionResponse, error) {
 	for attempt := 0; ; attempt++ {
 		cctx, cancel := context.WithTimeout(ctx, timeout)
@@ -232,6 +248,10 @@ func (r *Reviewer) completeWithRetry(ctx context.Context, unit string, req model
 		if !r.tryRetry(unit) {
 			r.logf("%s call failed permanently after %d attempt(s), retries exhausted: %v", unit, attempt+1, err)
 			return nil, err
+		}
+		if errors.Is(err, model.ErrDeadline) {
+			r.logf("%s call hit its configured %s per-call deadline (%v); retrying from run-global bucket — raise roles.%s.timeout in .github/cite.yml if this recurs", unit, timeout, err, unit)
+			continue
 		}
 		r.logf("%s call failed (%v); retrying from run-global bucket", unit, err)
 	}
@@ -389,7 +409,7 @@ func (r *Reviewer) Run(ctx context.Context, in Inputs) (*model.RunRecord, error)
 		// cancellation.
 		if runErr == nil || ctx.Err() == nil {
 			rest := reviewable[1:]
-			_, concurrency, _ := r.roleSettings(model.RoleReview, config.DefaultReviewTimeout, config.DefaultReviewConcurrency, defaultReviewMaxTokens)
+			_, concurrency, _ := r.roleSettings(model.RoleReview, 0 /* review deadline derives from the output cap inside roleSettings (issue #28) */, config.DefaultReviewConcurrency, defaultReviewMaxTokens)
 			for start := 0; start < len(rest) && runErr == nil; start += batchSize {
 				end := start + batchSize
 				if end > len(rest) {
@@ -471,7 +491,7 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 	}
 
 	fc, env := buildFileContext(e, in)
-	timeout, _, maxTokens := r.roleSettings(model.RoleReview, config.DefaultReviewTimeout, config.DefaultReviewConcurrency, defaultReviewMaxTokens)
+	timeout, _, maxTokens := r.roleSettings(model.RoleReview, 0 /* review deadline derives from the output cap inside roleSettings (issue #28) */, config.DefaultReviewConcurrency, defaultReviewMaxTokens)
 
 	// Per-file payload: exactly one code artifact (§7). It is derived from
 	// scope.BuildEnvelope output so the rendering lives in one place: the
@@ -500,6 +520,9 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 			reason = "canceled"
 		} else if errors.Is(err, model.ErrDeadline) {
 			reason = "deadline_exceeded"
+			// Name the knob, not just the symptom (issue #28): a bare
+			// "context deadline exceeded" gives an operator nothing to turn.
+			err = fmt.Errorf("%w: the call hit its configured %.0fs review deadline; raise roles.review.timeout in .github/cite.yml, or lower the output-token cap that drives the derived deadline (roles.review.max_output_tokens, or the model entry's max_tokens)", err, timeout.Seconds())
 		}
 		r.logf("review of %s ended in error: %v", e.Path, err)
 		r.recordFile(rec, model.FileOutcome{

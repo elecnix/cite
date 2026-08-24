@@ -2,10 +2,13 @@
 # exists because dogfooding on this repository showed a need, not as an
 # example.
 #
-# The review role's default timeout is 120s. DeepSeek via OpenRouter
-# occasionally exceeds that on large files (a 400-line test file took >120s
-# on the first dogfooded run), so the deadline is raised for this repo
-# rather than weakening the default for everyone.
+# The review role's timeout is pinned explicitly at 300s here. The default no
+# longer needs the bump — it now derives from the output-token cap (~316s for
+# the 32768-token default), which came out of issue #28 after DeepSeek via
+# OpenRouter occasionally exceeded the old fixed 120s on large files (a
+# 400-line test file took >120s on the first dogfooded run). An explicit value
+# keeps this repo's behaviour stable against future recalibration of that
+# derivation.
 
 model: deepseek/deepseek-v4-flash-0731
 

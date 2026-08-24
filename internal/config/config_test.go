@@ -231,7 +231,10 @@ func TestRoleDefaults(t *testing.T) {
 		timeout     time.Duration
 		concurrency int
 	}{
-		{model.RoleReview, 120 * time.Second, 8},
+		// Review has no fixed timeout default: it derives from the output
+		// cap (issue #28). With no providers and no role spec, the cap is
+		// the built-in 32768, so 60s + 32768/128s = 316s.
+		{model.RoleReview, DerivedReviewTimeout(0), 8},
 		{model.RoleTriage, 30 * time.Second, 0},
 		{model.RoleAssemble, 60 * time.Second, 0},
 	}
@@ -551,5 +554,98 @@ roles:
 	var nilCfg *Config
 	if got := nilCfg.ModelMaxTokens(model.RoleReview); got != 0 {
 		t.Errorf("nil.ModelMaxTokens(review) = %d, want 0", got)
+	}
+}
+
+// ---- review timeout derivation (issue #28) ---------------------------------
+
+// The derived deadline must scale with the output cap it has to allow for:
+// that is the whole point of the coupling. The old fixed 120s was calibrated
+// for the historical 4096-token cap; the derivation keeps small caps near
+// today's behaviour while giving the 32768-token default room to finish.
+func TestDerivedReviewTimeoutGrowsWithCap(t *testing.T) {
+	cases := []struct {
+		tokens int
+		want   time.Duration
+	}{
+		{4096, 92 * time.Second},  // the pre-v0.2.0 cap: 60s + 32s
+		{8192, 124 * time.Second}, // 60s + 64s
+		{16384, 188 * time.Second},
+		{32768, 316 * time.Second}, // 60s + 256s
+	}
+	prev := time.Duration(0)
+	for _, tc := range cases {
+		if got := DerivedReviewTimeout(tc.tokens); got != tc.want {
+			t.Errorf("DerivedReviewTimeout(%d) = %v, want %v", tc.tokens, got, tc.want)
+		}
+		if got := DerivedReviewTimeout(tc.tokens); got <= prev {
+			t.Errorf("DerivedReviewTimeout(%d) = %v, not greater than previous smaller cap's %v", tc.tokens, got, prev)
+		}
+		prev = tc.want
+	}
+}
+
+// An unset cap (<=0) falls back to the built-in 32768-token default.
+func TestDerivedReviewTimeoutUnsetFallsBackToDefault(t *testing.T) {
+	if got := DerivedReviewTimeout(0); got != DerivedReviewTimeout(DefaultReviewMaxOutputTokens) {
+		t.Errorf("DerivedReviewTimeout(0) = %v, want the %d-derived value", got, DefaultReviewMaxOutputTokens)
+	}
+	if got := DerivedReviewTimeout(-1); got != DerivedReviewTimeout(DefaultReviewMaxOutputTokens) {
+		t.Errorf("DerivedReviewTimeout(-1) = %v, want the %d-derived value", got, DefaultReviewMaxOutputTokens)
+	}
+}
+
+// roles.review.max_output_tokens must move the derived deadline with it.
+func TestRoleReviewTimeoutDerivesFromMaxOutputTokens(t *testing.T) {
+	src := `
+roles:
+  review: { max_output_tokens: 8192 }
+`
+	c := mustParse(t, src)
+	if got, want := c.Role(model.RoleReview).Timeout, DerivedReviewTimeout(8192); got != want {
+		t.Errorf("Role(review).Timeout with max_output_tokens=8192 = %v, want %v", got, want)
+	}
+	src2 := `
+roles:
+  review: { max_output_tokens: 32768 }
+`
+	c2 := mustParse(t, src2)
+	small := c.Role(model.RoleReview).Timeout
+	big := c2.Role(model.RoleReview).Timeout
+	if big <= small {
+		t.Errorf("derived timeout did not grow with the cap: %v (8192) vs %v (32768)", small, big)
+	}
+}
+
+// A model entry's max_tokens is the middle resolution layer and must drive
+// the derived deadline too.
+func TestModelEntryTokensDriveDerivedReviewTimeout(t *testing.T) {
+	src := `
+providers:
+  gateway:
+    base_url: https://gateway.example.invalid/v1
+    api: openai-completions
+    models:
+      - id: narrow
+        max_tokens: 8192
+model: gateway/narrow
+`
+	c := mustParse(t, src)
+	if got, want := c.Role(model.RoleReview).Timeout, DerivedReviewTimeout(8192); got != want {
+		t.Errorf("Role(review).Timeout from model entry max_tokens = %v, want %v", got, want)
+	}
+}
+
+// An explicit roles.review.timeout always wins over the derivation: an
+// operator who wrote a number down gets that number.
+func TestExplicitReviewTimeoutBeatsDerivation(t *testing.T) {
+	src := `
+roles:
+  review: { timeout: 45s, max_output_tokens: 32768 }
+`
+	c := mustParse(t, src)
+	rc := c.Role(model.RoleReview)
+	if rc.Timeout != 45*time.Second {
+		t.Errorf("Role(review).Timeout = %v, want the explicit 45s to win over the derived %v", rc.Timeout, DerivedReviewTimeout(32768))
 	}
 }

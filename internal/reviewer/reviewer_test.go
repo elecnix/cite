@@ -961,3 +961,141 @@ func mustCfg(t *testing.T, src string) *config.Config {
 	}
 	return cfg
 }
+
+// ---- derived review deadline (issue #28) -----------------------------------
+
+// deadlineClient wraps a Client and records the per-request deadline the
+// reviewer set for each call, so the derived review timeout is observable
+// end to end rather than only through roleSettings.
+type deadlineClient struct {
+	model.Client
+	mu             sync.Mutex
+	reviewDeadline time.Duration
+	triageDeadline time.Duration
+}
+
+func (c *deadlineClient) Complete(ctx context.Context, req model.CompletionRequest) (*model.CompletionResponse, error) {
+	if d, ok := ctx.Deadline(); ok {
+		c.mu.Lock()
+		if isTriageCall(req) {
+			c.triageDeadline = time.Until(d)
+		} else {
+			c.reviewDeadline = time.Until(d)
+		}
+		c.mu.Unlock()
+	}
+	return c.Client.Complete(ctx, req)
+}
+
+// The default review deadline must grow with the resolved output cap (issue
+// #28): v0.2.0 raised the cap from 4096 to 32768 tokens but left the fixed
+// 120s deadline in place, so responses allowed to run 8x longer died at
+// "context deadline exceeded" and took their files to COULD_NOT_EVALUATE.
+func TestDerivedReviewTimeoutGrowsWithMaxOutputTokens(t *testing.T) {
+	mk := func(src string) *Reviewer {
+		return New(Options{Cfg: mustCfg(t, src), Client: &fakeClient{}})
+	}
+	small := mk(`
+model: openai/gpt-5-mini
+roles:
+  review: { max_output_tokens: 4096 }
+`)
+	big := mk(`
+model: openai/gpt-5-mini
+roles:
+  review: { max_output_tokens: 32768 }
+`)
+	st, _, stTokens := small.roleSettings(model.RoleReview, 0, config.DefaultReviewConcurrency, config.DefaultReviewMaxOutputTokens)
+	bt, _, btTokens := big.roleSettings(model.RoleReview, 0, config.DefaultReviewConcurrency, config.DefaultReviewMaxOutputTokens)
+	if stTokens != 4096 || btTokens != 32768 {
+		t.Fatalf("caps = %d/%d, want 4096/32768", stTokens, btTokens)
+	}
+	if want := config.DerivedReviewTimeout(4096); st != want {
+		t.Errorf("timeout for 4096-token cap = %v, want %v", st, want)
+	}
+	if want := config.DerivedReviewTimeout(32768); bt != want {
+		t.Errorf("timeout for 32768-token cap = %v, want %v", bt, want)
+	}
+	if bt <= st {
+		t.Errorf("derived timeout did not grow with the cap: %v (32768) vs %v (4096)", bt, st)
+	}
+}
+
+// An explicit roles.review.timeout is an operator instruction and wins over
+// the derivation.
+func TestExplicitReviewTimeoutWinsOverDerivation(t *testing.T) {
+	r := New(Options{Cfg: mustCfg(t, `
+model: openai/gpt-5-mini
+roles:
+  review: { timeout: 45s, max_output_tokens: 32768 }
+`), Client: &fakeClient{}})
+	got, _, _ := r.roleSettings(model.RoleReview, 0, config.DefaultReviewConcurrency, config.DefaultReviewMaxOutputTokens)
+	if got != 45*time.Second {
+		t.Errorf("review timeout = %v, want the explicit 45s to win over the derived %v", got, config.DerivedReviewTimeout(32768))
+	}
+}
+
+// An unset MaxOutputTokens falls back to the built-in 32768-token cap and its
+// derived deadline — the shape of every repository that writes no roles block.
+func TestUnsetCapDerivesFromDefaultReviewMaxTokens(t *testing.T) {
+	r := New(Options{Cfg: config.Default(), Client: &fakeClient{}})
+	got, _, maxTokens := r.roleSettings(model.RoleReview, 0, config.DefaultReviewConcurrency, config.DefaultReviewMaxOutputTokens)
+	if maxTokens != config.DefaultReviewMaxOutputTokens {
+		t.Errorf("maxTokens = %d, want the built-in default %d", maxTokens, config.DefaultReviewMaxOutputTokens)
+	}
+	if want := config.DerivedReviewTimeout(config.DefaultReviewMaxOutputTokens); got != want {
+		t.Errorf("review timeout = %v, want the %d-token-derived %v", got, config.DefaultReviewMaxOutputTokens, want)
+	}
+}
+
+// End to end: the deadline carried by the actual review call is the derived
+// one, not the old fixed 120s. Triage keeps its own fixed 30s default — the
+// derivation is review-only.
+func TestReviewCallCarriesDerivedDeadline(t *testing.T) {
+	dc := &deadlineClient{Client: &fakeClient{fn: defaultScript("a.go")}}
+	rec, err := runOnce(t, baseInputs(), Options{Cfg: config.Default(), Client: dc})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := rec.Files[0].State; got != model.FileReviewed {
+		t.Errorf("file state = %q, want reviewed", got)
+	}
+	if got, want := dc.reviewDeadline, config.DerivedReviewTimeout(defaultReviewMaxTokens); got > want+50*time.Millisecond || got < want-2*time.Second {
+		t.Errorf("review call deadline = %v, want ≈%v (the derived value)", got, want)
+	}
+
+	tc := &deadlineClient{Client: &fakeClient{fn: defaultScript()}}
+	if _, err := runOnce(t, baseInputs(), Options{Cfg: config.Default(), Client: tc}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := tc.triageDeadline; got > config.DefaultTriageTimeout || got < config.DefaultTriageTimeout-2*time.Second {
+		t.Errorf("triage call deadline = %v, want the fixed %v (derivation is review-only)", got, config.DefaultTriageTimeout)
+	}
+}
+
+// When a review call exhausts its retries on deadline expiry, the surfaced
+// error must name the knob (roles.review.timeout) rather than only the bare
+// "context deadline exceeded" symptom.
+func TestDeadlineErrorNamesTheTimeoutKnob(t *testing.T) {
+	var logs []string
+	c := &fakeClient{fn: func(_ int, _ model.CompletionRequest) (string, error) {
+		return "", model.ErrDeadline
+	}}
+	o := baseOptions(c)
+	o.Logger = func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}
+	rec, err := runOnce(t, baseInputs(), o)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rec.Files[0].Reason != "deadline_exceeded" {
+		t.Errorf("file reason = %q, want deadline_exceeded", rec.Files[0].Reason)
+	}
+	joined := strings.Join(logs, "\n")
+	for _, want := range []string{"roles.review.timeout", "roles.review.max_output_tokens"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("error/log output does not name the knob %q; logs:\n%s", want, joined)
+		}
+	}
+}
