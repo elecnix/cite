@@ -626,6 +626,110 @@ func TestTransientErrorRetriedOnceThenSucceeds(t *testing.T) {
 	}
 }
 
+func TestBlankBodyParseFailureRetriedFromRunGlobalBucket(t *testing.T) {
+	in := baseInputs()
+	c := &fakeClient{fn: func(i int, req model.CompletionRequest) (string, error) {
+		if isTriageCall(req) {
+			return triageJSON("a.go"), nil
+		}
+		if i == 1 { // first review call: empty body (the OpenRouter CI failure)
+			return "", nil
+		}
+		return reviewJSON("a.go", "reviewed", nil), nil
+	}}
+	rec, err := runOnce(t, in, baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	reviewCalls := 0
+	for _, call := range c.calls {
+		if !isTriageCall(call) {
+			reviewCalls++
+		}
+	}
+	if reviewCalls != 2 {
+		t.Errorf("review calls = %d, want 2 (one blank-body retry)", reviewCalls)
+	}
+	var fo *model.FileOutcome
+	for i := range rec.Files {
+		if rec.Files[i].Path == "a.go" {
+			fo = &rec.Files[i]
+		}
+	}
+	if fo == nil || fo.State != model.FileReviewed || !fo.Reviewed {
+		t.Fatalf("file outcome = %+v, want reviewed after blank-body retry", fo)
+	}
+}
+
+func TestBlankBodiesUntilRetriesExhaustedRecordParseFailure(t *testing.T) {
+	in := baseInputs()
+	c := &fakeClient{fn: func(_ int, req model.CompletionRequest) (string, error) {
+		if isTriageCall(req) {
+			return triageJSON("a.go"), nil
+		}
+		return "", nil // every review call comes back empty
+	}}
+	rec, err := runOnce(t, in, baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// 1 initial attempt + defaultRetriesPerUnitType from the run-global bucket.
+	reviewCalls := 0
+	for _, call := range c.calls {
+		if !isTriageCall(call) {
+			reviewCalls++
+		}
+	}
+	if reviewCalls != 1+defaultRetriesPerUnitType {
+		t.Errorf("review calls = %d, want %d (retry budget exhausted)", reviewCalls, 1+defaultRetriesPerUnitType)
+	}
+	var fo *model.FileOutcome
+	for i := range rec.Files {
+		if rec.Files[i].Path == "a.go" {
+			fo = &rec.Files[i]
+		}
+	}
+	if fo == nil || fo.State != model.FileErrored || fo.Reason != "parse_failure" {
+		t.Fatalf("file outcome = %+v, want errored(parse_failure)", fo)
+	}
+	if rec.Coverage.Complete {
+		t.Errorf("coverage complete despite errored file — gate must fail closed")
+	}
+}
+
+func TestNonEmptySchemaViolationStaysTerminal(t *testing.T) {
+	in := baseInputs()
+	c := &fakeClient{fn: func(_ int, req model.CompletionRequest) (string, error) {
+		if isTriageCall(req) {
+			return triageJSON("a.go"), nil
+		}
+		// Non-empty but schema-violating: no re-ask (§8), one call only.
+		return `{"schema_version":999,"path":"a.go","outcome":"nope","findings":[]}`, nil
+	}}
+	rec, err := runOnce(t, in, baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	reviewCalls := 0
+	for _, call := range c.calls {
+		if !isTriageCall(call) {
+			reviewCalls++
+		}
+	}
+	if reviewCalls != 1 {
+		t.Errorf("review calls = %d, want exactly 1 (schema violation is terminal)", reviewCalls)
+	}
+	var fo *model.FileOutcome
+	for i := range rec.Files {
+		if rec.Files[i].Path == "a.go" {
+			fo = &rec.Files[i]
+		}
+	}
+	if fo == nil || fo.State != model.FileErrored || fo.Reason != "parse_failure" {
+		t.Fatalf("file outcome = %+v, want errored(parse_failure)", fo)
+	}
+}
+
 func TestPartialResultsAfterMidRunCancellation(t *testing.T) {
 	in := Inputs{PRDescription: "P", Nonce: "nn", PostImage: map[string][]byte{}}
 	for _, p := range []string{"f1.go", "f2.go", "f3.go"} {
