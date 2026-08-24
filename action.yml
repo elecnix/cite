@@ -31,7 +31,7 @@ inputs:
   version:
     description: 'Cite release tag to download. Defaults to the version of this action; keep it in lockstep with the release tag (the release workflow fails if they drift).'
     required: false
-    default: 'v0.2.1'
+    default: 'v0.3.0'
   model_base_url:
     description: 'Provider base URL, e.g. https://openrouter.ai/api/v1. Empty means the OpenAI default.'
     required: false
