@@ -133,11 +133,12 @@ func (r *Reviewer) runTriage(ctx context.Context, in *Inputs) (flagged map[strin
 	b.WriteString("</diff_excerpts>\n")
 
 	req := model.CompletionRequest{
-		System:          triageSystemPrompt,
-		User:            b.String(),
-		MaxOutputTokens: maxTokens,
-		Temperature:     pinnedTemperature,
-		ResponseSchema:  triageResponseSchema(),
+		System:            triageSystemPrompt,
+		User:              b.String(),
+		MaxOutputTokens:   maxTokens,
+		Temperature:       pinnedTemperature,
+		ResponseSchema:    triageResponseSchema(),
+		RequireParameters: requireParameters(r.o.Cfg),
 	}
 	resp, err := r.completeWithRetry(ctx, unitTriage, req, timeout)
 	if err != nil {

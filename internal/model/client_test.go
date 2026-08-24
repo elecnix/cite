@@ -121,6 +121,43 @@ func TestRequestCarriesStructuredOutputAndSeed(t *testing.T) {
 	}
 }
 
+func TestRequestCarriesProviderRequireParameters(t *testing.T) {
+	capture := func(t *testing.T, req CompletionRequest) map[string]any {
+		t.Helper()
+		var gotBody map[string]any
+		srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewDecoder(r.Body).Decode(&gotBody)
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+		})
+		ts := newTestServer(srv)
+		t.Cleanup(ts.Close)
+		c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+		if _, err := c.Complete(context.Background(), req); err != nil {
+			t.Fatal(err)
+		}
+		return gotBody
+	}
+
+	body := capture(t, CompletionRequest{
+		Temperature: 0, MaxOutputTokens: 8, RequireParameters: true,
+	})
+	provider, ok := body["provider"].(map[string]any)
+	if !ok {
+		t.Fatalf("request body has no provider object: %v", body["provider"])
+	}
+	if provider["require_parameters"] != true {
+		t.Fatalf("provider.require_parameters = %v, want true", provider["require_parameters"])
+	}
+
+	// Without the flag the key must be absent entirely: a router that does
+	// not know it must never see it.
+	plain := capture(t, CompletionRequest{Temperature: 0, MaxOutputTokens: 8})
+	if _, ok := plain["provider"]; ok {
+		t.Fatalf("provider key present without RequireParameters: %v", plain["provider"])
+	}
+}
+
 func TestNewClientPrefersModelAPIKey(t *testing.T) {
 	// The bring-your-own-key path is unchanged: MODEL_API_KEY wins over the
 	// ambient GITHUB_TOKEN.

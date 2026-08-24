@@ -78,6 +78,31 @@ func TestDefault(t *testing.T) {
 	}
 }
 
+func TestRequireParameters(t *testing.T) {
+	t.Run("default false", func(t *testing.T) {
+		c := Default()
+		if c.RequireParameters {
+			t.Error("RequireParameters = true, want false")
+		}
+		c2 := mustParse(t, "model: openai/gpt-5-mini\n")
+		if c2.RequireParameters {
+			t.Error("RequireParameters = true when absent, want false")
+		}
+	})
+	t.Run("parsed when true", func(t *testing.T) {
+		c := mustParse(t, "require_parameters: true\n")
+		if !c.RequireParameters {
+			t.Error("RequireParameters = false with require_parameters: true, want true")
+		}
+	})
+	t.Run("wrong type rejected by schema", func(t *testing.T) {
+		_, err := Parse([]byte("require_parameters: sure\n"))
+		if err == nil || !strings.Contains(err.Error(), "expected true or false") {
+			t.Fatalf("want a problem containing %q, got %v", "expected true or false", err)
+		}
+	})
+}
+
 func TestDefaultBlockingCategories(t *testing.T) {
 	got := DefaultBlockingCategories()
 	want := []model.Category{
@@ -302,6 +327,8 @@ providers:
 		{"unknown key in model entry", providers + "    models:\n      - id: m1\n        seedy: 1\n", "unknown key"},
 		{"unknown role name", providers + "roles:\n  audit: { model: gateway/m1 }", "unknown key"},
 		{"wrong type for nits", "nits: yes-please", "expected true or false"},
+		{"require_parameters ok", "require_parameters: true", ""},
+		{"wrong type for require_parameters", "require_parameters: maybe", "expected true or false"},
 		{"wrong type for max_comments", "max_comments: ten", "expected an integer"},
 		{"wrong type for paths_ignore", "paths_ignore: vendor", "expected a list"},
 		{"provider missing api", "providers:\n  g:\n    base_url: https://x\n    api_key: $K", "required field is missing"},

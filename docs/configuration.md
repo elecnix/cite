@@ -28,6 +28,7 @@ compat_profile: "2026-08"     # which snapshot of the instruction formats to hon
 | `nits` | `false` | Enables `convention` and `error-swallow` findings. Off by default, and they consume no comment budget unless enabled. `convention` findings can never block a merge in any configuration. |
 | `gate` | `comment` | `comment` posts findings as a non-blocking review plus a check run that always concludes `success` or `neutral`. `block` makes the check run conclude `failure` when a finding blocks. Turn blocking on after a month of shadowing the tool's output. |
 | `compat_profile` | `"2026-08"` | Which dated snapshot of instruction-file behaviour Cite honours. Never auto-updates. See [CONFORMANCE.md](../CONFORMANCE.md). |
+| `require_parameters` | `false` | Ask OpenRouter-style routers to route only to endpoints that support every request parameter. See [Require parameters](#require-parameters). |
 
 Seven keys. If v1 ships with more than ten it has already lost.
 
@@ -200,6 +201,29 @@ Two properties:
 - **A failover is disclosed.** The run artifact records which leg served each
   call, so a quality change after a failover is diagnosable rather than
   mysterious.
+
+## Require parameters
+
+```yaml
+require_parameters: true   # default false
+```
+
+Cite sends `response_format: json_schema` (strict) on review and triage calls.
+When the base URL is a router such as OpenRouter, routing may pick an endpoint
+that does not support structured outputs; OpenRouter then drops the parameter
+or returns an empty body, which surfaces as an unparsable model response at a
+non-zero cost.
+
+Setting `require_parameters: true` adds a top-level `provider:
+{require_parameters: true}` field to chat completion requests, so the router
+only chooses endpoints that support **all** request parameters. Use it when you
+call OpenRouter with models whose endpoints inconsistently support structured
+outputs.
+
+The trade-off: if no endpoint for your model supports your parameter set, the
+call fails with an explicit routing error instead of silently degraded output.
+That failure is the feature — a clean error costs nothing and names its cause,
+while a dropped schema produces garbage that looks like a parse bug.
 
 ## Validation
 

@@ -164,6 +164,16 @@ func (r *Reviewer) tryRetry(unit string) bool {
 	return true
 }
 
+// requireParameters reads the require_parameters knob off the loaded
+// configuration. Cfg is required on Options, but the nil guard keeps a
+// misconstructed Reviewer from panicking mid-run (mirrors roleSettings).
+func requireParameters(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	return cfg.RequireParameters
+}
+
 // roleSettings resolves effective role configuration with the §7 defaults:
 // timeouts are per role because a slow local model and a fast hosted one
 // cannot share one number.
@@ -505,11 +515,12 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 	payload := strings.TrimPrefix(full, prefix+"\n\n")
 
 	req := model.CompletionRequest{
-		System:          systemPrompt(), // segment A: stable across runs and repos
-		User:            r.segB + cacheBreakpoint + payload,
-		MaxOutputTokens: maxTokens, // bounded by an output-token cap, never an inactivity timeout (§7)
-		Temperature:     pinnedTemperature,
-		ResponseSchema:  reviewResponseSchema(),
+		System:            systemPrompt(), // segment A: stable across runs and repos
+		User:              r.segB + cacheBreakpoint + payload,
+		MaxOutputTokens:   maxTokens, // bounded by an output-token cap, never an inactivity timeout (§7)
+		Temperature:       pinnedTemperature,
+		ResponseSchema:    reviewResponseSchema(),
+		RequireParameters: requireParameters(r.o.Cfg),
 	}
 	resp, err := r.completeWithRetry(ctx, unitReview, req, timeout)
 	if err != nil {
