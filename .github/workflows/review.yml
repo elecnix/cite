@@ -9,6 +9,11 @@
 # Security posture mirrors the documented install (§12): no checkout of the
 # pull request head — the action fetches everything it needs from the GitHub
 # API — and the model key arrives as a secret, never in the diff.
+#
+# The one exception is .github/cite.yml: `cite review --config` reads that
+# path from the LOCAL filesystem, so with no checkout it would be missing
+# and internal/config silently falls back to 120s defaults. The step below
+# fetches it explicitly from the BASE ref.
 
 name: review
 
@@ -34,6 +39,26 @@ jobs:
     if: github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     steps:
+      # Fetch the trusted config from the PR target branch (base_ref), never
+      # from the PR head or merge ref: a PR-controlled cite.yml could point
+      # model_base_url at an attacker endpoint and exfiltrate MODEL_API_KEY,
+      # or weaken the review settings themselves.
+      - name: Fetch trusted Cite config from the base branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname '.github/cite.yml')"
+          # Tolerant by design: a missing config is not an error — Cite falls
+          # back to its defaults — but never leave an empty/partial file.
+          if gh api "repos/${{ github.repository }}/contents/.github/cite.yml?ref=${{ github.base_ref }}" \
+               --jq '.content' | base64 -d > .github/cite.yml.tmp; then
+            mv .github/cite.yml.tmp .github/cite.yml
+          else
+            rm -f .github/cite.yml.tmp
+            echo "cite: no .github/cite.yml on base ref; running with defaults"
+          fi
+
       - name: Review this pull request with Cite
         uses: elecnix/cite@v0.2.1
         with:
