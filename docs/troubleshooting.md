@@ -92,6 +92,11 @@ summary names the cause:
 - **A file errored or the provider was unavailable.** Retry the run; if it
   recurs, check the fallback configuration in
   [configuration.md](configuration.md#fallback).
+- **`parse_failure`.** The model's response could not be decoded. Blank bodies
+  and responses that fail strict JSON decoding (truncated output, single-quoted
+  keys) are retried from the run-global bucket before giving up; a semantic
+  schema violation or a wrong-path echo is not retried, because re-asking
+  invites a matching quote for the same wrong claim.
 - **`output truncated at token cap (finish_reason=length)`.** The review of that
   file did not fit in the output budget. This is deterministic, so it is not
   retried — it would truncate identically. Raise

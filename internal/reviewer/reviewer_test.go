@@ -730,6 +730,76 @@ func TestNonEmptySchemaViolationStaysTerminal(t *testing.T) {
 	}
 }
 
+// A non-empty response that fails strict JSON decoding (single-quoted keys,
+// truncated output) is a mechanical formatting artifact like a blank body:
+// it is retried from the run-global bucket, not treated as terminal (§8).
+func TestSyntaxGarbageRetriedFromRunGlobalBucket(t *testing.T) {
+	in := baseInputs()
+	c := &fakeClient{fn: func(i int, req model.CompletionRequest) (string, error) {
+		if isTriageCall(req) {
+			return triageJSON("a.go"), nil
+		}
+		if i == 1 { // first review call: syntactically invalid JSON
+			return `{"path":"a.go","outcome":'reviewed'`, nil
+		}
+		return reviewJSON("a.go", "reviewed", nil), nil
+	}}
+	rec, err := runOnce(t, in, baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	reviewCalls := 0
+	for _, call := range c.calls {
+		if !isTriageCall(call) {
+			reviewCalls++
+		}
+	}
+	if reviewCalls != 2 {
+		t.Errorf("review calls = %d, want 2 (one syntax-error retry)", reviewCalls)
+	}
+	var fo *model.FileOutcome
+	for i := range rec.Files {
+		if rec.Files[i].Path == "a.go" {
+			fo = &rec.Files[i]
+		}
+	}
+	if fo == nil || fo.State != model.FileReviewed || !fo.Reviewed {
+		t.Fatalf("file outcome = %+v, want reviewed after syntax retry", fo)
+	}
+}
+
+func TestSyntaxGarbageUntilExhaustedRecordsParseFailure(t *testing.T) {
+	in := baseInputs()
+	c := &fakeClient{fn: func(_ int, req model.CompletionRequest) (string, error) {
+		if isTriageCall(req) {
+			return triageJSON("a.go"), nil
+		}
+		return `{'path':'a.go'}`, nil // every review call comes back syntax-invalid
+	}}
+	rec, err := runOnce(t, in, baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	reviewCalls := 0
+	for _, call := range c.calls {
+		if !isTriageCall(call) {
+			reviewCalls++
+		}
+	}
+	if reviewCalls != 1+defaultRetriesPerUnitType {
+		t.Errorf("review calls = %d, want %d (retry budget exhausted)", reviewCalls, 1+defaultRetriesPerUnitType)
+	}
+	var fo *model.FileOutcome
+	for i := range rec.Files {
+		if rec.Files[i].Path == "a.go" {
+			fo = &rec.Files[i]
+		}
+	}
+	if fo == nil || fo.State != model.FileErrored || fo.Reason != "parse_failure" {
+		t.Fatalf("file outcome = %+v, want errored(parse_failure)", fo)
+	}
+}
+
 func TestPartialResultsAfterMidRunCancellation(t *testing.T) {
 	in := Inputs{PRDescription: "P", Nonce: "nn", PostImage: map[string][]byte{}}
 	for _, p := range []string{"f1.go", "f2.go", "f3.go"} {
