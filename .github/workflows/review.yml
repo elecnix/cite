@@ -2,9 +2,12 @@
 #
 # This uses Cite's own released composite action — the same install path a
 # consumer copies from the README — on every pull request of this
-# repository. The default gate is `comment`: reviews post as COMMENT and the
-# check run is always success or neutral in v0.1/v0.2, so this can never
-# block a merge; it exists to measure the tool on the code that builds it.
+# repository. Reviews post as COMMENT; the check run fails only when the
+# gate concludes COULD_NOT_EVALUATE (fail-closed coverage), never on
+# findings themselves.
+#
+# Pin tracks the latest release rather than an old one: dogfooding should
+# exercise what consumers actually get, including released retry hardening.
 #
 # Security posture mirrors the documented install (§12): no checkout of the
 # pull request head — the action fetches everything it needs from the GitHub
@@ -60,7 +63,7 @@ jobs:
           fi
 
       - name: Review this pull request with Cite
-        uses: elecnix/cite@v0.3.0
+        uses: elecnix/cite@v0.4.0
         with:
           model_id: deepseek/deepseek-v4-flash-0731
           model_base_url: https://openrouter.ai/api/v1
