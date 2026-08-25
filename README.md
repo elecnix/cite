@@ -56,6 +56,7 @@ you what it did with them.
 ```
 cite review --diff <(git diff main...)        # local branch, nothing pushed
 cite review --pr owner/repo#123 --dry-run     # a real PR; prints, posts nothing
+cite review --pr owner/repo#123 --report markdown -o report.md  # full run, local report
 cite doctor                                   # which instruction files reached which paths
 cite validate                                 # schema-check the config
 cite soak bench/cases                         # pipeline regression harness
@@ -67,6 +68,8 @@ cite metrics fix-or-argue --pr owner/repo#N   # weekly actioned-rate proxy (§15
 cite signals --pr owner/repo#N                # ingest 👎 reactions into the ledger
 cite re-review --repo owner/name              # re-review bypassed merges; one issue per finding
 ```
+
+The `--report json|markdown` path runs the reviewer against the real pull request but writes the outcome to stdout or `-o FILE` instead of publishing to GitHub: no check run, no review, no sticky comment. It reviews all manifest files fresh (no incremental carry-forward) so reports stay reproducible. This lets you evaluate Cite on any repository your token can read without deploying the action there.
 
 ## Documentation
 
