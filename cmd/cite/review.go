@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -34,20 +35,62 @@ func runReview(args []string) error {
 	dryRun := fs.Bool("dry-run", false, "print results, post nothing")
 	cfgPath := fs.String("config", ".github/cite.yml", "config file (optional)")
 	disabled := fs.Bool("disabled", false, "kill switch: conclude disabled-by-configuration")
+	reportFmt := fs.String("report", "", "write a full report instead of publishing to GitHub: json or markdown")
+	outPath := fs.String("out", "", "report destination file (default stdout; requires --report)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	var sink publisher.Sink
+	switch *reportFmt {
+	case "":
+		if *outPath != "" {
+			return fmt.Errorf("review: --out requires --report")
+		}
+	case "json":
+		w, closer, err := reportWriter(*outPath)
+		if err != nil {
+			return err
+		}
+		if closer != nil {
+			defer closer()
+		}
+		sink = publisher.JSONReportSink(w)
+	case "markdown":
+		w, closer, err := reportWriter(*outPath)
+		if err != nil {
+			return err
+		}
+		if closer != nil {
+			defer closer()
+		}
+		sink = publisher.MarkdownReportSink(w)
+	default:
+		return fmt.Errorf("review: --report must be json or markdown")
 	}
 	switch {
 	case *diffPath != "" && *prSpec != "":
 		return fmt.Errorf("use --diff or --pr, not both")
 	case *diffPath != "":
-		return reviewLocal(*diffPath, *cfgPath)
+		return reviewLocal(*diffPath, *cfgPath, sink)
 	case *prSpec != "":
-		return reviewPR(*prSpec, *cfgPath, *dryRun, *disabled)
+		return reviewPR(*prSpec, *cfgPath, *dryRun, *disabled, sink)
 	default:
 		fs.Usage()
 		return fmt.Errorf("review: one of --diff or --pr is required")
 	}
+}
+
+// reportWriter resolves the report destination: a file when one is given,
+// stdout otherwise. The returned closer is non-nil only for files.
+func reportWriter(path string) (io.Writer, func(), error) {
+	if path == "" {
+		return os.Stdout, nil, nil
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating report file: %w", err)
+	}
+	return f, func() { _ = f.Close() }, nil
 }
 
 func loadConfig(path string) *config.Config {
@@ -107,7 +150,7 @@ func verifierSuffix(v string) string {
 
 // --- local mode -----------------------------------------------------------
 
-func reviewLocal(diffPath, cfgPath string) error {
+func reviewLocal(diffPath, cfgPath string, sink publisher.Sink) error {
 	raw, err := os.ReadFile(diffPath)
 	if err != nil {
 		return err
@@ -169,6 +212,11 @@ func reviewLocal(diffPath, cfgPath string) error {
 	applyCost(rec, cfg)
 	verdict, reason := gate.Decide(rec, cfg, gate.Options{})
 	rec.Verdict, rec.VerdictReason = verdict, reason
+	if sink != nil {
+		if err := sink.Publish(rec, publisher.ReportPayload{}); err != nil {
+			return fmt.Errorf("writing report: %w", err)
+		}
+	}
 	printRecord(rec)
 	fmt.Printf("\n%s — %s\n", verdict, reason)
 	fmt.Println(gate.CheckRunPayload(rec, verdict, reason))
@@ -205,7 +253,13 @@ type threadFinding struct {
 	Evidence    []model.Evidence `json:"evidence"`
 }
 
-func reviewPR(spec, cfgPath string, dryRun, disabled bool) error {
+func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink) error {
+	// Report mode: a full run against the real pull request whose outcome goes
+	// to a local sink instead of GitHub. It is not a dry-run — nothing is
+	// simulated — but every mutation (check run, review, thread resolution,
+	// sticky comment) is skipped, and so is incremental state: all manifest
+	// files are reviewed fresh and findings are chosen by budget alone.
+	reportMode := sink != nil
 	owner, repo, num, err := parsePRSpec(spec)
 	if err != nil {
 		return err
@@ -228,7 +282,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool) error {
 	// The check run targets the PR head SHA — never github.sha, which is a
 	// synthetic merge commit on pull_request events (§11).
 	var checkID int64
-	if !dryRun && !disabled {
+	if !dryRun && !disabled && !reportMode {
 		checkID, err = c.CreateCheckRun(ctx, pr.HeadSHA, "cite", "Cite is reviewing", "queued", "queued")
 		if err != nil {
 			return fmt.Errorf("creating check run: %w", err)
@@ -334,24 +388,10 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool) error {
 	rec.MergeBaseSHA = mergeBase
 	rec.Coverage = scope.ComputeCoverage(rec.Files, len(entries))
 
-	// Sticky comment: ledger + incremental state.
-	prevState := readSticky(ctx, c, num)
-
-	// Incremental re-review keyed on content (§10): only files whose blob
-	// SHA changed are reviewed fresh; findings on untouched files carry
-	// forward. Fails toward re-review: carried findings re-enter the plan so
-	// their threads stay alive.
-	curSHAs := map[string]string{}
-	for path, x := range extras {
-		curSHAs[path] = x.BlobSHA
-	}
-	toReview := publisher.FilesToReview(prevState.BlobSHAs, curSHAs)
-	if len(prevState.BlobSHAs) > 0 && len(toReview) < len(entries) {
-		logToStderr("incremental: %d of %d files changed content since last review", len(toReview), len(entries))
-		carryIntoRecord(rec, prevState, toReview)
-	}
-
-	// Budget, then reconciliation against live threads.
+	// Budget first; reconciliation against live threads follows unless in
+	// report mode. Report mode has no sticky state and no live threads: all
+	// manifest files are reviewed fresh and the budgeted findings alone form
+	// the plan.
 	changedLines := 0
 	for _, e := range entries {
 		changedLines += e.Adds + e.Dels
@@ -362,33 +402,56 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool) error {
 	for _, d := range drops {
 		rec.Drops = append(rec.Drops, d.Entry)
 	}
-	_ = chosen
-
-	live, threadData, threadNodeIDs, err := threadsFromGitHub(ctx, c, num)
-	if err != nil {
-		return concludeFailure(ctx, c, checkID, dryRun, model.VerdictCouldNotEvaluate, "fetching review threads: "+err.Error())
+	var plan publisher.ReconciliationPlan
+	var live []publisher.LiveThread
+	var threadNodeIDs map[int64]string
+	var ledger publisher.DismissalLedger
+	curSHAs := map[string]string{}
+	for path, x := range extras {
+		curSHAs[path] = x.BlobSHA
 	}
-	ledger := publisher.DismissalLedger{}
-	if prevState.Ledger != "" {
-		if l, err := publisher.UnmarshalBlob(prevState.Ledger); err == nil {
-			ledger = l
-		} else {
-			logToStderr("warning: ledger corrupt, rebuilding from threads")
-			ledger = publisher.RebuildFromThreads(repoFull, live, nowClock())
+	if reportMode {
+		plan = publisher.ReconciliationPlan{CommentsToPost: chosen}
+	} else {
+		// Sticky comment: ledger + incremental state. Incremental re-review is
+		// keyed on content (§10): only files whose blob SHA changed are reviewed
+		// fresh; findings on untouched files carry forward. Fails toward
+		// re-review: carried findings re-enter the plan so their threads stay
+		// alive.
+		prevState := readSticky(ctx, c, num)
+		toReview := publisher.FilesToReview(prevState.BlobSHAs, curSHAs)
+		if len(prevState.BlobSHAs) > 0 && len(toReview) < len(entries) {
+			logToStderr("incremental: %d of %d files changed content since last review", len(toReview), len(entries))
+			carryIntoRecord(rec, prevState, toReview)
 		}
-	}
-	registerThreadText(live, threadData)
 
-	// A thread resolves ONLY when its quoted span is verified gone from the
-	// new content — never on a merely-disappeared fingerprint (§10).
-	spanGone := func(t publisher.LiveThread) bool {
-		return spanGoneFor(threadData[t.ID], post)(t)
+		var threadData map[int64]*threadFinding
+		var err error
+		live, threadData, threadNodeIDs, err = threadsFromGitHub(ctx, c, num)
+		if err != nil {
+			return concludeFailure(ctx, c, checkID, dryRun, model.VerdictCouldNotEvaluate, "fetching review threads: "+err.Error())
+		}
+		if prevState.Ledger != "" {
+			if l, err := publisher.UnmarshalBlob(prevState.Ledger); err == nil {
+				ledger = l
+			} else {
+				logToStderr("warning: ledger corrupt, rebuilding from threads")
+				ledger = publisher.RebuildFromThreads(repoFull, live, nowClock())
+			}
+		}
+		registerThreadText(live, threadData)
+
+		// A thread resolves ONLY when its quoted span is verified gone from the
+		// new content — never on a merely-disappeared fingerprint (§10).
+		spanGone := func(t publisher.LiveThread) bool {
+			return spanGoneFor(threadData[t.ID], post)(t)
+		}
+		plan = publisher.Reconcile(rec.Findings, live, ledger, publisher.ReconcileOptions{
+			Repository: repoFull,
+			Now:        time.Now(),
+			SpanGone:   spanGone,
+		})
 	}
-	plan := publisher.Reconcile(rec.Findings, live, ledger, publisher.ReconcileOptions{
-		Repository: repoFull,
-		Now:        time.Now(),
-		SpanGone:   spanGone,
-	})
 
 	applyCost(rec, cfg)
 	verdict, reason := gate.Decide(rec, cfg, gate.Options{})
@@ -396,7 +459,17 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool) error {
 
 	// Publish, ordered so every step is safe to redo (§10).
 	body, comments, unanchorable := buildReviewPayload(diffs, plan, instr, rec)
-	if !dryRun {
+	if reportMode {
+		payload := publisher.ReportPayload{Body: body, Unanchorable: unanchorable}
+		for _, c := range comments {
+			payload.Comments = append(payload.Comments, publisher.InlineComment{
+				Path: c.Path, StartLine: c.StartLine, Line: c.Line, Side: c.Side, Body: c.Body,
+			})
+		}
+		if err := sink.Publish(rec, payload); err != nil {
+			return fmt.Errorf("writing report: %w", err)
+		}
+	} else if !dryRun {
 		if body != "" || len(comments) > 0 {
 			if err := c.CreateReview(ctx, num, body, comments); err != nil {
 				logToStderr("review posting failed: %v", err)
