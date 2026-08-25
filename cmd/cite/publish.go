@@ -292,7 +292,36 @@ func writeSticky(ctx context.Context, c *githubclient.Client, prNum int, rec *mo
 	fmt.Fprintf(&sb, "<!-- cite-state=%s -->\n", base64.StdEncoding.EncodeToString(raw))
 	fmt.Fprintf(&sb, "Cite state for PR #%d. Ledger entries: %d. Last run: %s on %.7s.\n",
 		prNum, len(ledger.Entries), rec.Model, rec.HeadSHA)
+	sb.WriteString(stickyVisibleBody(rec))
 	if err := c.UpsertIssueComment(ctx, prNum, stickyMarker, sb.String()); err != nil {
 		logToStderr("warning: sticky comment write failed: %v", err)
 	}
+}
+
+// stickyVisibleBody renders the human-facing tail of the sticky comment: the
+// last verdict, coverage and cost, and one line per errored file. A human
+// reading the thread should see what happened without opening the check run.
+func stickyVisibleBody(rec *model.RunRecord) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "\n**Last verdict:** %s", rec.Verdict)
+	if rec.VerdictReason != "" {
+		fmt.Fprintf(&sb, " — %s", rec.VerdictReason)
+	}
+	sb.WriteString("\n")
+	cvg := rec.Coverage
+	fmt.Fprintf(&sb, "\nCoverage: %d/%d files reviewed", cvg.Reviewed, cvg.APIFiles)
+	if cvg.ApprovedSkip > 0 {
+		fmt.Fprintf(&sb, ", %d approved-skipped", cvg.ApprovedSkip)
+	}
+	if cvg.Errored > 0 {
+		fmt.Fprintf(&sb, ", **%d errored**", cvg.Errored)
+	}
+	fmt.Fprintf(&sb, " · samples: %d · cost: $%.4f (in %d out %d)\n",
+		rec.Samples, rec.CostUSD, rec.Usage.InputTokens, rec.Usage.OutputTokens)
+	for _, fo := range rec.Files {
+		if fo.State == model.FileErrored && fo.Reason != "" {
+			fmt.Fprintf(&sb, "- ⚠️ `%s` errored (%s)\n", fo.Path, fo.Reason)
+		}
+	}
+	return sb.String()
 }
