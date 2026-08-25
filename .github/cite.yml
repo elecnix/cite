@@ -29,5 +29,10 @@ require_parameters: true
 roles:
   review:
     timeout: 300s
+    # Dogfooding on PR #41: reviewing a large diff (cmd/cite/review.go) hit
+    # finish_reason=length at the built-in 32768-token cap. Raise it so big
+    # diffs get complete reviews; the explicit timeout above keeps the
+    # deadline stable regardless.
+    max_output_tokens: 65536
   triage:
     timeout: 120s
