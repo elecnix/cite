@@ -28,11 +28,13 @@ require_parameters: true
 
 roles:
   review:
-    timeout: 300s
+    # 65536-token cap ⇒ derived deadline would be ~572s (60s base + 65536÷128
+    # tok/s). An explicit timeout always wins, so pin one above the derivation
+    # instead of letting the raised cap silently run into the old limit.
+    timeout: 600s
     # Dogfooding on PR #41: reviewing a large diff (cmd/cite/review.go) hit
     # finish_reason=length at the built-in 32768-token cap. Raise it so big
-    # diffs get complete reviews; the explicit timeout above keeps the
-    # deadline stable regardless.
+    # diffs get complete reviews.
     max_output_tokens: 65536
   triage:
     timeout: 120s
