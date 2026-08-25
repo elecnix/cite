@@ -2,10 +2,17 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 )
+
+// ErrSyntax marks a response that failed strict JSON decoding — a mechanical
+// formatting artifact (single-quoted keys, truncated output), not a confident
+// wrong claim. The reviewer retries these from the run-global bucket, the
+// same way it retries blank bodies; semantic schema violations stay terminal.
+var ErrSyntax = errors.New("schema: syntax")
 
 // UnwrapJSON removes a surrounding markdown code fence from a model response.
 //
@@ -93,7 +100,7 @@ func escapeRawControlCharsInStrings(data []byte) []byte {
 func ParseFileReview(data []byte) (*FileReview, error) {
 	var fr FileReview
 	if err := json.Unmarshal(escapeRawControlCharsInStrings(UnwrapJSON(data)), &fr); err != nil {
-		return nil, fmt.Errorf("schema: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrSyntax, err)
 	}
 	if fr.SchemaVersion != SchemaVersion {
 		return nil, fmt.Errorf("schema: version %d, want %d", fr.SchemaVersion, SchemaVersion)

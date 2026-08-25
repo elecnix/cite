@@ -19,6 +19,13 @@
 
 model: deepseek/deepseek-v4-flash-0731
 
+# Dogfooding on PR #40 showed deepseek-v4-flash routed through OpenRouter
+# intermittently returning free text instead of schema-constrained JSON
+# (fenced blocks, single-quoted keys, stray bytes) — an endpoint dropping
+# response_format. require_parameters makes the router refuse such endpoints;
+# a clean routing error costs nothing, degraded output fails the file.
+require_parameters: true
+
 roles:
   review:
     timeout: 300s

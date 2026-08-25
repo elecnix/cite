@@ -550,22 +550,32 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 		}
 
 		fr, perr = model.ParseFileReview([]byte(resp.Text))
-		if perr == nil || strings.TrimSpace(resp.Text) != "" {
+		syntaxErr := perr != nil && errors.Is(perr, model.ErrSyntax)
+		blankBody := strings.TrimSpace(resp.Text) == ""
+		if perr == nil || (!syntaxErr && !blankBody) {
 			break
 		}
-		// A blank body is transient provider garbage, not a confident wrong
-		// answer: nothing was generated, so there is no claim for a re-ask to
-		// invite back. It draws from the same run-global bucket as a deadline
-		// expiry; with retries exhausted it stays terminal as parse_failure.
+		// A blank body is transient provider garbage, and a syntax error is a
+		// mechanical formatting artifact (single-quoted keys, truncated
+		// output): neither is a confident wrong answer, so there is no claim
+		// for a re-ask to invite back. Semantic schema violations and wrong-
+		// path echoes stay terminal (§8). Both draw from the same run-global
+		// bucket as a deadline expiry; with retries exhausted they stay
+		// terminal as parse_failure.
 		if !r.tryRetry(unitReview) {
 			break
 		}
-		r.logf("review of %s response was empty (%v); retrying from run-global bucket", e.Path, perr)
+		kind := "was empty"
+		if !blankBody {
+			kind = "failed strict JSON decode"
+		}
+		r.logf("review of %s response %s (%v); retrying from run-global bucket", e.Path, kind, perr)
 	}
 
 	if perr != nil || (fr.Path != "" && fr.Path != e.Path) {
-		// A schema violation or wrong-path echo is terminal for this unit:
-		// re-asking invites a matching quote for the same wrong claim (§8).
+		// A semantic schema violation or wrong-path echo is terminal for this
+		// unit: re-asking invites a matching quote for the same wrong claim (§8).
+		// Syntax-level failures are retried above.
 		detail := fmt.Sprintf("parse failure: %v", perr)
 		if perr == nil {
 			detail = fmt.Sprintf("response echoes path %q, want %q", fr.Path, e.Path)
