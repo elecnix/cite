@@ -15,7 +15,6 @@ import (
 	"io"
 	"os"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/elecnix/cite/internal/config"
@@ -339,21 +338,26 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink) 
 		}
 	}
 
-	// Per-file patches → one parsed diff set for anchor validation.
+	// Per-file patches → one parsed diff set for anchor validation. GitHub's
+	// files API returns patches as bare @@ hunks without git file headers, so
+	// each patch is parsed with its manifest-known path via ParseFilePatch.
+	// A patch that fails to parse is logged loudly and skipped: findings for
+	// that file will be dropped anchor_invalid (fail-closed), but one bad
+	// file must not silently neuter anchor validation for the whole run —
+	// which is exactly what swallowing a whole-batch parse error did before
+	// (every PR-mode review between Aug 21 and this fix dropped all findings).
 	diffs := map[string]*scope.DiffFile{}
-	var sb strings.Builder
 	for _, e := range entries {
-		if x, ok := extras[e.Path]; ok && x.Patch != "" {
-			sb.WriteString(x.Patch)
-			sb.WriteString("\n")
+		x, ok := extras[e.Path]
+		if !ok || x.Patch == "" {
+			continue // binary, too large, or deleted: no textual hunks to validate against
 		}
-	}
-	if sb.Len() > 0 {
-		if d, perr := scope.ParseUnifiedDiff(sb.String()); perr == nil {
-			for _, df := range d.Files {
-				diffs[df.Path] = df
-			}
+		df, perr := scope.ParseFilePatch(e.Path, e.Status, x.Patch)
+		if perr != nil {
+			logToStderr("WARNING: diff parse failed for %s; anchors in this file cannot validate: %v", e.Path, perr)
+			continue
 		}
+		diffs[e.Path] = df
 	}
 
 	modelClient, err := model.NewOpenAICompatClient()
