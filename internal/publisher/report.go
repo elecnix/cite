@@ -47,6 +47,20 @@ func JSONReportSink(w io.Writer) Sink { return jsonSink{w: w} }
 type jsonSink struct{ w io.Writer }
 
 func (s jsonSink) Publish(rec *model.RunRecord, payload ReportPayload) error {
+	// Emit [] rather than null for collection fields: consumers of the report
+	// shouldn't need to special-case Go's nil slices.
+	if rec.Findings == nil {
+		rec.Findings = []model.ValidatedFinding{}
+	}
+	if rec.Drops == nil {
+		rec.Drops = []model.DropEntry{}
+	}
+	if rec.Files == nil {
+		rec.Files = []model.FileOutcome{}
+	}
+	if payload.Comments == nil {
+		payload.Comments = []InlineComment{}
+	}
 	enc := json.NewEncoder(s.w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(struct {
