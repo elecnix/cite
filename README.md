@@ -56,7 +56,7 @@ you what it did with them.
 ```
 cite review --diff <(git diff main...)        # local branch, nothing pushed
 cite review --pr owner/repo#123 --dry-run     # a real PR; prints, posts nothing
-cite review --pr owner/repo#123 --report markdown -o report.md  # full run, local report
+cite review --pr owner/repo#123 --report markdown --out report.md  # full run, local report
 cite doctor                                   # which instruction files reached which paths
 cite validate                                 # schema-check the config
 cite soak bench/cases                         # pipeline regression harness
