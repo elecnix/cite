@@ -131,3 +131,103 @@ func TestBuildReviewBodyEmptyWhenNothingToSay(t *testing.T) {
 		t.Fatalf("nothing to say must produce an empty body, got %q", got)
 	}
 }
+
+// TestBuildReviewBodySurfacesAnchorInvalidDrops is the fix for issue #42: a
+// review that produced candidate findings but dropped them all as
+// anchor_invalid used to post nothing and exit COULD_NOT_EVALUATE, burying
+// real-but-unanchored observations in the CI log. Now the dropped findings
+// reach the human via a labelled body section even when no finding anchored.
+func TestBuildReviewBodySurfacesAnchorInvalidDrops(t *testing.T) {
+	drops := []model.DropEntry{
+		{Path: "a.go", Category: model.CategoryLogicInversion, Title: "Inverted guard drops auth checks", Reason: model.DropAnchorInvalid},
+		{Path: "b.go", Category: model.CategoryCrash, Title: "Unchecked nil deref after cast", Reason: model.DropAnchorInvalid},
+	}
+	body := BuildReviewBody(ReviewBodyInput{
+		FilesReviewed:      2,
+		AnchorInvalidDrops: drops,
+		DropsSummary:       "2 findings dropped by safety rails this run; see the run log.",
+	})
+	if body == "" {
+		t.Fatal("anchor_invalid drops alone must still produce a review body, not silence (issue #42)")
+	}
+	if !strings.Contains(body, NotableUnanchoredHeading) {
+		t.Fatalf("missing the notable-but-unanchored heading %q in:\n%s", NotableUnanchoredHeading, body)
+	}
+	for _, d := range drops {
+		if !strings.Contains(body, d.Path) {
+			t.Errorf("anchor_invalid drop path %q missing from body:\n%s", d.Path, body)
+		}
+		if !strings.Contains(body, d.Title) {
+			t.Errorf("anchor_invalid drop title %q missing from body:\n%s", d.Title, body)
+		}
+	}
+}
+
+// Only anchor_invalid drops surface as notable-but-unanchored: they were
+// structurally sound findings that merely could not be pinned to a line.
+// Other drop reasons (evidence_mismatch, budget, suppressed) stay in the
+// drops-summary count and the run record — they are not promoted to the
+// review body, because they are not "real but imprecise".
+func TestBuildReviewBodyIgnoresOtherDropReasons(t *testing.T) {
+	drops := []model.DropEntry{
+		{Path: "a.go", Category: model.CategoryConvention, Title: "nit: naming", Reason: model.DropSuppressed},
+		{Path: "b.go", Category: model.CategoryCrash, Title: "off by one", Reason: model.DropBudget},
+		{Path: "c.go", Category: model.CategoryLogicInversion, Title: "real but unanchored", Reason: model.DropAnchorInvalid},
+	}
+	body := BuildReviewBody(ReviewBodyInput{
+		FilesReviewed:      3,
+		AnchorInvalidDrops: drops,
+	})
+	if !strings.Contains(body, "c.go") || !strings.Contains(body, "real but unanchored") {
+		t.Fatalf("the anchor_invalid drop must appear:\n%s", body)
+	}
+	if strings.Contains(body, "nit: naming") || strings.Contains(body, "off by one") {
+		t.Fatalf("non-anchor_invalid drops must NOT appear in the body:\n%s", body)
+	}
+	if strings.Contains(body, NotableUnanchoredHeading) && !strings.Contains(body, "real but unanchored") {
+		t.Fatalf("heading present without the one anchor_invalid drop:\n%s", body)
+	}
+}
+
+// Sanitization applies to the notable-but-unanchored section too: the dropped
+// titles are model-authored text, so they run through SanitizeText before
+// reaching the renderer (§12 I5).
+func TestBuildReviewBodySanitisesUnanchoredDrops(t *testing.T) {
+	drops := []model.DropEntry{
+		{Path: "a.go", Category: model.CategoryLogicInversion, Title: "See https://evil.example @everyone fixes #1", Reason: model.DropAnchorInvalid},
+	}
+	body := BuildReviewBody(ReviewBodyInput{
+		AnchorInvalidDrops: drops,
+	})
+	for _, hazard := range []string{"https://evil.example", "@everyone", "fixes #1"} {
+		if strings.Contains(body, hazard) {
+			t.Fatalf("model-authored hazard reached the unanchored section: %q in:\n%s", hazard, body)
+		}
+	}
+}
+
+// The notable-but-unanchored section is structured, not prose: it does not
+// count against the five-line prose cap.
+func TestBuildReviewBodyUnanchoredSectionDoesNotCountAgainstProseCap(t *testing.T) {
+	post := mkFinding("a.go", "crash", "Off by one", "i <= n")
+	drops := make([]model.DropEntry, 20)
+	for i := range drops {
+		drops[i] = model.DropEntry{Path: "a.go", Category: model.CategoryCrash, Title: "unanchored", Reason: model.DropAnchorInvalid}
+	}
+	body := BuildReviewBody(ReviewBodyInput{
+		Posted:             []model.ValidatedFinding{post},
+		AnchorInvalidDrops: drops,
+		RiskRankedNote:     strings.Repeat("note ", 30),
+	})
+	proseLines := 0
+	for _, line := range strings.Split(body, "\n") {
+		if line == "" || strings.HasPrefix(line, "-") || strings.HasPrefix(line, "<!--") ||
+			strings.Contains(line, UnanchoredHeading) || strings.Contains(line, NotableUnanchoredHeading) {
+			break
+		}
+		proseLines++
+	}
+	if proseLines > MaxProseLines {
+		t.Fatalf("prose cap broken by unanchored section: %d lines > %d\n%s", proseLines, MaxProseLines, body)
+	}
+}

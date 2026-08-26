@@ -461,6 +461,12 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink) 
 	verdict, reason := gate.Decide(rec, cfg, gate.Options{})
 	rec.Verdict, rec.VerdictReason = verdict, reason
 
+	// Surface anchor_invalid drops on the Actions run page (issue #42): the
+	// raw CI log is truncated, ANSI-mangled, and not where a reviewer looks.
+	// This is a safety net alongside the review-body section; it survives a
+	// posting failure and costs nothing outside GitHub Actions.
+	emitDropsToStepSummary(rec.Drops)
+
 	// Publish, ordered so every step is safe to redo (§10).
 	body, comments, unanchorable := buildReviewPayload(diffs, plan, instr, rec)
 	if reportMode {

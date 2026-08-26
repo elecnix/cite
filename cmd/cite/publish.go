@@ -182,6 +182,7 @@ func buildReviewPayload(
 		FilesReviewed:            rec.Coverage.Reviewed,
 		Posted:                   anchorable,
 		Unanchorable:             unanchorable,
+		AnchorInvalidDrops:       rec.Drops,
 		DropsSummary:             fmt.Sprintf("%d findings dropped by safety rails this run; see the run log.", len(rec.Drops)),
 		InstructionsFooterLines:  footer,
 		RiskRankedNote:           rec.RiskRankedNote,

@@ -738,6 +738,14 @@ different failure from "the model missed it", and no tool in this space distingu
 The drop log is also the debugging surface: the review body links the run artifact, and the
 artifact answers "why did you say that" and "why didn't you say that" in one place.
 
+**anchor_invalid drops reach the human, not just the log.** A finding that is structurally
+sound but cannot be pinned to a diff line is not a false positive — the logic was identified; the
+bot just could not anchor it. Dropping it *and* hiding it pays the compute cost for zero delivered
+value. So anchor_invalid drops surface in a labelled "Notable but unanchored" section of the review
+body and on the GitHub Actions run page via `$GITHUB_STEP_SUMMARY`, so a reviewer reading the PR
+sees them without scraping the raw log. Other drop reasons (evidence_mismatch, budget, suppressed)
+are not "real but imprecise" and stay in the drop-log count and the run record.
+
 ### Verifying the claims the model cannot check
 
 `external_claims[]` is the load-bearing field, and each type has a mechanical disposition:

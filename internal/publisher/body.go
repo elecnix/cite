@@ -20,15 +20,36 @@ const MaxProseLines = 5
 // to a diff line. They are never silently dropped.
 const UnanchoredHeading = "Not anchored to a diff line:"
 
+// NotableUnanchoredHeading labels the section holding candidate findings
+// that were structurally sound but dropped as anchor_invalid — the model
+// identified the issue but could not pin it to a specific code location
+// (issue #42). Posting them as low-confidence notes is strictly better than
+// burying them in the CI log: a correct-but-imprecise observation is useful
+// signal, and a false positive is useful dismissal signal.
+const NotableUnanchoredHeading = "Notable but unanchored (needs manual localization):"
+
+// maxUnanchoredDropsInBody caps the notable-but-unanchored section so a
+// pathological run that drops dozens of findings does not drown the review.
+// Extras are counted in DropsSummary and the run record.
+const maxUnanchoredDropsInBody = 5
+
 // ReviewBodyInput collects everything the review body needs. Model-authored
 // text (finding titles, notes that may embed configuration) is passed through
 // model.SanitizeText before it reaches the renderer (§12, I5).
 type ReviewBodyInput struct {
 	// FilesReviewed and Posted summarise the run in the single opening line.
 	FilesReviewed int
-	Posted        []model.ValidatedFinding
+	// Posted summarises the run in the single opening line.
+	Posted []model.ValidatedFinding
 	// Unanchorable findings go into the labelled section.
 	Unanchorable []model.ValidatedFinding
+	// AnchorInvalidDrops are candidate findings the model produced but the
+	// harness could not pin to a diff line. They are structurally sound — the
+	// drop reason is anchor_invalid, not evidence_mismatch — so they reach the
+	// human via a labelled body section instead of vanishing into the CI log
+	// (issue #42). Only DropAnchorInvalid entries belong here; other drop
+	// reasons stay in DropsSummary.
+	AnchorInvalidDrops []model.DropEntry
 	// DropsSummary points at the run record and its drop log ("why didn't
 	// you say that" lives there, not here).
 	DropsSummary string
@@ -45,11 +66,24 @@ type ReviewBodyInput struct {
 
 // BuildReviewBody renders the review body. Prose (the opening line plus the
 // two optional notes) is capped at MaxProseLines; the unanchored-findings
-// section and the footer are structured, not prose, and follow the cap.
+// section, the notable-but-unanchored section, and the footer are structured,
+// not prose, and follow the cap.
 // Returns "" when there is nothing to say — nothing is posted when there is
 // nothing to say (§10).
 func BuildReviewBody(in ReviewBodyInput) string {
-	if len(in.Posted) == 0 && len(in.Unanchorable) == 0 {
+	hasUnanchored := len(in.Unanchorable) > 0
+	// Only DropAnchorInvalid entries belong here; other drop reasons (budget,
+	// suppressed, evidence_mismatch) are not "real but imprecise" — they stay in
+	// DropsSummary. Filter at render time so callers can pass the full drop
+	// log without screening it themselves.
+	notable := make([]model.DropEntry, 0, len(in.AnchorInvalidDrops))
+	for _, d := range in.AnchorInvalidDrops {
+		if d.Reason == model.DropAnchorInvalid {
+			notable = append(notable, d)
+		}
+	}
+	hasNotableUnanchored := len(notable) > 0
+	if len(in.Posted) == 0 && !hasUnanchored && !hasNotableUnanchored {
 		return ""
 	}
 
@@ -84,6 +118,23 @@ func BuildReviewBody(in ReviewBodyInput) string {
 		sb.WriteString("\n")
 		for _, f := range in.Unanchorable {
 			fmt.Fprintf(&sb, "- `%s`: %s (%s)\n", f.Path, model.SanitizeText(f.Title), f.Category)
+		}
+	}
+
+	if hasNotableUnanchored {
+		sb.WriteString("\n\n")
+		sb.WriteString(NotableUnanchoredHeading)
+		sb.WriteString("\n")
+		shown := notable
+		if len(shown) > maxUnanchoredDropsInBody {
+			shown = shown[:maxUnanchoredDropsInBody]
+		}
+		for _, d := range shown {
+			fmt.Fprintf(&sb, "- `%s`: %s (%s) — could not be pinned to a diff line\n",
+				d.Path, model.SanitizeText(d.Title), d.Category)
+		}
+		if len(notable) > maxUnanchoredDropsInBody {
+			fmt.Fprintf(&sb, "- …and %d more (see the run record)\n", len(notable)-maxUnanchoredDropsInBody)
 		}
 	}
 
