@@ -1247,6 +1247,55 @@ func TestReviewCallCarriesDerivedDeadline(t *testing.T) {
 	}
 }
 
+// Every run must say which provider and model it used at run start: a run
+// that dies mid-flight (deadline, provider outage) never reaches the
+// end-of-run record dump, and the operator is left guessing which endpoint
+// the failures came from.
+func TestRunLogsProviderAndModel(t *testing.T) {
+	var logs []string
+	c := &fakeClient{fn: defaultScript()}
+	o := baseOptions(c)
+	o.Logger = func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}
+	if _, err := runOnce(t, baseInputs(), o); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "model=fake-model") {
+		t.Errorf("run log does not name the model; logs:\n%s", joined)
+	}
+}
+
+func TestRunLogsProviderEndpointWhenClientDescribesIt(t *testing.T) {
+	var logs []string
+	c := &providerFakeClient{Client: &fakeClient{fn: defaultScript()}, provider: "https://models.github.ai/inference"}
+	o := baseOptions(c)
+	o.Logger = func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}
+	if _, err := runOnce(t, baseInputs(), o); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	joined := strings.Join(logs, "\n")
+	for _, want := range []string{"model=fake-model", "provider=https://models.github.ai/inference"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("run log missing %q; logs:\n%s", want, joined)
+		}
+	}
+}
+
+// providerFakeClient wraps a fakeClient and additionally describes its
+// provider endpoint, mirroring OpenAICompatClient.
+type providerFakeClient struct {
+	model.Client
+	provider string
+}
+
+func (c *providerFakeClient) ModelID() string { return c.Client.ModelID() }
+
+func (c *providerFakeClient) DescribeProvider() string { return c.provider }
+
 // When a review call exhausts its retries on deadline expiry, the surfaced
 // error must name the knob (roles.review.timeout) rather than only the bare
 // "context deadline exceeded" symptom.

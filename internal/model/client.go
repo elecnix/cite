@@ -34,8 +34,18 @@ const (
 // a truncated response truncates identically on retry (§7).
 var ErrDeterministic = errors.New("deterministic failure")
 
-// ErrDeadline is a per-request deadline expiry.
+// ErrDeadline is a per-request deadline expiry. Errors wrapping it name the
+// per-call deadline VALUE, so a failure log says what timeout actually
+// applied — a bare "deadline exceeded" gives an operator nothing to compare
+// against roles.<role>.timeout (issue #28).
 var ErrDeadline = errors.New("request deadline exceeded")
+
+// ProviderDescriber is an optional Client capability: it names the provider
+// endpoint the client talks to, so a run can log which provider and model it
+// used — including runs that die before the record is printed.
+type ProviderDescriber interface {
+	DescribeProvider() string
+}
 
 // CredentialExpr is a credential *expression*, never a value: a literal, a
 // $VAR / ${VAR} environment reference, or a !shell-command (§6).
@@ -229,6 +239,9 @@ func NewOpenAICompatClient() (*OpenAICompatClient, error) {
 
 func (c *OpenAICompatClient) ModelID() string { return c.Model }
 
+// DescribeProvider names the endpoint this client targets (ProviderDescriber).
+func (c *OpenAICompatClient) DescribeProvider() string { return c.BaseURL }
+
 // typedError maps provider errors to typed codes before rendering (I4).
 type typedError struct {
 	Code string
@@ -240,12 +253,23 @@ func (e *typedError) Error() string { return e.Code + ": " + e.Body }
 // Complete performs one bounded call. The deadline comes from ctx, set at the
 // call site. The output-token cap is the bound, never an inactivity timeout.
 func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
+	start := time.Now()
 	if _, ok := ctx.Deadline(); !ok {
 		// An explicit per-request deadline at the call site. Never inherit
 		// an unbounded client default.
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, 120*time.Second)
 		defer cancel()
+	}
+	// deadlineBudget renders the per-call deadline actually in force, for
+	// error messages: the value that was exceeded must appear in the error
+	// (issue #28).
+	deadlineBudget := func() string {
+		dl, ok := ctx.Deadline()
+		if !ok {
+			return "none"
+		}
+		return dl.Sub(start).Round(time.Millisecond).String()
 	}
 	httpReq := map[string]any{
 		"model":       c.Model,
@@ -300,7 +324,7 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 	resp, err := httpClient.Do(httpRequest)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return nil, ErrDeadline
+			return nil, fmt.Errorf("%w (per-call deadline was %s)", ErrDeadline, deadlineBudget())
 		}
 		return nil, fmt.Errorf("provider unreachable: %w", err)
 	}
@@ -358,6 +382,13 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			// A stall during the body read is a deadline expiry too: type it
+			// as ErrDeadline with the value, or it reaches the operator as a
+			// bare "reading response: context deadline exceeded" with no
+			// hint of which knob to turn (issue #28).
+			return nil, fmt.Errorf("%w while reading the response body (per-call deadline was %s)", ErrDeadline, deadlineBudget())
+		}
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {

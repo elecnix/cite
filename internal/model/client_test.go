@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -30,7 +31,9 @@ func TestCredentialExpr(t *testing.T) {
 
 func TestCompleteDeadlineEnforced(t *testing.T) {
 	// The deadline is set at the call site; a hanging endpoint must return
-	// ErrDeadline, not hang on an SDK default.
+	// ErrDeadline, not hang on an SDK default. The error must also name the
+	// per-call deadline VALUE: a bare "deadline exceeded" gives an operator
+	// nothing to compare against roles.<role>.timeout.
 	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(5 * time.Second)
 	})
@@ -42,6 +45,45 @@ func TestCompleteDeadlineEnforced(t *testing.T) {
 	_, err := c.Complete(ctx, CompletionRequest{System: "s", User: "u", MaxOutputTokens: 8})
 	if !errors.Is(err, ErrDeadline) {
 		t.Fatalf("want ErrDeadline, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "per-call deadline was 50ms") {
+		t.Fatalf("error must name the deadline value, got %v", err)
+	}
+}
+
+func TestCompleteDeadlineDuringBodyReadIsTyped(t *testing.T) {
+	// A stall AFTER the response headers — during the body read — must also
+	// map to ErrDeadline with the deadline value, not surface as a generic
+	// "reading response: context deadline exceeded" (PR elecnix/pi-agent-identity#45
+	// died exactly this way and the log never said which timeout applied).
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[`))
+		w.(http.Flusher).Flush()
+		time.Sleep(5 * time.Second)
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, APIKey: "k", Model: "m"}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err := c.Complete(ctx, CompletionRequest{System: "s", User: "u", MaxOutputTokens: 8})
+	if !errors.Is(err, ErrDeadline) {
+		t.Fatalf("want ErrDeadline, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "per-call deadline was 100ms") {
+		t.Fatalf("error must name the deadline value, got %v", err)
+	}
+}
+
+func TestOpenAICompatClientDescribesProvider(t *testing.T) {
+	c := &OpenAICompatClient{BaseURL: "https://api.openai.com/v1", Model: "m"}
+	pd, ok := interface{}(c).(ProviderDescriber)
+	if !ok {
+		t.Fatal("OpenAICompatClient must implement ProviderDescriber")
+	}
+	if pd.DescribeProvider() != "https://api.openai.com/v1" {
+		t.Fatalf("DescribeProvider = %q", pd.DescribeProvider())
 	}
 }
 

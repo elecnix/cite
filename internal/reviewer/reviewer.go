@@ -260,7 +260,9 @@ func (r *Reviewer) completeWithRetry(ctx context.Context, unit string, req model
 			return nil, err
 		}
 		if errors.Is(err, model.ErrDeadline) {
-			r.logf("%s call hit its configured %s per-call deadline (%v); retrying from run-global bucket — raise roles.%s.timeout in .github/cite.yml if this recurs", unit, timeout, err, unit)
+			// The wrapped error already names the deadline value; here we name
+			// the knob that raises it (issue #28).
+			r.logf("%s call exceeded its %s per-call deadline; retrying from run-global bucket — raise roles.%s.timeout in .github/cite.yml if this recurs", unit, timeout, unit)
 			continue
 		}
 		r.logf("%s call failed (%v); retrying from run-global bucket", unit, err)
@@ -302,6 +304,15 @@ func (r *Reviewer) Run(ctx context.Context, in Inputs) (*model.RunRecord, error)
 		Temperature:   pinnedTemperature,
 		InputHash:     inputHash(&in),
 		Samples:       1, // a green is one sample (§8)
+	}
+	// Name the provider and model up front: a run that dies mid-flight
+	// (deadline expiry, provider outage) never reaches the end-of-run record
+	// dump, and its failure logs must still say what they were talking to
+	// (issue #28; PR elecnix/pi-agent-identity#45).
+	if pd, ok := r.o.Client.(model.ProviderDescriber); ok {
+		r.logf("provider=%s model=%s", pd.DescribeProvider(), r.o.Client.ModelID())
+	} else {
+		r.logf("model=%s", r.o.Client.ModelID())
 	}
 	if r.o.Instr != nil {
 		rec.InstructionsUsed = r.o.Instr.Usage()
