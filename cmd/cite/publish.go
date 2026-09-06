@@ -98,6 +98,15 @@ func registerThreadText(threads []publisher.LiveThread, data map[int64]*threadFi
 }
 
 // spanGoneFor builds a SpanGone predicate bound to one thread's parsed data.
+//
+// A span is verified gone only when NO evidence quote appears anywhere in the
+// new file content — compared after NormalizeForFingerprint, so punctuation,
+// case and whitespace churn cannot evade the check. Containment is forward
+// only: a file line being a substring of a quote says nothing about the
+// span's presence (short lines like "fi" or "cmd" are substrings of nearly
+// every quote, which kept every thread open forever). The quote is checked
+// against the whole normalized content, not per line, so a span that merely
+// moved still counts as present.
 func spanGoneFor(data *threadFinding, post map[string][]byte) func(publisher.LiveThread) bool {
 	return func(publisher.LiveThread) bool {
 		if data == nil || len(data.Evidence) == 0 {
@@ -107,21 +116,13 @@ func spanGoneFor(data *threadFinding, post map[string][]byte) func(publisher.Liv
 		if !ok {
 			return true // the whole file is gone
 		}
-		lines := strings.Split(string(content), "\n")
+		norm := model.NormalizeForFingerprint(string(content))
 		for _, ev := range data.Evidence {
 			q := model.NormalizeForFingerprint(ev.Quote)
 			if q == "" {
-				return false
+				return false // unverifiable quote ⇒ fail toward keeping
 			}
-			matched := false
-			for _, l := range lines {
-				if strings.Contains(model.NormalizeForFingerprint(l), q) ||
-					strings.Contains(q, model.NormalizeForFingerprint(l)) && model.NormalizeForFingerprint(l) != "" {
-					matched = true
-					break
-				}
-			}
-			if matched {
+			if strings.Contains(norm, q) {
 				return false // at least one quote still present ⇒ not gone
 			}
 		}

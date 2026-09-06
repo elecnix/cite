@@ -410,6 +410,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink) 
 	var live []publisher.LiveThread
 	var threadNodeIDs map[int64]string
 	var ledger publisher.DismissalLedger
+	var threadData map[int64]*threadFinding
 	curSHAs := map[string]string{}
 	for path, x := range extras {
 		curSHAs[path] = x.BlobSHA
@@ -429,7 +430,6 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink) 
 			carryIntoRecord(rec, prevState, toReview)
 		}
 
-		var threadData map[int64]*threadFinding
 		var err error
 		live, threadData, threadNodeIDs, err = threadsFromGitHub(ctx, c, num)
 		if err != nil {
@@ -445,15 +445,26 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink) 
 		}
 		registerThreadText(live, threadData)
 
-		// A thread resolves ONLY when its quoted span is verified gone from the
-		// new content — never on a merely-disappeared fingerprint (§10).
+		// A thread resolves on a verified basis only: its quoted span is
+		// verified gone from the new content (§10), or the file was re-reviewed
+		// fresh this run and the finding was not re-raised — a new review
+		// adjudicating the old one. Threads on files that errored or were
+		// skipped this run have no such basis and stay open (fail toward
+		// keeping the thread, never toward clearing it).
+		reviewedOK := map[string]bool{}
+		for _, fo := range rec.Files {
+			if fo.State == model.FileReviewed {
+				reviewedOK[fo.Path] = true
+			}
+		}
 		spanGone := func(t publisher.LiveThread) bool {
 			return spanGoneFor(threadData[t.ID], post)(t)
 		}
 		plan = publisher.Reconcile(rec.Findings, live, ledger, publisher.ReconcileOptions{
-			Repository: repoFull,
-			Now:        time.Now(),
-			SpanGone:   spanGone,
+			Repository:      repoFull,
+			Now:             time.Now(),
+			SpanGone:        spanGone,
+			ReReviewedFresh: func(t publisher.LiveThread) bool { return reviewedOK[t.Path] },
 		})
 	}
 
@@ -489,9 +500,21 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink) 
 			logToStderr("nothing to say: no review posted (§10)")
 		}
 		for _, id := range plan.ThreadsToResolve {
-			if nodeID, ok := threadNodeIDs[id]; ok {
-				if err := c.ResolveReviewThread(ctx, nodeID); err != nil {
-					logToStderr("resolve thread %d failed: %v", id, err)
+			nodeID, ok := threadNodeIDs[id]
+			if !ok {
+				continue
+			}
+			// Resolve first, reply second. The reply asserts the thread was
+			// resolved, so it may only post once the resolve succeeded: a
+			// failed resolve leaves the thread open and silent, and a later
+			// run retries — never open under a comment claiming it was closed.
+			if err := c.ResolveReviewThread(ctx, nodeID); err != nil {
+				logToStderr("resolve thread %d failed: %v", id, err)
+				continue
+			}
+			if reply := resolutionReply(threadData, id, post, pr.HeadSHA); reply != "" {
+				if err := c.ReplyToReviewComment(ctx, int64(num), id, reply); err != nil {
+					logToStderr("reply to thread %d failed: %v", id, err)
 				}
 			}
 		}
@@ -540,6 +563,20 @@ func containsID(ids []int64, id int64) bool {
 		}
 	}
 	return false
+}
+
+// resolutionReply renders the one-line reason Cite posts on a thread before
+// resolving it, so the trail shows why the stale thread was cleared. The
+// basis is verified span-gone when the evidence can be checked, otherwise
+// the re-review-adjudicated basis Reconcile resolved on. Threads without a
+// parsed evidence entry (missing map key, nil entry) fall back to the
+// re-review basis rather than dereferencing anything.
+func resolutionReply(threadData map[int64]*threadFinding, id int64, post map[string][]byte, headSHA string) string {
+	if data, ok := threadData[id]; ok && data != nil && len(data.Evidence) > 0 &&
+		spanGoneFor(data, post)(publisher.LiveThread{}) {
+		return "Cite resolved this thread: the quoted span is verified gone from the current file content."
+	}
+	return fmt.Sprintf("Cite resolved this thread: the file was re-reviewed at %.7s and this finding was no longer detected.", headSHA)
 }
 
 // rankForBudget orders findings for the assembly cap: blocking first, then

@@ -140,6 +140,62 @@ func TestOutdatedThreadsMinimisedWhenStillMatched(t *testing.T) {
 	}
 }
 
+func TestReReviewedFreshResolvesUnmatchedThreads(t *testing.T) {
+	// The finding's fingerprint vanished because the file's content changed
+	// and this run re-reviewed that file fresh — the model saw the new
+	// content and did not re-raise the finding. That is a new review
+	// adjudicating the old one, and it resolves the stale thread.
+	live := []LiveThread{{ID: 5, Fingerprint: "gone-fp", Path: "secret.go"}}
+	reReviewed := func(t LiveThread) bool { return t.Path == "secret.go" }
+	plan := Reconcile(nil, live, DismissalLedger{}, ReconcileOptions{Repository: "o/r", ReReviewedFresh: reReviewed})
+	if len(plan.ThreadsToResolve) != 1 || plan.ThreadsToResolve[0] != 5 {
+		t.Fatalf("re-reviewed-and-not-re-raised should resolve thread 5, got %v", plan.ThreadsToResolve)
+	}
+}
+
+func TestReReviewedFreshGuards(t *testing.T) {
+	reReviewed := func(LiveThread) bool { return true }
+
+	// Nil predicate (caller could not verify): fail toward keeping the thread.
+	live := []LiveThread{{ID: 5, Fingerprint: "gone-fp", Path: "secret.go"}}
+	plan := Reconcile(nil, live, DismissalLedger{}, ReconcileOptions{Repository: "o/r"})
+	if len(plan.ThreadsToResolve) != 0 {
+		t.Fatal("no ReReviewedFresh predicate, no resolution")
+	}
+
+	// A thread that says no was not re-reviewed; the thread stays open.
+	plan = Reconcile(nil, live, DismissalLedger{}, ReconcileOptions{Repository: "o/r",
+		ReReviewedFresh: func(LiveThread) bool { return false }})
+	if len(plan.ThreadsToResolve) != 0 {
+		t.Fatal("not re-reviewed must not resolve")
+	}
+
+	// A thread without a Cite fingerprint is not Cite's to resolve — it may
+	// be a human review comment. Never auto-resolve those.
+	human := []LiveThread{{ID: 6, Fingerprint: "", Path: "secret.go"}}
+	plan = Reconcile(nil, human, DismissalLedger{}, ReconcileOptions{Repository: "o/r", ReReviewedFresh: reReviewed})
+	if len(plan.ThreadsToResolve) != 0 {
+		t.Fatal("threads without a Cite fingerprint are never bot-resolved")
+	}
+
+	// A ledger-dismissed fingerprint is human adjudication: Cite does not
+	// clear the thread on its own, whatever the re-review says.
+	now := time.Now()
+	var ledger DismissalLedger
+	ledger.Add("dismissed-fp", "o/r", "ada", string(AssocMember), now)
+	dismissed := []LiveThread{{ID: 7, Fingerprint: "dismissed-fp", Path: "secret.go"}}
+	plan = Reconcile(nil, dismissed, ledger, ReconcileOptions{Repository: "o/r", Now: now, ReReviewedFresh: reReviewed})
+	if len(plan.ThreadsToResolve) != 0 {
+		t.Fatal("a ledger-dismissed thread is never bot-resolved")
+	}
+
+	// A different repository's dismissal does not leak across repositories.
+	plan = Reconcile(nil, dismissed, ledger, ReconcileOptions{Repository: "o/other", Now: now, ReReviewedFresh: reReviewed})
+	if len(plan.ThreadsToResolve) != 1 {
+		t.Fatal("a dismissal never crosses repositories")
+	}
+}
+
 func TestHumanResolvedThreadLeftAlone(t *testing.T) {
 	live := []LiveThread{{ID: 3, Fingerprint: "fp-x", Path: "a.go", ResolvedByHuman: true}}
 	verifiedGone := func(LiveThread) bool { return true }

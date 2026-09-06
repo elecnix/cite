@@ -870,9 +870,13 @@ One `POST /pulls/{n}/reviews` with `comments[]` — atomic, one review event, on
   dropped. On a 422 anyway, bisect the comment list, demote the offender, and republish. Posted
   count reconciles with record count, asserted by a test.
 - **Threads whose code is gone are resolved** via GraphQL `resolveReviewThread`, and stale ones
-  minimised. But a fingerprint that merely *disappeared* between pushes is not resolution: a
-  finding is resolved only when the underlying span is verified gone from the new file. Otherwise
-  an attacker reformats a file to churn the fingerprint and a real finding silently clears.
+  minimised. A thread resolves on a **verified basis** only: the underlying span is verified gone
+  from the new file, or the file was re-reviewed fresh this run and the finding was not re-raised —
+  a new review adjudicating the old one. A fingerprint that merely *disappeared* between pushes with
+  no such basis is not resolution: an attacker reformatting a file to churn the fingerprint still
+  faces a fresh model review of that file, which re-raises a real finding. Threads on files whose
+  review errored have no verified basis and stay open. Human-resolved threads and ledger-dismissed
+  fingerprints are never touched: human adjudication wins.
 - **Nothing is posted when there is nothing to say.** No review, no comment, no "LGTM", no
   "reviewed 12 files and found no issues". The check run goes green with a one-line summary. That
   is what check runs are for. Posting on every pull request trains the team to skim past the bot,
