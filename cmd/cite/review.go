@@ -500,14 +500,21 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink) 
 			logToStderr("nothing to say: no review posted (§10)")
 		}
 		for _, id := range plan.ThreadsToResolve {
-			if nodeID, ok := threadNodeIDs[id]; ok {
-				if reply := resolutionReply(threadData, id, post, pr.HeadSHA); reply != "" {
-					if err := c.ReplyToReviewComment(ctx, int64(num), id, reply); err != nil {
-						logToStderr("reply to thread %d failed: %v", id, err)
-					}
-				}
-				if err := c.ResolveReviewThread(ctx, nodeID); err != nil {
-					logToStderr("resolve thread %d failed: %v", id, err)
+			nodeID, ok := threadNodeIDs[id]
+			if !ok {
+				continue
+			}
+			// Resolve first, reply second. The reply asserts the thread was
+			// resolved, so it may only post once the resolve succeeded: a
+			// failed resolve leaves the thread open and silent, and a later
+			// run retries — never open under a comment claiming it was closed.
+			if err := c.ResolveReviewThread(ctx, nodeID); err != nil {
+				logToStderr("resolve thread %d failed: %v", id, err)
+				continue
+			}
+			if reply := resolutionReply(threadData, id, post, pr.HeadSHA); reply != "" {
+				if err := c.ReplyToReviewComment(ctx, int64(num), id, reply); err != nil {
+					logToStderr("reply to thread %d failed: %v", id, err)
 				}
 			}
 		}
