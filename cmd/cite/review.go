@@ -561,10 +561,12 @@ func containsID(ids []int64, id int64) bool {
 // resolutionReply renders the one-line reason Cite posts on a thread before
 // resolving it, so the trail shows why the stale thread was cleared. The
 // basis is verified span-gone when the evidence can be checked, otherwise
-// the re-review-adjudicated basis Reconcile resolved on.
+// the re-review-adjudicated basis Reconcile resolved on. Threads without a
+// parsed evidence entry (missing map key, nil entry) fall back to the
+// re-review basis rather than dereferencing anything.
 func resolutionReply(threadData map[int64]*threadFinding, id int64, post map[string][]byte, headSHA string) string {
-	data := threadData[id]
-	if data != nil && len(data.Evidence) > 0 && spanGoneFor(data, post)(publisher.LiveThread{}) {
+	if data, ok := threadData[id]; ok && data != nil && len(data.Evidence) > 0 &&
+		spanGoneFor(data, post)(publisher.LiveThread{}) {
 		return "Cite resolved this thread: the quoted span is verified gone from the current file content."
 	}
 	return fmt.Sprintf("Cite resolved this thread: the file was re-reviewed at %.7s and this finding was no longer detected.", headSHA)

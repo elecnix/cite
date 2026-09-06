@@ -111,3 +111,22 @@ func TestResolutionReplyStatesItsBasis(t *testing.T) {
 		t.Fatalf("re-reviewed resolution must name the head SHA, got %q", r)
 	}
 }
+
+func TestResolutionReplyMissingEvidenceDoesNotPanic(t *testing.T) {
+	// A thread in ThreadsToResolve without a parsed evidence entry (missing
+	// key, nil entry, nil map) must fall back to the re-review basis, not
+	// dereference nil.
+	post := map[string][]byte{"f.txt": []byte("anything\n")}
+	for name, td := range map[string]map[int64]*threadFinding{
+		"nil map":      nil,
+		"missing key":  {},
+		"nil entry":    {1: nil},
+		"no evidence":  {1: {Path: "f.txt"}},
+		"empty quotes": {1: {Path: "f.txt", Evidence: []model.Evidence{}}},
+	} {
+		r := resolutionReply(td, 1, post, "abcdef1234567")
+		if !strings.Contains(r, "re-reviewed at abcdef1") {
+			t.Fatalf("%s: expected re-review basis fallback, got %q", name, r)
+		}
+	}
+}
