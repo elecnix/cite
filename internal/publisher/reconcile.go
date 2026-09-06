@@ -40,10 +40,13 @@ type ReconciliationPlan struct {
 	// CommentsToPost: only NEW fingerprints. Invariant (§10): replaying the
 	// same pull request twice posts zero new threads the second time.
 	CommentsToPost []model.ValidatedFinding
-	// ThreadsToResolve: ONLY when the underlying span is verified gone from
-	// the new file content (the caller supplies SpanGone). A merely-
-	// disappeared fingerprint between pushes is NOT resolution — an attacker
-	// reformatting a file must not silently clear a real finding.
+	// ThreadsToResolve: a thread is resolved on a verified basis only.
+	// Either the underlying span is verified gone from the new file content
+	// (the caller supplies SpanGone), or this run re-reviewed the thread's
+	// file from fresh content and did not re-raise the finding (the caller
+	// supplies ReReviewedFresh). A merely-disappeared fingerprint with no
+	// such basis is NOT resolution — an attacker reformatting a file must
+	// not silently clear a real finding.
 	ThreadsToResolve []int64
 	// ThreadsToMinimise: outdated threads whose finding still stands.
 	ThreadsToMinimise []int64
@@ -66,6 +69,16 @@ type ReconcileOptions struct {
 	// no thread is ever resolved on an unverifiable basis (fail toward
 	// keeping the thread, never toward clearing it).
 	SpanGone func(LiveThread) bool
+	// ReReviewedFresh reports whether this run re-reviewed the thread's file
+	// from fresh content (its blob changed), the review of that file
+	// completed without error, and the finding was not re-raised. That is a
+	// new review adjudicating the old one, which is a verified basis for
+	// resolution: the same model trusted to raise findings is trusted to
+	// look at the current content and not raise this one. Nil means
+	// "unknown" and never resolves. Threads without a Cite fingerprint
+	// (possibly human-authored) and ledger-dismissed fingerprints (human
+	// adjudication) are never resolved on this basis.
+	ReReviewedFresh func(LiveThread) bool
 }
 
 // Reconcile computes the plan. Matching is greedy and documented:
@@ -83,9 +96,11 @@ type ReconcileOptions struct {
 // SuppressedByLedger (not re-raised, gate unchanged); everything else is new
 // and lands in CommentsToPost with occurrence ordinals assigned.
 //
-// Unmatched live threads (never human-resolved ones) resolve only when
-// SpanGone verifies the span is gone. Matched threads that GitHub marks
-// outdated are minimised.
+// Unmatched live threads (never human-resolved ones) resolve only on a
+// verified basis: the span is verified gone (SpanGone), or the file was
+// re-reviewed fresh this run and the finding was not re-raised
+// (ReReviewedFresh). Matched threads that GitHub marks outdated are
+// minimised.
 func Reconcile(current []model.ValidatedFinding, live []LiveThread, ledger DismissalLedger, opts ReconcileOptions) ReconciliationPlan {
 	now := opts.Now
 	if now.IsZero() {
@@ -202,16 +217,28 @@ func Reconcile(current []model.ValidatedFinding, live []LiveThread, ledger Dismi
 	}
 	AssignOccurrences(plan.CommentsToPost)
 
-	// --- threads whose finding is gone -----------------------------------
+	// --- threads whose finding is gone, on a verified basis ---------------
 	for j, t := range live {
 		if used[j] || t.ResolvedByHuman {
 			continue
 		}
 		if opts.SpanGone != nil && opts.SpanGone(t) {
 			plan.ThreadsToResolve = append(plan.ThreadsToResolve, t.ID)
+			continue
 		}
-		// else: the fingerprint merely disappeared between pushes. Not
-		// resolution. The thread stays open.
+		// The span could not be (or was not) verified gone, but the file was
+		// re-reviewed fresh this run and the finding was not re-raised: a
+		// new review adjudicating the old one resolves the stale thread.
+		// Only Cite's own threads (non-empty fingerprint) are eligible, and
+		// never a fingerprint a human dismissed.
+		if t.Fingerprint == "" || opts.ReReviewedFresh == nil || !opts.ReReviewedFresh(t) {
+			continue
+		}
+		if ledger.Active(t.Fingerprint, opts.Repository, now) {
+			continue // human adjudication wins; Cite does not clear it
+		}
+		plan.ThreadsToResolve = append(plan.ThreadsToResolve, t.ID)
+		// else: no verified basis. The thread stays open.
 	}
 	return plan
 }

@@ -333,6 +333,14 @@ func (c *Client) MinimizeComment(ctx context.Context, subjectID int64) error {
 	return c.graphql(ctx, minimizeCommentMutation, vars, &out)
 }
 
+// ReplyToReviewComment posts a reply to one review comment thread. Used when
+// resolving a stale thread: the resolution carries a one-line reason so the
+// trail shows why Cite cleared it.
+func (c *Client) ReplyToReviewComment(ctx context.Context, prNum, commentID int64, body string) error {
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d/comments/%d/replies", c.owner, c.repo, prNum, commentID)
+	return c.do(ctx, http.MethodPost, path, nil, map[string]string{"body": body}, nil)
+}
+
 // graphql posts one query/mutation to the GraphQL endpoint and decodes the
 // response, mapping the top-level errors array to APIError.
 func (c *Client) graphql(ctx context.Context, query string, vars map[string]any, out any) error {
