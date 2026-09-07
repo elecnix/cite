@@ -145,9 +145,14 @@ jobs:
           MODEL_ID: deepseek/deepseek-v4-flash-0731
           GITHUB_TOKEN: ${{ github.token }}
           CITE_REVIEWER_ID: cite-head
+          CITE_RECORD_OUT: ${{ runner.temp }}/cite-head-run-record.json
         run: |
           set -euo pipefail
           chmod +x ./cite-head
+          # Archive for forensics: tee the full log and dump the run record
+          # (per-call timings, token usage, per-file outcomes) even when the
+          # run fails. pipefail preserves cite's exit code through the tee.
+          CITE_LOG="$RUNNER_TEMP/cite-head-output.log"
           # PR_NUMBER is not a default runner variable; pull_request events
           # put the number in the ref as refs/pull/N/merge.
           PR_NUM="${PR_NUMBER:-}"
@@ -159,4 +164,15 @@ jobs:
             echo "cite-head: no pull request context (event: ${GITHUB_EVENT_NAME:-unknown}); nothing to review" >&2
             exit 0
           fi
-          ./cite-head review --pr "$GITHUB_REPOSITORY#$PR_NUM" --config .github/cite.yml
+          ./cite-head review --pr "$GITHUB_REPOSITORY#$PR_NUM" --config .github/cite.yml 2>&1 | tee "$CITE_LOG"
+
+      - name: Archive forensics on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cite-head-forensics-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/cite-head-output.log
+            ${{ runner.temp }}/cite-head-run-record.json
+          if-no-files-found: warn
+          retention-days: 30
