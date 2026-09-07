@@ -1404,3 +1404,46 @@ func TestCallLogRecordsEveryAttempt(t *testing.T) {
 		t.Errorf("call log not ordered by start time")
 	}
 }
+
+// A pin tighter than the default reaches the run log as one info line — the
+// only signal an operator gets, since the pin is honoured, never overridden.
+func TestTimeoutAdvisoryLogged(t *testing.T) {
+	var logs []string
+	c := &fakeClient{fn: defaultScript("a.go")}
+	o := baseOptions(c)
+	o.Cfg = mustCfg(t, `
+model: openai/gpt-5-mini
+roles:
+  review: { timeout: 600s }
+  triage: { timeout: 120s }
+`)
+	o.Logger = func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}
+	if _, err := runOnce(t, baseInputs(), o); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	joined := strings.Join(logs, "\n")
+	for _, want := range []string{"info:", "roles.review.timeout", "600s", "roles.triage.timeout", "120s", "stricter than necessary"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("log output does not contain %q; logs:\n%s", want, joined)
+		}
+	}
+}
+
+// A config without tight pins logs no advisory noise.
+func TestNoTimeoutAdvisoryWithoutPins(t *testing.T) {
+	var logs []string
+	c := &fakeClient{fn: defaultScript("a.go")}
+	o := baseOptions(c)
+	o.Logger = func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}
+	if _, err := runOnce(t, baseInputs(), o); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	joined := strings.Join(logs, "\n")
+	if strings.Contains(joined, "stricter than necessary") {
+		t.Errorf("default config must not log timeout advisories; logs:\n%s", joined)
+	}
+}

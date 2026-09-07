@@ -365,6 +365,13 @@ func (r *Reviewer) Run(ctx context.Context, in Inputs) (*model.RunRecord, error)
 	} else {
 		r.logf("model=%s", r.o.Client.ModelID())
 	}
+	// A pinned timeout tighter than the default is honoured, never
+	// overridden — the operator gets one info line instead, so a pin
+	// calibrated before the 15-minute defaults is at least visible in the CI
+	// output of the run it makes stricter.
+	for _, line := range r.o.Cfg.TimeoutAdvisories() {
+		r.logf("info: %s", line)
+	}
 	if r.o.Instr != nil {
 		rec.InstructionsUsed = r.o.Instr.Usage()
 	}
