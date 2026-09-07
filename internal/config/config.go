@@ -397,7 +397,7 @@ func (c *Config) Role(role model.Role) model.RoleConfig {
 	case model.RoleAssemble:
 		if rc.Timeout <= 0 {
 			rc.Timeout = DefaultAssembleTimeout
-			rc.TimeoutStr = "60s"
+			rc.TimeoutStr = "15m"
 		}
 	}
 	return rc
