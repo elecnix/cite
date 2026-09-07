@@ -20,8 +20,20 @@
 # pull request head — the action fetches everything it needs from the GitHub
 # API — and the model key arrives as a secret, never in the diff.
 #
-# The "after" reviewer below is the one deliberate exception, gated to
-# same-repository branches only (see the security notes on build-head).
+# Two reviewers run in parallel on every same-repository pull request:
+#
+#   review      — the released binary, the "before" reviewer, under the
+#                 canonical identity "cite" (default check run name and
+#                 sticky marker).
+#   review-head — the binary built from THIS pull request's head, the
+#                 "after" reviewer, under identity "cite-head"
+#                 (CITE_REVIEWER_ID). Comparing the two reviews on the same
+#                 pull request shows exactly what the pull request changed
+#                 about the reviewer itself.
+#
+# Identities namespace everything GitHub-facing (check run name, sticky
+# comment marker), so the two reviewers never conclude or overwrite each
+# other's state. See cmd/cite/identity.go.
 name: review
 
 on:
@@ -69,8 +81,7 @@ jobs:
 
   # The "after" reviewer: the binary built from THIS pull request's head,
   # reviewing the same pull request under its own "cite-head" identity
-  # (CITE_REVIEWER_ID). Comparing the two reviews on the same pull request
-  # shows exactly what the pull request changed about the reviewer itself.
+  # (CITE_REVIEWER_ID).
   #
   # I1 (docs/security.md) says a privileged job executes zero PR-head code.
   # This path is the deliberate, gated exception: it runs ONLY for
@@ -99,10 +110,31 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: cite-head-binary
           path: .
+
+      # Same trusted-config fetch as the released reviewer above: the config
+      # comes from the BASE ref, never from the PR head (§12). The released
+      # composite action fetches it internally; the head build reads its
+      # config from the local path, so this job fetches it explicitly.
+      - name: Fetch trusted Cite config from the base branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname '.github/cite.yml')"
+          # Tolerant by design: a missing config is not an error — Cite falls
+          # back to its defaults — but never leave an empty/partial file.
+          if gh api "repos/${{ github.repository }}/contents/.github/cite.yml?ref=${{ github.base_ref }}" \
+               --jq '.content' | base64 -d > .github/cite.yml.tmp; then
+            mv .github/cite.yml.tmp .github/cite.yml
+          else
+            rm -f .github/cite.yml.tmp
+            echo "cite-head: no .github/cite.yml on base ref; running with defaults"
+          fi
+
       - name: Review this pull request with the head build of Cite
         env:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
