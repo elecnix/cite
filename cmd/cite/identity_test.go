@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -11,24 +12,41 @@ import (
 func TestResolveReviewerID(t *testing.T) {
 	cases := []struct {
 		name    string
+		unset   bool // exercise a truly unset variable, not an empty one
 		env     string
 		want    string
 		wantErr bool
 	}{
-		{"unset defaults to cite", "", defaultReviewerID, false},
-		{"head build identity", "cite-head", "cite-head", false},
-		{"single char", "a", "a", false},
-		{"digits and dashes", "cite-2-fast", "cite-2-fast", false},
-		{"uppercase rejected", "Cite", "", true},
-		{"underscore rejected", "cite_head", "", true},
-		{"spaces rejected", "cite head", "", true},
-		{"leading dash rejected", "-cite", "", true},
-		{"empty string falls back to default", "", defaultReviewerID, false},
-		{"too long rejected", strings.Repeat("a", 41), "", true},
+		{"unset defaults to cite", true, "", defaultReviewerID, false},
+		{"head build identity", false, "cite-head", "cite-head", false},
+		{"single char", false, "a", "a", false},
+		{"digits and dashes", false, "cite-2-fast", "cite-2-fast", false},
+		{"uppercase rejected", false, "Cite", "", true},
+		{"underscore rejected", false, "cite_head", "", true},
+		{"spaces rejected", false, "cite head", "", true},
+		{"leading dash rejected", false, "-cite", "", true},
+		// Empty is deliberately unset-equivalent: Actions interpolation turns
+		// an optional unset input into an empty string (see resolveReviewerID).
+		{"empty string falls back to default", false, "", defaultReviewerID, false},
+		{"too long rejected", false, strings.Repeat("a", 41), "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv(reviewerIDEnv, tc.env)
+			if tc.unset {
+				// t.Setenv always SETS the variable, so a plain Setenv("")
+				// cannot reach the unset path — unset by hand and restore.
+				orig, had := os.LookupEnv(reviewerIDEnv)
+				if err := os.Unsetenv(reviewerIDEnv); err != nil {
+					t.Fatalf("Unsetenv: %v", err)
+				}
+				t.Cleanup(func() {
+					if had {
+						_ = os.Setenv(reviewerIDEnv, orig)
+					}
+				})
+			} else {
+				t.Setenv(reviewerIDEnv, tc.env)
+			}
 			got, err := resolveReviewerID()
 			if tc.wantErr {
 				if err == nil {

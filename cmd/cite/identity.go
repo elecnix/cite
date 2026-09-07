@@ -31,9 +31,13 @@ const (
 var reviewerIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
 
 // resolveReviewerID reads the reviewer identity from reviewerIDEnv, defaulting
-// to defaultReviewerID when unset. An explicitly invalid identity is an error,
-// never a silent fallback: a run that thinks it is "cite" while configured as
-// something else would trample the canonical reviewer's state.
+// to defaultReviewerID when unset OR empty. Empty is deliberately treated as
+// unset, never as an error: GitHub Actions env interpolation turns an
+// optional unset input into an empty string (CITE_REVIEWER_ID:
+// ${{ inputs.identity }}), so erroring on empty would break the natural
+// optional-input pattern. An explicitly INVALID non-empty identity is an
+// error, never a silent fallback: a run that thinks it is "cite" while
+// configured as something else would trample the canonical reviewer's state.
 func resolveReviewerID() (string, error) {
 	id := os.Getenv(reviewerIDEnv)
 	if id == "" {
