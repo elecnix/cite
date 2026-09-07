@@ -1,21 +1,6 @@
 # Cite's own configuration. Optional by contract (§6) — everything here
 # exists because dogfooding on this repository showed a need, not as an
 # example.
-#
-# The review role's timeout is pinned explicitly at 300s here. The default no
-# longer needs the bump — it now derives from the output-token cap (~316s for
-# the 32768-token default), which came out of issue #28 after DeepSeek via
-# OpenRouter occasionally exceeded the old fixed 120s on large files (a
-# 400-line test file took >120s on the first dogfooded run). An explicit value
-# keeps this repo's behaviour stable against future recalibration of that
-# derivation.
-#
-# The triage role's timeout is pinned explicitly at 120s here. Dogfooding
-# showed triage calls against DeepSeek also exceed their 30s default —
-# provider queueing / time-to-first-token, same failure mode as the review
-# deadline. Unlike the review timeout there is no derived fallback for triage
-# in the released v0.2.x binary this repo's CI runs, so it has to be set
-# explicitly.
 
 model: deepseek/deepseek-v4-flash-0731
 
@@ -28,13 +13,17 @@ require_parameters: true
 
 roles:
   review:
-    # 65536-token cap ⇒ derived deadline would be ~572s (60s base + 65536÷128
-    # tok/s). An explicit timeout always wins, so pin one above the derivation
-    # instead of letting the raised cap silently run into the old limit.
-    timeout: 600s
     # Dogfooding on PR #41: reviewing a large diff (cmd/cite/review.go) hit
     # finish_reason=length at the built-in 32768-token cap. Raise it so big
     # diffs get complete reviews.
     max_output_tokens: 65536
-  triage:
-    timeout: 120s
+  # Timeouts are deliberately NOT pinned here any more. The explicit
+  # review: 600s / triage: 120s pins predate the 15-minute defaults and
+  # terminal (never-retried) deadlines: once a deadline became terminal the
+  # pins stopped costing retries and started costing whole files — a
+  # deepseek-v4-flash call that needed more than the pin died with no second
+  # chance (dogfooding on the parallel-head-review PR lost three files at
+  # 600s). The defaults now sit at 15 minutes for every role, generous
+  # because a hung call is rare while a slow-but-correct one is common, and
+  # an explicit roles.<role>.timeout still wins whenever this repository
+  # needs one again.
