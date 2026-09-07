@@ -1,19 +1,84 @@
+# Dogfooding: Cite reviews its own pull requests (PLAN §17, "shadow mode").
+#
+# This uses Cite's own released composite action — the same install path a
+# consumer copies from the README — on every pull request of this
+# repository. Reviews post as COMMENT; the check run fails only when the
+# gate concludes COULD_NOT_EVALUATE (fail-closed coverage), never on
+# findings themselves.
+#
+# Pin tracks the latest release rather than an old one: dogfooding should
+# exercise what consumers actually get, including released retry hardening.
+#
+# Security posture mirrors the documented install (§12): no checkout of the
+# pull request head — the action fetches everything it needs from the GitHub
+# API — and the model key arrives as a secret, never in the diff.
+#
+# The one exception is .github/cite.yml: `cite review --config` reads that
+# path from the LOCAL filesystem, so with no checkout it would be missing
+# and internal/config silently falls back to defaults. The steps below
+# fetch it explicitly from the BASE ref.
+#
+# Two reviewers run in parallel on every same-repository pull request:
+#
+#   review      — the released binary, the "before" reviewer, under the
+#                 canonical identity "cite" (default check run name and
+#                 sticky marker).
+#   review-head — the binary built from THIS pull request's head, the
+#                 "after" reviewer, under identity "cite-head"
+#                 (CITE_REVIEWER_ID). Comparing the two reviews on the same
+#                 pull request shows exactly what the pull request changed
+#                 about the reviewer itself.
+#
+# Identities namespace everything GitHub-facing (check run name, sticky
+# comment marker), so the two reviewers never conclude or overwrite each
+# other's state. See cmd/cite/identity.go.
+
 name: review
+
 on:
   pull_request:
+
 permissions:
   contents: read
   pull-requests: write
   checks: write
+
 concurrency:
+  # One review per pull request at a time; superseded runs may be cancelled
+  # freely because publishing is idempotent (fingerprint reconciliation).
   group: cite-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
+
 jobs:
   # The "before" reviewer: the released Cite binary, under the canonical
   # "cite" identity (check run name and sticky marker unchanged).
   review:
+    # Fork pull requests receive a read-only github.token, so posting the
+    # review would fail; Cite's own fork-safe two-workflow split (§12) is
+    # deliberately not wired up for its own repository yet.
+    if: github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     steps:
+      # Fetch the trusted config from the PR target branch (base_ref), never
+      # from the PR head or merge ref: a PR-controlled cite.yml could point
+      # model_base_url at an attacker endpoint and exfiltrate MODEL_API_KEY,
+      # or weaken the review settings themselves.
+      - name: Fetch trusted Cite config from the base branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname '.github/cite.yml')"
+          # Tolerant by design: a missing config is not an error — Cite falls
+          # back to its defaults — but never leave an empty/partial file.
+          if gh api "repos/${{ github.repository }}/contents/.github/cite.yml?ref=${{ github.base_ref }}" \
+               --jq '.content' | base64 -d > .github/cite.yml.tmp; then
+            mv .github/cite.yml.tmp .github/cite.yml
+          else
+            rm -f .github/cite.yml.tmp
+            echo "cite: no .github/cite.yml on base ref; running with defaults"
+          fi
+
       - name: Review this pull request with Cite
         uses: elecnix/cite@v0.4.0
         with:
@@ -23,8 +88,7 @@ jobs:
 
   # The "after" reviewer: the binary built from THIS pull request's head,
   # reviewing the same pull request under its own "cite-head" identity
-  # (CITE_REVIEWER_ID). Comparing the two reviews on the same pull request
-  # shows exactly what the pull request changed about the reviewer itself.
+  # (CITE_REVIEWER_ID).
   #
   # I1 (docs/security.md) says a privileged job executes zero PR-head code.
   # This path is the deliberate, gated exception: it runs ONLY for
@@ -53,10 +117,27 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: cite-head-binary
           path: .
+
+      # Same trusted-config fetch as the released reviewer above: the config
+      # comes from the BASE ref, never from the PR head (§12).
+      - name: Fetch trusted Cite config from the base branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname '.github/cite.yml')"
+          if gh api "repos/${{ github.repository }}/contents/.github/cite.yml?ref=${{ github.base_ref }}" \
+               --jq '.content' | base64 -d > .github/cite.yml.tmp; then
+            mv .github/cite.yml.tmp .github/cite.yml
+          else
+            rm -f .github/cite.yml.tmp
+            echo "cite-head: no .github/cite.yml on base ref; running with defaults"
+          fi
+
       - name: Review this pull request with the head build of Cite
         env:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
