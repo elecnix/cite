@@ -17,6 +17,15 @@ roles:
     # finish_reason=length at the built-in 32768-token cap. Raise it so big
     # diffs get complete reviews.
     max_output_tokens: 65536
+    # Explicit 15-minute deadlines serve the RELEASED binary this repo's CI
+    # runs: without a pin it derives ~572s from the 65536-token cap and loses
+    # slow-but-correct calls (two dogfooded runs lost three files at that
+    # derivation). For binaries that already default to 15 minutes — post
+    # PR #51 — the pin is exactly the default, so the tight-pin advisory
+    # stays silent. Remove once a release ships the 15-minute defaults.
+    timeout: 15m
+  triage:
+    timeout: 15m
   # Timeouts are deliberately NOT pinned here any more. The explicit
   # review: 600s / triage: 120s pins predate the 15-minute defaults and
   # terminal (never-retried) deadlines: once a deadline became terminal the
