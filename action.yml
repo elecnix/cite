@@ -45,6 +45,14 @@ inputs:
     description: 'Model id, e.g. openai/gpt-4o-mini. Empty means the client default.'
     required: false
     default: ''
+  archive_on_failure:
+    description: >
+      Set to "true" (the default) to upload a forensics artifact when the
+      review fails: the full step log plus the run record JSON (per-file
+      outcomes, the per-call timing log and token usage). The artifact is
+      downloadable from the run's summary page once the job completes.
+    required: false
+    default: 'true'
 
 runs:
   using: 'composite'
@@ -96,4 +104,21 @@ runs:
         if [ "$CITE_DRY_RUN" = "true" ]; then
           ARGS="$ARGS --dry-run"
         fi
-        cite review $ARGS
+        # Archive for forensics: tee the full log and dump the run record
+        # (per-call timings, token usage, per-file outcomes) even when the run
+        # fails. pipefail preserves cite's exit code through the tee.
+        CITE_LOG="$RUNNER_TEMP/cite-output.log"
+        CITE_RECORD="$RUNNER_TEMP/cite-run-record.json"
+        export CITE_RECORD_OUT="$CITE_RECORD"
+        cite review $ARGS 2>&1 | tee "$CITE_LOG"
+
+    - name: Archive forensics on failure
+      if: failure() && inputs.archive_on_failure == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: cite-forensics-${{ github.run_id }}
+        path: |
+          ${{ runner.temp }}/cite-output.log
+          ${{ runner.temp }}/cite-run-record.json
+        if-no-files-found: warn
+        retention-days: 30

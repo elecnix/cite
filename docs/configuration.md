@@ -131,34 +131,40 @@ defaults; `concurrency` is capped at 16 regardless of configuration.
 
 `review` has no fixed timeout default. When `roles.review.timeout` is unset,
 the deadline is derived from the same resolved output cap the call is bounded
-by (issue #28):
+by (issue #28), floored at 15 minutes:
 
 ```
-timeout = 60s base + max_output_tokens ÷ 128 tok/s
+timeout = max(60s base + max_output_tokens ÷ 128 tok/s, 15 minutes)
 ```
 
 The assumed generation rate (128 tokens per second) is deliberately
 conservative — sized for a mid-tier hosted model, not a top-tier endpoint. A
 faster provider simply finishes early; sizing on a fast rate would turn
-slow-but-correct runs into deadline failures.
+slow-but-correct runs into deadline failures. The floor exists because a
+wall-clock cap is a safety net for a hung call, not a tuning knob: realistic
+caps finish well inside 15 minutes, and the floor only matters when a call is
+genuinely stuck.
 
-- the built-in **32768**-token cap yields **≈316s**;
-- the historical 4096-token cap yielded ≈92s, close to the old fixed 120s, so
-  small-cap configurations keep roughly the pre-derivation behaviour;
+- the built-in **32768**-token cap derives ≈316s, which the floor raises to
+  **15 minutes**;
+- only caps above ≈107,000 tokens outgrow the floor;
 - an explicit `roles.review.max_output_tokens` or a model entry's `max_tokens`
   moves the deadline with it.
 
 An explicit `roles.review.timeout` always wins over the derivation. Triage and
-assemble keep their fixed defaults — **120s** and 60s respectively; their
-output is bounded regardless of file size. Triage's default is deliberately
-generous for its size because providers queue requests and stall before the
-first byte: a triage call that would have finished at ~35s against a large
-hosted model dies at a 30s deadline and drags the whole file to
-COULD_NOT_EVALUATE.
+assemble keep fixed defaults of **15 minutes** each; their output is bounded
+regardless of file size. The defaults are generous because providers queue
+requests and stall long before the first byte — openrouter-hosted models
+routinely sit in queue for minutes — and because a deadline expiry is now
+terminal (see below), the patience is free: a slow-but-correct call finishes,
+and only a genuinely hung one is cut off.
 
-When a review call does hit its deadline, the error says so and names the
-knobs: raise `roles.review.timeout`, or lower the output cap that drives the
-derived deadline.
+When a call does hit its deadline, the run does NOT retry it: the first
+attempt already burned its full wall-clock budget and the provider's tokens,
+and a re-issue pays twice for the same wait. The failure names the knobs
+instead — raise `roles.<role>.timeout`, or lower the output cap that drives
+the derived review deadline. The failed run's record (per-call timings, token
+usage) is archived by the GitHub Action for forensics.
 
 ### The output cap
 

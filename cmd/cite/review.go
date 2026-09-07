@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -36,6 +37,7 @@ func runReview(args []string) error {
 	disabled := fs.Bool("disabled", false, "kill switch: conclude disabled-by-configuration")
 	reportFmt := fs.String("report", "", "write a full report instead of publishing to GitHub: json or markdown")
 	outPath := fs.String("out", "", "report destination file (default stdout; requires --report)")
+	recordOut := fs.String("record-out", os.Getenv("CITE_RECORD_OUT"), "write the raw run record JSON to this path, even when the run fails (forensics; defaults to $CITE_RECORD_OUT)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -72,7 +74,7 @@ func runReview(args []string) error {
 	case *diffPath != "":
 		return reviewLocal(*diffPath, *cfgPath, sink)
 	case *prSpec != "":
-		return reviewPR(*prSpec, *cfgPath, *dryRun, *disabled, sink)
+		return reviewPR(*prSpec, *cfgPath, *dryRun, *disabled, sink, *recordOut)
 	default:
 		fs.Usage()
 		return fmt.Errorf("review: one of --diff or --pr is required")
@@ -90,6 +92,36 @@ func reportWriter(path string) (io.Writer, func(), error) {
 		return nil, nil, fmt.Errorf("creating report file: %w", err)
 	}
 	return f, func() { _ = f.Close() }, nil
+}
+
+// writeRecordOut dumps the run record to recordOut for forensics, best-effort:
+// a failed archive write must never mask the real failure. A run killed
+// mid-flight still returns a partial record, so the call log, per-file
+// outcomes and token usage all survive a failure — that is the point.
+func writeRecordOut(rec *model.RunRecord, runErr error, recordOut string) {
+	if recordOut == "" {
+		return
+	}
+	payload := struct {
+		*model.RunRecord
+		RunError string `json:"run_error,omitempty"`
+	}{RunRecord: rec, RunError: ""}
+	if runErr != nil {
+		payload.RunError = runErr.Error()
+	}
+	if payload.RunRecord == nil {
+		payload.RunRecord = &model.RunRecord{SchemaVersion: model.SchemaVersion}
+	}
+	b, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cite: forensics record marshal failed: %v\n", err)
+		return
+	}
+	if err := os.WriteFile(recordOut, b, 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "cite: forensics record write to %s failed: %v\n", recordOut, err)
+	} else {
+		fmt.Fprintf(os.Stderr, "cite: run record archived to %s for forensics\n", recordOut)
+	}
 }
 
 func loadConfig(path string) *config.Config {
@@ -252,7 +284,7 @@ type threadFinding struct {
 	Evidence    []model.Evidence `json:"evidence"`
 }
 
-func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink) error {
+func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, recordOut string) error {
 	// Report mode: a full run against the real pull request whose outcome goes
 	// to a local sink instead of GitHub. It is not a dry-run — nothing is
 	// simulated — but every mutation (check run, review, thread resolution,
@@ -381,6 +413,10 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink) 
 		PRDescription: pr.Body,
 		Nonce:         newNonce(),
 	})
+	// Forensics first, whatever the run's fate: a failed or killed run still
+	// carries partial results, the call log and usage — exactly what an
+	// operator needs to answer "why did this take so long".
+	writeRecordOut(rec, err, recordOut)
 	if err != nil && rec == nil {
 		return concludeFailure(ctx, c, checkID, dryRun, model.VerdictCouldNotEvaluate, err.Error())
 	}

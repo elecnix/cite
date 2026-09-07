@@ -392,6 +392,37 @@ type RunRecord struct {
 	// declared for the model, never guessed.
 	Usage   Usage   `json:"usage"`
 	CostUSD float64 `json:"cost_usd"`
+
+	// Calls is the per-attempt call log: one entry for every model call the
+	// run made, in order. It answers "why did this run take so long and what
+	// did it cost" without the raw CI log — which is truncated, ANSI-mangled
+	// and unavailable for in-progress runs. A run killed mid-flight still
+	// carries the entries recorded so far.
+	Calls []CallEntry `json:"calls,omitempty"`
+}
+
+// Call outcome values for CallEntry.Outcome.
+const (
+	CallOK                = "ok"
+	CallError             = "error"
+	CallDeadlineExceeded  = "deadline_exceeded"
+	CallDeterministicFail = "deterministic_failure"
+	CallCanceled          = "canceled"
+	CallTruncated         = "truncated"
+)
+
+// CallEntry records one model call attempt: when it ran, how long it took,
+// how many tokens it burned, and how it ended. StartS is seconds since the
+// run started; attempts are 1-based.
+type CallEntry struct {
+	Unit         string  `json:"unit"` // triage | review | verify
+	Attempt      int     `json:"attempt"`
+	StartS       float64 `json:"start_s"`
+	DurationS    float64 `json:"duration_s"`
+	Outcome      string  `json:"outcome"`
+	Error        string  `json:"error,omitempty"`
+	InputTokens  int     `json:"input_tokens,omitempty"`
+	OutputTokens int     `json:"output_tokens,omitempty"`
 }
 
 // InstructionUsage records which instruction sections survived triage.

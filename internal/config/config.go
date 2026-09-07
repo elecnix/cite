@@ -42,27 +42,38 @@ const (
 // responses eight times longer to finish, and they died at "context deadline
 // exceeded" — surfacing as COULD_NOT_EVALUATE — before emitting a verdict.
 //
-// Triage keeps a fixed timeout, but 30s proved too tight for real providers:
-// that number assumed fast hosted models, while providers queue requests and
-// stall long before the first byte — dogfooding CI saw triage calls against a
-// large model die at "context deadline exceeded" twice in ~30s intervals. A
-// call that would have succeeded at 35s instead drags its whole file to
-// COULD_NOT_EVALUATE, so the budget covers provider queueing plus
-// time-to-first-token.
+// Triage and assemble keep fixed timeouts. History: 30s assumed fast hosted
+// models; 120s still died in dogfooding CI — openrouter-hosted models queue
+// for minutes before the first byte, and each deadline expiry used to cost a
+// paid retry on top of the wait (retries after a deadline are now terminal:
+// see Reviewer.completeWithRetry). The defaults now sit at 15 minutes: a
+// wall-clock cap is a safety net for a hung call, not a tuning knob, and a
+// hung call is rare while a slow-but-correct one is common. A run that
+// genuinely exceeds these has its failure archived for forensics by the
+// GitHub Action.
 const (
-	DefaultTriageTimeout     = 120 * time.Second
-	DefaultAssembleTimeout   = 60 * time.Second
+	DefaultTriageTimeout     = 15 * time.Minute
+	DefaultAssembleTimeout   = 15 * time.Minute
 	DefaultReviewConcurrency = 8
+
+	// DefaultReviewTimeout floors the derived review deadline: whatever the
+	// token arithmetic below says, no default review call dies before 15
+	// minutes. Small-cap configurations finish long before this anyway — the
+	// floor only matters when a call is genuinely stuck.
+	DefaultReviewTimeout = 15 * time.Minute
 )
 
 // Review-deadline calibration (issue #28). When no explicit
 // roles.review.timeout is configured, the review deadline is derived from the
 // same resolved output cap the call is bounded by:
 //
-//	deadline = ReviewTimeoutBase + maxOutputTokens / AssumedGenerationRate
+//	deadline = max(ReviewTimeoutBase + maxOutputTokens / AssumedGenerationRate,
+//	               DefaultReviewTimeout)
 //
 // The numbers must stay visible together because they are coupled: raise the
-// token budget and the wall-clock budget moves with it.
+// token budget and the wall-clock budget moves with it. The floor keeps the
+// historical failure mode — a correct-but-slow call killed by an aggressive
+// deadline, then charged again for the retry — from returning.
 const (
 	// ReviewTimeoutBase covers the part of the call that does not scale with
 	// output length: prompt upload, provider queueing and network overhead.
@@ -73,9 +84,8 @@ const (
 	// sized for a mid-tier hosted model, not a top-tier endpoint. A faster
 	// provider simply finishes early; a deadline sized on a fast rate turns
 	// slow-but-correct runs into deadline_exceeded failures. At 128 tok/s the
-	// 32768-token default yields 60s + 256s ≈ 316s, while the historical
-	// 4096-token cap yielded 60s + 32s ≈ 92s — close to the old fixed 120s,
-	// so small-cap configurations keep roughly today's behaviour.
+	// 32768-token default yields 60s + 256s ≈ 316s, which the
+	// DefaultReviewTimeout floor raises to 15 minutes.
 	AssumedGenerationRate = 128
 
 	// DefaultReviewMaxOutputTokens is the built-in review output cap. It is
@@ -88,14 +98,19 @@ const (
 )
 
 // DerivedReviewTimeout returns the review-role deadline implied by an output
-// cap of maxOutputTokens tokens. A cap that is unset (<= 0) falls back to
-// DefaultReviewMaxOutputTokens. This is the default only: an explicit
-// roles.review.timeout always wins over the derivation.
+// cap of maxOutputTokens tokens, floored at DefaultReviewTimeout. A cap that
+// is unset (<= 0) falls back to DefaultReviewMaxOutputTokens. This is the
+// default only: an explicit roles.review.timeout always wins over the
+// derivation.
 func DerivedReviewTimeout(maxOutputTokens int) time.Duration {
 	if maxOutputTokens <= 0 {
 		maxOutputTokens = DefaultReviewMaxOutputTokens
 	}
-	return ReviewTimeoutBase + time.Duration(maxOutputTokens)*time.Second/time.Duration(AssumedGenerationRate)
+	derived := ReviewTimeoutBase + time.Duration(maxOutputTokens)*time.Second/time.Duration(AssumedGenerationRate)
+	if derived < DefaultReviewTimeout {
+		return DefaultReviewTimeout
+	}
+	return derived
 }
 
 // RoleSpec is one entry of the roles block, before default resolution.
@@ -336,11 +351,11 @@ func (c *Config) checkModelRefs(probs *[]Problem) {
 }
 
 // Role resolves the effective settings for one of the three roles (review,
-// triage, assemble). Defaults: review concurrency 8, triage timeout 120s
-// (queueing + time-to-first-token headroom), assemble timeout 60s. The review timeout has no fixed default: it derives
-// from the resolved output cap (60s base + tokens ÷ 128 tok/s, issue #28)
-// unless an explicit roles.review.timeout is configured. An unset role model
-// falls back to c.Model.
+// triage, assemble). Defaults: review concurrency 8, triage and assemble
+// timeouts of 15 minutes. The review timeout has no fixed default: it derives
+// from the resolved output cap (60s base + tokens ÷ 128 tok/s, floored at 15
+// minutes, issue #28) unless an explicit roles.review.timeout is configured.
+// An unset role model falls back to c.Model.
 func (c *Config) Role(role model.Role) model.RoleConfig {
 	rc := model.RoleConfig{}
 	if spec, ok := c.Roles[role]; ok {
@@ -377,7 +392,7 @@ func (c *Config) Role(role model.Role) model.RoleConfig {
 	case model.RoleTriage:
 		if rc.Timeout <= 0 {
 			rc.Timeout = DefaultTriageTimeout
-			rc.TimeoutStr = "120s"
+			rc.TimeoutStr = "15m"
 		}
 	case model.RoleAssemble:
 		if rc.Timeout <= 0 {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -1161,10 +1163,13 @@ func (c *deadlineClient) Complete(ctx context.Context, req model.CompletionReque
 	return c.Client.Complete(ctx, req)
 }
 
-// The default review deadline must grow with the resolved output cap (issue
-// #28): v0.2.0 raised the cap from 4096 to 32768 tokens but left the fixed
-// 120s deadline in place, so responses allowed to run 8x longer died at
+// The default review deadline must never undercut the resolved output cap
+// (issue #28): v0.2.0 raised the cap from 4096 to 32768 tokens but left the
+// fixed 120s deadline in place, so responses allowed to run 8x longer died at
 // "context deadline exceeded" and took their files to COULD_NOT_EVALUATE.
+// Realistic caps clamp to the DefaultReviewTimeout floor; the assertion here
+// is that the deadline always equals the derivation for the resolved cap and
+// never shrinks as the cap grows.
 func TestDerivedReviewTimeoutGrowsWithMaxOutputTokens(t *testing.T) {
 	mk := func(src string) *Reviewer {
 		return New(Options{Cfg: mustCfg(t, src), Client: &fakeClient{}})
@@ -1190,8 +1195,8 @@ roles:
 	if want := config.DerivedReviewTimeout(32768); bt != want {
 		t.Errorf("timeout for 32768-token cap = %v, want %v", bt, want)
 	}
-	if bt <= st {
-		t.Errorf("derived timeout did not grow with the cap: %v (32768) vs %v (4096)", bt, st)
+	if bt < st {
+		t.Errorf("derived timeout shrank with a bigger cap: %v (32768) vs %v (4096)", bt, st)
 	}
 }
 
@@ -1296,9 +1301,11 @@ func (c *providerFakeClient) ModelID() string { return c.Client.ModelID() }
 
 func (c *providerFakeClient) DescribeProvider() string { return c.provider }
 
-// When a review call exhausts its retries on deadline expiry, the surfaced
-// error must name the knob (roles.review.timeout) rather than only the bare
-// "context deadline exceeded" symptom.
+// When a review call dies at its deadline, the surfaced error must name the
+// knob (roles.review.timeout) rather than only the bare "context deadline
+// exceeded" symptom, and the call must NOT be retried: the first attempt
+// already burned its whole wall-clock budget, and a re-issue pays the
+// provider twice for the same wait.
 func TestDeadlineErrorNamesTheTimeoutKnob(t *testing.T) {
 	var logs []string
 	c := &fakeClient{fn: func(_ int, _ model.CompletionRequest) (string, error) {
@@ -1315,10 +1322,85 @@ func TestDeadlineErrorNamesTheTimeoutKnob(t *testing.T) {
 	if rec.Files[0].Reason != "deadline_exceeded" {
 		t.Errorf("file reason = %q, want deadline_exceeded", rec.Files[0].Reason)
 	}
+	reviewCalls := 0
+	for _, call := range c.calls {
+		if !isTriageCall(call) {
+			reviewCalls++
+		}
+	}
+	if reviewCalls != 1 {
+		t.Errorf("review calls = %d, want 1 — a deadline expiry is terminal, never retried", reviewCalls)
+	}
 	joined := strings.Join(logs, "\n")
 	for _, want := range []string{"roles.review.timeout", "roles.review.max_output_tokens"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("error/log output does not name the knob %q; logs:\n%s", want, joined)
 		}
+	}
+	if !strings.Contains(joined, "NOT retrying") {
+		t.Errorf("deadline log must say the call was not retried; logs:\n%s", joined)
+	}
+}
+
+// On triage failure the run falls back to reviewing all files batched. The
+// fallback must not duplicate the reviewable set: a duplicate review of every
+// file doubles the token bill exactly when the provider is already misbehaving.
+func TestTriageFallbackReviewsEachFileOnce(t *testing.T) {
+	c := &fakeClient{fn: func(_ int, req model.CompletionRequest) (string, error) {
+		if isTriageCall(req) {
+			return "", fmt.Errorf("triage down")
+		}
+		return reviewJSON("a.go", "reviewed", nil), nil
+	}}
+	rec, err := runOnce(t, baseInputs(), baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	reviewCalls := 0
+	for _, call := range c.calls {
+		if !isTriageCall(call) {
+			reviewCalls++
+		}
+	}
+	if reviewCalls != 1 {
+		t.Errorf("review calls = %d, want 1 — the fallback must not review a file twice", reviewCalls)
+	}
+	if len(rec.Files) != 1 {
+		t.Errorf("file outcomes = %d, want 1", len(rec.Files))
+	}
+}
+
+// Every model call attempt lands in the record's call log with unit, attempt
+// number, duration and outcome — the forensics answer to "why did this run
+// take so long and what did it cost".
+func TestCallLogRecordsEveryAttempt(t *testing.T) {
+	rec, err := runOnce(t, baseInputs(), baseOptions(&fakeClient{fn: defaultScript("a.go")}))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(rec.Calls) == 0 {
+		t.Fatalf("record has no call log")
+	}
+	var units []string
+	for _, e := range rec.Calls {
+		if e.Unit == "" {
+			t.Errorf("call entry %+v has no unit", e)
+		}
+		if e.Attempt != 1 {
+			t.Errorf("call entry %+v: attempt = %d, want 1 (single attempt, no errors)", e, e.Attempt)
+		}
+		if e.DurationS < 0 {
+			t.Errorf("call entry %+v has negative duration", e)
+		}
+		if e.Outcome != model.CallOK {
+			t.Errorf("call entry %+v: outcome = %q, want %q", e, e.Outcome, model.CallOK)
+		}
+		units = append(units, e.Unit)
+	}
+	if !slices.Contains(units, "triage") || !slices.Contains(units, "review") {
+		t.Errorf("call log units = %v, want triage and review", units)
+	}
+	if !sort.SliceIsSorted(rec.Calls, func(i, j int) bool { return rec.Calls[i].StartS < rec.Calls[j].StartS }) {
+		t.Errorf("call log not ordered by start time")
 	}
 }

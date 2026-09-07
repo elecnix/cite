@@ -25,6 +25,16 @@ claim, the comment budget, or a suppression is recorded there with its reason.
 it" are different failures with different fixes, and the drop log distinguishes
 them.
 
+**2b. The forensics archive.** When a review FAILS, the GitHub Action uploads a
+`cite-forensics-<run id>` artifact (download it from the run's summary page):
+the full step log plus `cite-run-record.json`, which carries the per-attempt
+call log — when each model call started, how long it ran, how it ended
+(`ok`, `deadline_exceeded`, `truncated`, …) and what it cost in tokens. This
+answers "why did the run take so long / what did it burn" without the raw log,
+which is truncated and unavailable for in-progress runs. Set
+`archive_on_failure: false` to disable. Note that a run killed mid-flight
+still archives its partial record.
+
 **3. `cite doctor`.** For anything about instruction files — what was read, what
 was ignored, what was classified as authoring rather than reviewable — run:
 

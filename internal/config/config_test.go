@@ -257,11 +257,12 @@ func TestRoleDefaults(t *testing.T) {
 		concurrency int
 	}{
 		// Review has no fixed timeout default: it derives from the output
-		// cap (issue #28). With no providers and no role spec, the cap is
-		// the built-in 32768, so 60s + 32768/128s = 316s.
+		// cap (issue #28), floored at DefaultReviewTimeout (15m). With no
+		// providers and no role spec, the cap is the built-in 32768, so
+		// 60s + 32768/128s = 316s — below the floor, which wins.
 		{model.RoleReview, DerivedReviewTimeout(0), 8},
-		{model.RoleTriage, 120 * time.Second, 0},
-		{model.RoleAssemble, 60 * time.Second, 0},
+		{model.RoleTriage, 15 * time.Minute, 0},
+		{model.RoleAssemble, 15 * time.Minute, 0},
 	}
 	for _, tc := range cases {
 		rc := c.Role(tc.role)
@@ -293,7 +294,7 @@ roles:
 		t.Errorf("Role(review).Model = %q, want fallback to top-level model", rc.Model)
 	}
 	rc = c.Role(model.RoleTriage)
-	if rc.Model != "gpt-5-nano" || rc.Timeout != 120*time.Second {
+	if rc.Model != "gpt-5-nano" || rc.Timeout != 15*time.Minute {
 		t.Errorf("Role(triage) = %+v", rc)
 	}
 }
@@ -587,28 +588,35 @@ roles:
 // ---- review timeout derivation (issue #28) ---------------------------------
 
 // The derived deadline must scale with the output cap it has to allow for:
-// that is the whole point of the coupling. The old fixed 120s was calibrated
-// for the historical 4096-token cap; the derivation keeps small caps near
-// today's behaviour while giving the 32768-token default room to finish.
-func TestDerivedReviewTimeoutGrowsWithCap(t *testing.T) {
+// that is the whole point of the coupling. The floor (DefaultReviewTimeout,
+// 15m) keeps realistic caps from dying early: caps below the threshold
+// (60s + tokens/128 < 15m ⇒ tokens < 107520) all clamp to the floor — the
+// derivation only takes over once the token arithmetic demands more than the
+// floor. That is the intent: a wall-clock cap is a safety net for a hung
+// call, not a tuning knob.
+func TestDerivedReviewTimeoutFlooredThenGrows(t *testing.T) {
+	floor := DefaultReviewTimeout
 	cases := []struct {
 		tokens int
 		want   time.Duration
 	}{
-		{4096, 92 * time.Second},  // the pre-v0.2.0 cap: 60s + 32s
-		{8192, 124 * time.Second}, // 60s + 64s
-		{16384, 188 * time.Second},
-		{32768, 316 * time.Second}, // 60s + 256s
+		{0, floor},
+		{4096, floor},   // 60s + 32s — clamped
+		{32768, floor},  // 60s + 256s — clamped
+		{107520, floor}, // 60s + 840s = exactly the floor
+		{115200, 60*time.Second + 900*time.Second}, // first cap past the floor
+		{230400, 60*time.Second + 1800*time.Second},
 	}
 	prev := time.Duration(0)
 	for _, tc := range cases {
-		if got := DerivedReviewTimeout(tc.tokens); got != tc.want {
+		got := DerivedReviewTimeout(tc.tokens)
+		if got != tc.want {
 			t.Errorf("DerivedReviewTimeout(%d) = %v, want %v", tc.tokens, got, tc.want)
 		}
-		if got := DerivedReviewTimeout(tc.tokens); got <= prev {
-			t.Errorf("DerivedReviewTimeout(%d) = %v, not greater than previous smaller cap's %v", tc.tokens, got, prev)
+		if got < prev {
+			t.Errorf("DerivedReviewTimeout(%d) = %v, less than previous smaller cap's %v", tc.tokens, got, prev)
 		}
-		prev = tc.want
+		prev = got
 	}
 }
 
@@ -623,6 +631,9 @@ func TestDerivedReviewTimeoutUnsetFallsBackToDefault(t *testing.T) {
 }
 
 // roles.review.max_output_tokens must move the derived deadline with it.
+// Both caps here sit below the DefaultReviewTimeout floor, so both clamp —
+// growth is only visible past the floor (see TestDerivedReviewTimeoutFlooredThenGrows);
+// the assertion is that a bigger cap never yields a SMALLER deadline.
 func TestRoleReviewTimeoutDerivesFromMaxOutputTokens(t *testing.T) {
 	src := `
 roles:
@@ -639,8 +650,8 @@ roles:
 	c2 := mustParse(t, src2)
 	small := c.Role(model.RoleReview).Timeout
 	big := c2.Role(model.RoleReview).Timeout
-	if big <= small {
-		t.Errorf("derived timeout did not grow with the cap: %v (8192) vs %v (32768)", small, big)
+	if big < small {
+		t.Errorf("derived timeout shrank with a bigger cap: %v (8192) vs %v (32768)", small, big)
 	}
 }
 

@@ -88,6 +88,10 @@ type Reviewer struct {
 
 	usageMu sync.Mutex
 	usage   model.Usage // run-total of every completion response's counters (§15)
+
+	callMu   sync.Mutex
+	runStart time.Time
+	callLog  []model.CallEntry // one entry per model call attempt, for forensics
 }
 
 // New builds a Reviewer.
@@ -164,6 +168,45 @@ func (r *Reviewer) tryRetry(unit string) bool {
 	return true
 }
 
+// recordCall appends one per-attempt entry to the run's call log. The log
+// answers the forensics question the raw CI log cannot: which calls ran, when,
+// how long each took, and what each cost. A run killed mid-flight still
+// carries the entries recorded so far — Run attaches the log to the record it
+// returns, and the GitHub Action archives that record on failure.
+func (r *Reviewer) recordCall(unit string, attempt int, start time.Time, dur time.Duration, resp *model.CompletionResponse, err error) {
+	e := model.CallEntry{
+		Unit:      unit,
+		Attempt:   attempt + 1,
+		StartS:    start.Sub(r.runStart).Seconds(),
+		DurationS: dur.Seconds(),
+		Outcome:   model.CallOK,
+	}
+	switch {
+	case err != nil && errors.Is(err, model.ErrDeadline):
+		e.Outcome = model.CallDeadlineExceeded
+		e.Error = err.Error()
+	case err != nil && errors.Is(err, model.ErrDeterministic):
+		e.Outcome = model.CallDeterministicFail
+		e.Error = err.Error()
+	case err != nil:
+		if ctxErr := r.runCtx.Err(); ctxErr != nil {
+			e.Outcome = model.CallCanceled
+		} else {
+			e.Outcome = model.CallError
+		}
+		e.Error = err.Error()
+	case resp != nil:
+		e.InputTokens = resp.Usage.InputTokens
+		e.OutputTokens = resp.Usage.OutputTokens
+		if resp.FinishReason == "length" {
+			e.Outcome = model.CallTruncated
+		}
+	}
+	r.callMu.Lock()
+	defer r.callMu.Unlock()
+	r.callLog = append(r.callLog, e)
+}
+
 // requireParameters reads the require_parameters knob off the loaded
 // configuration. Cfg is required on Options, but the nil guard keeps a
 // misconstructed Reviewer from panicking mid-run (mirrors roleSettings).
@@ -235,16 +278,22 @@ func (r *Reviewer) roleSettings(role model.Role, defTimeout time.Duration, defCo
 
 // completeWithRetry performs one bounded model call. Deterministic failures
 // are terminal (a truncated response truncates identically on retry);
-// transient failures consume from the run-global bucket. The per-request
-// deadline comes from the role config, set at this call site — never
-// inherited from an SDK. A deadline expiry is named as such in the retry log
-// together with the knob that controls it, so "context deadline exceeded"
-// never reaches an operator without its remedy (issue #28).
+// transient failures consume from the run-global bucket. A deadline expiry is
+// ALSO terminal: re-issuing a call that just burned its whole wall-clock
+// budget doubles the cost for an outcome the operator cannot distinguish
+// from waiting — the provider charged for the first attempt, and a second
+// attempt is money spent to lose money slower. The failure names the knob
+// that raises the deadline instead (issue #28). The per-request deadline
+// comes from the role config, set at this call site — never inherited from an
+// SDK.
 func (r *Reviewer) completeWithRetry(ctx context.Context, unit string, req model.CompletionRequest, timeout time.Duration) (*model.CompletionResponse, error) {
 	for attempt := 0; ; attempt++ {
 		cctx, cancel := context.WithTimeout(ctx, timeout)
+		callStart := time.Now()
 		resp, err := r.o.Client.Complete(cctx, req)
+		callDur := time.Since(callStart)
 		cancel()
+		r.recordCall(unit, attempt, callStart, callDur, resp, err)
 		if err == nil {
 			r.accumulateUsage(resp.Usage)
 			return resp, nil
@@ -252,18 +301,19 @@ func (r *Reviewer) completeWithRetry(ctx context.Context, unit string, req model
 		if errors.Is(err, model.ErrDeterministic) {
 			return nil, err // terminal: no retry
 		}
+		if errors.Is(err, model.ErrDeadline) {
+			// Terminal, never retried: the first attempt already burned its
+			// full time budget (and the provider's tokens). Name the knob so
+			// the fix is one line away (issue #28).
+			r.logf("%s call exceeded its %s per-call deadline; NOT retrying — a timeout retry would pay twice for the same wait. Raise roles.%s.timeout in .github/cite.yml if calls legitimately need longer", unit, timeout, unit)
+			return nil, err
+		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err() // run canceled or expired: not retried here
 		}
 		if !r.tryRetry(unit) {
 			r.logf("%s call failed permanently after %d attempt(s), retries exhausted: %v", unit, attempt+1, err)
 			return nil, err
-		}
-		if errors.Is(err, model.ErrDeadline) {
-			// The wrapped error already names the deadline value; here we name
-			// the knob that raises it (issue #28).
-			r.logf("%s call exceeded its %s per-call deadline; retrying from run-global bucket — raise roles.%s.timeout in .github/cite.yml if this recurs", unit, timeout, unit)
-			continue
 		}
 		r.logf("%s call failed (%v); retrying from run-global bucket", unit, err)
 	}
@@ -297,6 +347,7 @@ func (r *Reviewer) Run(ctx context.Context, in Inputs) (*model.RunRecord, error)
 		return nil, errors.New("reviewer: Options.Client is required")
 	}
 	r.runCtx = ctx
+	r.runStart = time.Now()
 
 	rec := &model.RunRecord{
 		SchemaVersion: model.SchemaVersion,
@@ -399,6 +450,10 @@ func (r *Reviewer) Run(ctx context.Context, in Inputs) (*model.RunRecord, error)
 		reviewable = ordered
 	} else {
 		// Flagged first (triage priority), then unflagged — both reviewed.
+		// The unflagged check is flaggedSet (the flagged-priority set), not
+		// flagged: on triage failure the fallback sets flaggedEntries =
+		// reviewable while flagged stays nil, so testing flagged here would
+		// append every file a second time and pay for every review twice.
 		flaggedSet := map[string]bool{}
 		for _, e := range flaggedEntries {
 			flaggedSet[e.Path] = true
@@ -408,8 +463,8 @@ func (r *Reviewer) Run(ctx context.Context, in Inputs) (*model.RunRecord, error)
 			ordered = append(ordered, e)
 		}
 		for _, e := range reviewable {
-			if !flagged[e.Path] {
-				ordered = append(ordered, e)
+			if !flaggedSet[e.Path] {
+				ordered = append(ordered, e) // unflagged: safer-default batched review
 			}
 		}
 		reviewable = ordered
@@ -451,6 +506,9 @@ func (r *Reviewer) Run(ctx context.Context, in Inputs) (*model.RunRecord, error)
 
 	rec.Coverage = scope.ComputeCoverage(rec.Files, len(in.Manifest))
 	rec.Usage = r.totalUsage()
+	r.callMu.Lock()
+	rec.Calls = r.callLog
+	r.callMu.Unlock()
 	sort.SliceStable(rec.Files, func(i, j int) bool { return rec.Files[i].Path < rec.Files[j].Path })
 	return rec, runErr
 }
@@ -571,8 +629,9 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 		// output): neither is a confident wrong answer, so there is no claim
 		// for a re-ask to invite back. Semantic schema violations and wrong-
 		// path echoes stay terminal (§8). Both draw from the same run-global
-		// bucket as a deadline expiry; with retries exhausted they stay
-		// terminal as parse_failure.
+		// bucket as other transient failures; with retries exhausted they stay
+		// terminal as parse_failure. (Deadline expiry draws from no bucket at
+		// all: it is terminal without a retry — see completeWithRetry.)
 		if !r.tryRetry(unitReview) {
 			break
 		}
