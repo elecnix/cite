@@ -20,6 +20,8 @@
 # pull request head — the action fetches everything it needs from the GitHub
 # API — and the model key arrives as a secret, never in the diff.
 #
+# The "after" reviewer below is the one deliberate exception, gated to
+# same-repository branches only (see the security notes on build-head).
 name: review
 
 on:
@@ -37,6 +39,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The "before" reviewer: the released Cite binary, under the canonical
+  # "cite" identity (check run name and sticky marker unchanged).
   review:
     # Fork pull requests receive a read-only github.token, so posting the
     # review would fail; Cite's own fork-safe two-workflow split (§12) is
@@ -62,3 +66,62 @@ jobs:
           # failure and blocks, unchanged. The pin above is v0.7.0, the first
           # release carrying the tool_failure_blocks input (issue #59 landed
           # on main after v0.6.0), so the input takes effect as written.
+
+  # The "after" reviewer: the binary built from THIS pull request's head,
+  # reviewing the same pull request under its own "cite-head" identity
+  # (CITE_REVIEWER_ID). Comparing the two reviews on the same pull request
+  # shows exactly what the pull request changed about the reviewer itself.
+  #
+  # I1 (docs/security.md) says a privileged job executes zero PR-head code.
+  # This path is the deliberate, gated exception: it runs ONLY for
+  # same-repository branches, where head code is controlled by the same
+  # people who own the secrets. Fork pull requests get no head review — the
+  # `if` guards below are the security boundary, keep them on both jobs.
+  build-head:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version-file: go.mod
+      - name: Build Cite from the pull request head
+        run: go build -o cite-head ./cmd/cite
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cite-head-binary
+          path: cite-head
+
+  review-head:
+    needs: build-head
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cite-head-binary
+          path: .
+      - name: Review this pull request with the head build of Cite
+        env:
+          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
+          MODEL_BASE_URL: https://openrouter.ai/api/v1
+          MODEL_ID: deepseek/deepseek-v4-flash-0731
+          GITHUB_TOKEN: ${{ github.token }}
+          CITE_REVIEWER_ID: cite-head
+        run: |
+          set -euo pipefail
+          chmod +x ./cite-head
+          # PR_NUMBER is not a default runner variable; pull_request events
+          # put the number in the ref as refs/pull/N/merge.
+          PR_NUM="${PR_NUMBER:-}"
+          if [ -z "$PR_NUM" ] && [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
+            PR_NUM="${GITHUB_REF#refs/pull/}"
+            PR_NUM="${PR_NUM%/merge}"
+          fi
+          if [ -z "$PR_NUM" ]; then
+            echo "cite-head: no pull request context (event: ${GITHUB_EVENT_NAME:-unknown}); nothing to review" >&2
+            exit 0
+          fi
+          ./cite-head review --pr "$GITHUB_REPOSITORY#$PR_NUM" --config .github/cite.yml
