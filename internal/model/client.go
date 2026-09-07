@@ -256,9 +256,12 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 	start := time.Now()
 	if _, ok := ctx.Deadline(); !ok {
 		// An explicit per-request deadline at the call site. Never inherit
-		// an unbounded client default.
+		// an unbounded client default. The fallback mirrors the triage role
+		// default (15 minutes): a wall-clock cap is a safety net for a hung
+		// call, not a tuning knob — provider queueing alone can eat minutes
+		// before the first byte.
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 120*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, 15*time.Minute)
 		defer cancel()
 	}
 	// deadlineBudget renders the per-call deadline actually in force, for
