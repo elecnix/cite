@@ -754,3 +754,31 @@ roles:
 		})
 	}
 }
+
+// Advisory order must be deterministic across runs: map iteration is not.
+func TestTimeoutAdvisoriesDeterministicOrder(t *testing.T) {
+	src := `
+roles:
+  review: { timeout: 600s }
+  triage: { timeout: 120s }
+  assemble: { timeout: 60s }
+`
+	first := mustParse(t, src).TimeoutAdvisories()
+	if len(first) != 3 {
+		t.Fatalf("TimeoutAdvisories() = %d lines, want 3", len(first))
+	}
+	for i := 0; i < 20; i++ {
+		next := mustParse(t, src).TimeoutAdvisories()
+		for j, line := range next {
+			if line != first[j] {
+				t.Fatalf("advisory %d = %q, want stable %q (run %d)", j, line, first[j], i)
+			}
+		}
+	}
+	wantOrder := []string{"roles.triage.timeout", "roles.assemble.timeout", "roles.review.timeout"}
+	for i, want := range wantOrder {
+		if !strings.Contains(first[i], want) {
+			t.Errorf("advisory %d = %q, want it to cover %q (order: triage, assemble, review)", i, first[i], want)
+		}
+	}
+}

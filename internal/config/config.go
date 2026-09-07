@@ -125,13 +125,18 @@ func (c *Config) TimeoutAdvisories() []string {
 	if c == nil {
 		return nil
 	}
-	fixed := map[model.Role]time.Duration{
-		model.RoleTriage:   DefaultTriageTimeout,
-		model.RoleAssemble: DefaultAssembleTimeout,
+	// A slice, not a map: advisory order must be deterministic, and Go map
+	// iteration is not (the head reviewer flagged exactly this).
+	fixed := []struct {
+		role model.Role
+		def  time.Duration
+	}{
+		{model.RoleTriage, DefaultTriageTimeout},
+		{model.RoleAssemble, DefaultAssembleTimeout},
 	}
 	var out []string
-	for role, def := range fixed {
-		spec, ok := c.Roles[role]
+	for _, pair := range fixed {
+		spec, ok := c.Roles[pair.role]
 		if !ok || spec.Timeout == "" {
 			continue
 		}
@@ -139,8 +144,8 @@ func (c *Config) TimeoutAdvisories() []string {
 		if err != nil || d <= 0 {
 			continue
 		}
-		if d < def {
-			out = append(out, fmt.Sprintf("roles.%s.timeout is pinned at %s, shorter than the %s default — the pin may be stricter than necessary; deadline expiry is never retried, so a slow-but-correct call dies at the pin (remove the pin or raise it)", role, spec.Timeout, def))
+		if d < pair.def {
+			out = append(out, fmt.Sprintf("roles.%s.timeout is pinned at %s, shorter than the %s default — the pin may be stricter than necessary; deadline expiry is never retried, so a slow-but-correct call dies at the pin (remove the pin or raise it)", pair.role, spec.Timeout, pair.def))
 		}
 	}
 	if spec, ok := c.Roles[model.RoleReview]; ok && spec.Timeout != "" {
