@@ -24,6 +24,17 @@ credentials.
 The safe shape for fork pull requests is two workflows: see
 [fork-safe.yml](../examples/fork-safe.yml) below.
 
+One deliberate exception exists: a repository may review its own pull
+requests with the binary built from the pull request head (the head-review
+leg of a before/after comparison). That job executes head code with a write
+token, so it is gated to same-repository branches only —
+`github.event.pull_request.head.repo.full_name == github.repository` — where
+head code is controlled by the same parties as the secrets. Fork pull
+requests never take this path. The head reviewer posts under its own identity
+(`CITE_REVIEWER_ID`, e.g. `cite-head`): its own check run name and its own
+sticky comment marker, so the two reviewers never conclude or overwrite each
+other's state.
+
 ### I2 — Trust is never derived from an attacker-writable channel
 
 Not from artifact contents, not from a shared cache, not from a label, not from
