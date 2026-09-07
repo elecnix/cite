@@ -254,9 +254,9 @@ func modifiedInstructionsNote(rec *model.RunRecord) string {
 
 // --- sticky comment state ---------------------------------------------------
 
-func readSticky(ctx context.Context, c *githubclient.Client, prNum int) *stickyState {
+func readSticky(ctx context.Context, c *githubclient.Client, prNum int, marker string) *stickyState {
 	st := &stickyState{}
-	id, body, found, err := c.FindIssueComment(ctx, prNum, stickyMarker)
+	id, body, found, err := c.FindIssueComment(ctx, prNum, marker)
 	if err != nil || !found {
 		return st
 	}
@@ -275,7 +275,7 @@ func readSticky(ctx context.Context, c *githubclient.Client, prNum int) *stickyS
 	return st
 }
 
-func writeSticky(ctx context.Context, c *githubclient.Client, prNum int, rec *model.RunRecord, ledger publisher.DismissalLedger, shas map[string]string, posted []model.ValidatedFinding) {
+func writeSticky(ctx context.Context, c *githubclient.Client, prNum int, marker string, rec *model.RunRecord, ledger publisher.DismissalLedger, shas map[string]string, posted []model.ValidatedFinding) {
 	blob, err := ledger.MarshalBlob()
 	if err != nil {
 		blob = ""
@@ -290,12 +290,12 @@ func writeSticky(ctx context.Context, c *githubclient.Client, prNum int, rec *mo
 	st := stickyState{Ledger: blob, BlobSHAs: shas, Findings: tfs}
 	raw, _ := json.Marshal(st)
 	var sb strings.Builder
-	sb.WriteString(stickyMarker + "\n")
+	sb.WriteString(marker + "\n")
 	fmt.Fprintf(&sb, "<!-- cite-state=%s -->\n", base64.StdEncoding.EncodeToString(raw))
 	fmt.Fprintf(&sb, "Cite state for PR #%d. Ledger entries: %d. Last run: %s on %.7s.\n",
 		prNum, len(ledger.Entries), rec.Model, rec.HeadSHA)
 	sb.WriteString(stickyVisibleBody(rec))
-	if err := c.UpsertIssueComment(ctx, prNum, stickyMarker, sb.String()); err != nil {
+	if err := c.UpsertIssueComment(ctx, prNum, marker, sb.String()); err != nil {
 		logToStderr("warning: sticky comment write failed: %v", err)
 	}
 }

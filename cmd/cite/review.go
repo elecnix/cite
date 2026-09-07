@@ -74,7 +74,11 @@ func runReview(args []string) error {
 	case *diffPath != "":
 		return reviewLocal(*diffPath, *cfgPath, sink)
 	case *prSpec != "":
-		return reviewPR(*prSpec, *cfgPath, *dryRun, *disabled, sink, *recordOut)
+		reviewerID, err := resolveReviewerID()
+		if err != nil {
+			return fmt.Errorf("review: %w", err)
+		}
+		return reviewPR(*prSpec, *cfgPath, *dryRun, *disabled, sink, *recordOut, reviewerID)
 	default:
 		fs.Usage()
 		return fmt.Errorf("review: one of --diff or --pr is required")
@@ -284,7 +288,7 @@ type threadFinding struct {
 	Evidence    []model.Evidence `json:"evidence"`
 }
 
-func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, recordOut string) error {
+func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, recordOut, reviewerID string) error {
 	// Report mode: a full run against the real pull request whose outcome goes
 	// to a local sink instead of GitHub. It is not a dry-run — nothing is
 	// simulated — but every mutation (check run, review, thread resolution,
@@ -314,7 +318,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 	// synthetic merge commit on pull_request events (§11).
 	var checkID int64
 	if !dryRun && !disabled && !reportMode {
-		checkID, err = c.CreateCheckRun(ctx, pr.HeadSHA, "cite", "Cite is reviewing", "queued", "queued")
+		checkID, err = c.CreateCheckRun(ctx, pr.HeadSHA, checkNameFor(reviewerID), "Cite is reviewing", "queued", "queued")
 		if err != nil {
 			return fmt.Errorf("creating check run: %w", err)
 		}
@@ -459,7 +463,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 		// fresh; findings on untouched files carry forward. Fails toward
 		// re-review: carried findings re-enter the plan so their threads stay
 		// alive.
-		prevState := readSticky(ctx, c, num)
+		prevState := readSticky(ctx, c, num, stickyMarkerFor(reviewerID))
 		toReview := publisher.FilesToReview(prevState.BlobSHAs, curSHAs)
 		if len(prevState.BlobSHAs) > 0 && len(toReview) < len(entries) {
 			logToStderr("incremental: %d of %d files changed content since last review", len(toReview), len(entries))
@@ -559,7 +563,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 				_ = c.MinimizeComment(ctx, t.ID)
 			}
 		}
-		writeSticky(ctx, c, num, rec, ledger, curSHAs, plan.CommentsToPost)
+		writeSticky(ctx, c, num, stickyMarkerFor(reviewerID), rec, ledger, curSHAs, plan.CommentsToPost)
 	} else {
 		fmt.Printf("dry-run: would post %d comment(s), resolve %d thread(s), minimise %d\n",
 			len(comments), len(plan.ThreadsToResolve), len(plan.ThreadsToMinimise))
