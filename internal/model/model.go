@@ -235,6 +235,23 @@ func (v *ValidatedFinding) FingerprintOf() string {
 	return hex.EncodeToString(sum[:16])
 }
 
+// CoarseFingerprintOf is a quote-independent identity for ledger dedup
+// (§10, issue #48): hash(category, path, normalized title). Unlike
+// FingerprintOf it excludes the quoted span, so sampled-quote drift between
+// review rounds does not churn it. Path IS part of the coarse fingerprint:
+// it exists to suppress re-filing on the same file, not to track a finding
+// across renames.
+func (v *ValidatedFinding) CoarseFingerprintOf() string {
+	var sb strings.Builder
+	sb.WriteString(string(v.Category))
+	sb.WriteString("\x1f")
+	sb.WriteString(v.Path)
+	sb.WriteString("\x1f")
+	sb.WriteString(NormalizeForFingerprint(v.Title))
+	sum := sha256.Sum256([]byte(sb.String()))
+	return hex.EncodeToString(sum[:16])
+}
+
 // NormalizeForFingerprint lowercases, collapses whitespace and strips
 // punctuation so a reformat does not churn identity.
 func NormalizeForFingerprint(s string) string {

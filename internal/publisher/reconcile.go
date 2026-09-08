@@ -79,6 +79,11 @@ type ReconcileOptions struct {
 	// (possibly human-authored) and ledger-dismissed fingerprints (human
 	// adjudication) are never resolved on this basis.
 	ReReviewedFresh func(LiveThread) bool
+	// BlobSHAs maps path → blob SHA at this run's head, used to honour the
+	// blob-unchanged condition on resolved ledger entries (issue #48). Nil
+	// means unknown: resolved-entry suppression then does not require a
+	// blob match.
+	BlobSHAs map[string]string
 }
 
 // Reconcile computes the plan. Matching is greedy and documented:
