@@ -212,7 +212,17 @@ func Reconcile(current []model.ValidatedFinding, live []LiveThread, ledger Dismi
 		if matched[i] {
 			continue
 		}
-		if ledger.Active(fingerprintOf(f), opts.Repository, now) {
+		fp := fingerprintOf(f)
+		blobSHA := ""
+		if opts.BlobSHAs != nil {
+			blobSHA = opts.BlobSHAs[f.Path]
+		}
+		if ledger.Active(fp, opts.Repository, now) ||
+			// Issue #48: a human-resolved thread suppresses re-filing even
+			// after quote drift churned the exact fingerprint, via the
+			// coarse fingerprint — but only while the file's blob is
+			// unchanged since resolution.
+			ledger.ResolvedActive(fp, f.CoarseFingerprintOf(), opts.Repository, blobSHA, now) {
 			// Not re-raised — but listed, so the gate verdict is unchanged.
 			// A dismissal never clears the current gate (§12).
 			plan.SuppressedByLedger = append(plan.SuppressedByLedger, f)

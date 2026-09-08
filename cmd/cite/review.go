@@ -501,6 +501,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 			Now:             time.Now(),
 			SpanGone:        spanGone,
 			ReReviewedFresh: func(t publisher.LiveThread) bool { return reviewedOK[t.Path] },
+			BlobSHAs:        curSHAs,
 		})
 	}
 

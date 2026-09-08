@@ -245,6 +245,18 @@ func runSignals(args []string) error {
 		if err != nil {
 			return fmt.Errorf("fetching %s at head for resolution check: %w", tf.Path, err)
 		}
+		// Issue #48: record a resolved entry (exact + coarse fingerprint,
+		// blob SHA at resolution) so the next review does not re-file this
+		// finding merely because the sampled quote drifted. Suppression
+		// applies only while the file's blob SHA is unchanged, so a genuine
+		// re-occurrence after further edits still surfaces. Blob SHA comes
+		// from the last review's incremental state; unknown means suppress
+		// on fingerprint match alone.
+		coarse := (&model.ValidatedFinding{
+			Finding: model.Finding{Category: tf.Category, Title: tf.Title},
+			Path:    tf.Path,
+		}).CoarseFingerprintOf()
+		ledger.AddResolved(fp, coarse, repoFull, prevState.BlobSHAs[tf.Path], now)
 		if metrics.SpanChanged(tf.Evidence, content) {
 			accepted++
 			ledger.AddAcceptedFixed(fp, repoFull, now)
