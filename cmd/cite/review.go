@@ -124,13 +124,23 @@ func writeRecordOut(rec *model.RunRecord, runErr error, recordOut string) {
 	}
 }
 
-func loadConfig(path string) *config.Config {
+// loadConfig reads the Cite configuration, failing closed on an invalid file
+// (issue #59): a config that fails to parse or validate must never degrade to
+// defaults, because the fallback silently discards the entire roles block —
+// including the explicit per-call timeouts an operator tuned (a configured
+// roles.review.timeout was never in force for exactly this reason). A missing
+// file is the documented "no configuration" case and still yields defaults,
+// but it is logged so runs are honest about which dial was in force.
+func loadConfig(path string) (*config.Config, error) {
+	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+		logToStderr("config %s not found; using built-in defaults", path)
+		return config.Default(), nil
+	}
 	cfg, err := config.Load(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: config invalid, using defaults: %v\n", err)
-		return config.Default()
+		return nil, fmt.Errorf("config %s is invalid; refusing to fall back to defaults (the whole roles block, including explicit timeouts, would be silently discarded): %w", path, err)
 	}
-	return cfg
+	return cfg, nil
 }
 
 func newNonce() string {
@@ -186,7 +196,10 @@ func reviewLocal(diffPath, cfgPath string, sink publisher.Sink) error {
 	if err != nil {
 		return err
 	}
-	cfg := loadConfig(cfgPath)
+	cfg, err := loadConfig(cfgPath)
+	if err != nil {
+		return err
+	}
 	manifest := scope.ParseNameStatus(string(raw))
 	diff, err := scope.ParseUnifiedDiff(string(raw))
 	if err != nil {
@@ -296,7 +309,10 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 		return err
 	}
 	repoFull := owner + "/" + repo
-	cfg := loadConfig(cfgPath)
+	// Issue #59: load before the run commits to anything review-shaped, but
+	// conclude only once the check run exists, so an invalid config surfaces
+	// as COULD_NOT_EVALUATE on the check run instead of a silent default run.
+	cfg, cfgErr := loadConfig(cfgPath)
 
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
@@ -318,6 +334,11 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 		if err != nil {
 			return fmt.Errorf("creating check run: %w", err)
 		}
+	}
+	if cfgErr != nil {
+		// Fail closed (issue #59): an invalid config must never degrade the
+		// run to defaults — conclude COULD_NOT_EVALUATE, never green.
+		return concludeFailure(ctx, c, checkID, dryRun, model.VerdictCouldNotEvaluate, cfgErr.Error())
 	}
 	if disabled {
 		v, reason := gate.DecideDisabled(cfg)

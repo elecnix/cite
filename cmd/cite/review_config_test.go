@@ -88,7 +88,10 @@ func TestValidConfigExplicitTimeoutWinsWhenLoaded(t *testing.T) {
     timeout: 1500s
     max_output_tokens: 32768
 `)
-	cfg := loadConfig(cfgPath)
+	cfg, err := loadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("valid config must load: %v", err)
+	}
 	rc := cfg.Role(model.RoleReview)
 	if rc.Timeout != 1500*time.Second {
 		t.Fatalf("explicit roles.review.timeout not in force after load: got %v, want 1500s", rc.Timeout)
