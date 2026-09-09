@@ -163,26 +163,31 @@ func TestBuildReviewBodySurfacesAnchorInvalidDrops(t *testing.T) {
 	}
 }
 
-// Only anchor_invalid drops surface as notable-but-unanchored: they were
-// structurally sound findings that merely could not be pinned to a line.
-// Other drop reasons (evidence_mismatch, budget, suppressed) stay in the
-// drops-summary count and the run record — they are not promoted to the
-// review body, because they are not "real but imprecise".
+// Only anchor-shaped drops (anchor_invalid, anchor_out_of_range) surface
+// as notable-but-unanchored: they were structurally sound findings that
+// merely could not be pinned to a line, or pointed outside the reviewed
+// file's range (issue #60). Other drop reasons (evidence_mismatch, budget,
+// suppressed) stay in the drops-summary count and the run record — they are
+// not promoted to the review body, because they are not "real but imprecise".
 func TestBuildReviewBodyIgnoresOtherDropReasons(t *testing.T) {
 	drops := []model.DropEntry{
 		{Path: "a.go", Category: model.CategoryConvention, Title: "nit: naming", Reason: model.DropSuppressed},
 		{Path: "b.go", Category: model.CategoryCrash, Title: "off by one", Reason: model.DropBudget},
 		{Path: "c.go", Category: model.CategoryLogicInversion, Title: "real but unanchored", Reason: model.DropAnchorInvalid},
+		{Path: "d.go", Category: model.CategoryCrash, Title: "anchor past EOF", Reason: model.DropAnchorOutOfRange},
 	}
 	body := BuildReviewBody(ReviewBodyInput{
-		FilesReviewed:      3,
+		FilesReviewed:      4,
 		AnchorInvalidDrops: drops,
 	})
 	if !strings.Contains(body, "c.go") || !strings.Contains(body, "real but unanchored") {
 		t.Fatalf("the anchor_invalid drop must appear:\n%s", body)
 	}
+	if !strings.Contains(body, "d.go") || !strings.Contains(body, "anchor past EOF") {
+		t.Errorf("the anchor_out_of_range drop must reach the human too (issue #60):\n%s", body)
+	}
 	if strings.Contains(body, "nit: naming") || strings.Contains(body, "off by one") {
-		t.Fatalf("non-anchor_invalid drops must NOT appear in the body:\n%s", body)
+		t.Fatalf("non-anchor drops must NOT appear in the body:\n%s", body)
 	}
 	if strings.Contains(body, NotableUnanchoredHeading) && !strings.Contains(body, "real but unanchored") {
 		t.Fatalf("heading present without the one anchor_invalid drop:\n%s", body)

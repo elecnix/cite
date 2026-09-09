@@ -89,6 +89,21 @@ func (r *Reviewer) validateFindings(fc *fileContext, fr *model.FileReview) ([]mo
 		// Anchor validation (§8): anchor lines must be added-or-context
 		// lines within the parsed diff hunks for this path. A line outside
 		// the hunks was neither seen nor touched by this change.
+		//
+		// First gate (issue #60): the anchor must sit inside the reviewed
+		// file's ACTUAL line range — 1..len(fc.lines). The model only ever
+		// saw the post-image, so an anchor past EOF (or a non-positive start,
+		// or an end before the start) references a line the model was never
+		// shown. That is degraded output about ONE finding, not a schema
+		// violation of the whole response: it is dropped with reason
+		// anchor_out_of_range the same way anchor_invalid drops are, keeping
+		// the healthy findings and the file's verdict.
+		if f.Anchor.StartLine <= 0 || f.Anchor.EndLine < f.Anchor.StartLine || f.Anchor.EndLine > len(fc.lines) {
+			drop(f, model.DropAnchorOutOfRange,
+				fmt.Sprintf("anchor [%d,%d] is outside the reviewed file's line range (1..%d post-image lines for %s)",
+					f.Anchor.StartLine, f.Anchor.EndLine, len(fc.lines), fc.path))
+			continue
+		}
 		anchorOK := true
 		for line := f.Anchor.StartLine; line <= f.Anchor.EndLine; line++ {
 			if !fc.anchorable[line] {
