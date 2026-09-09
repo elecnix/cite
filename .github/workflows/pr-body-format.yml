@@ -1,0 +1,30 @@
+# PR body format check: flag pull-request descriptions that render badly on
+# GitHub — prose hard-wrapped mid-sentence, list items broken onto a second
+# line, collapsed tables, mermaid diagrams the parser rejects.
+#
+# Deliberately advisory: the check is not in the branch-protection ruleset's
+# required contexts. On the action's own calibration corpus (the 100 most
+# recent PR bodies of its source repo) it flags 11 of 94 human-authored
+# bodies, all already merged — making it required would redden the trunk over
+# descriptions nobody intends to rewrite. A red result is a signal for the
+# author to fix or dismiss, not a gate.
+#
+# `edited` re-runs the check when the author fixes the body; without it the
+# original red result would stand.
+
+name: pr-body-format
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  pr-body-format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: elecnix/gh-pr-body-action@16953182e3b991b7d081d844b395754fdfb91880 # v1.1.0
