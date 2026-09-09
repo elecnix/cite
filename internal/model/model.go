@@ -287,6 +287,7 @@ type DropReason string
 const (
 	DropEvidenceMismatch                 DropReason = "evidence_mismatch"
 	DropAnchorInvalid                    DropReason = "anchor_invalid"
+	DropAnchorOutOfRange                 DropReason = "anchor_out_of_range"
 	DropAnchorNotAddedLine               DropReason = "anchor_not_added_line"
 	DropClaimUnverified                  DropReason = "external_claim_unverified"
 	DropClaimRejectedType                DropReason = "external_claim_rejected_type"

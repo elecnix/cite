@@ -135,9 +135,13 @@ func ParseFileReview(data []byte) (*FileReview, error) {
 		if len(f.Evidence) == 0 {
 			return nil, fmt.Errorf("schema: finding %s needs at least one evidence quote", f.ID)
 		}
-		if f.Anchor.StartLine <= 0 || f.Anchor.EndLine < f.Anchor.StartLine {
-			return nil, fmt.Errorf("schema: finding %s anchor out of range", f.ID)
-		}
+		// NOTE (issue #60): anchor range is NOT checked here. A finding whose
+		// anchor falls outside the reviewed file's line range is degraded model
+		// output about one finding — the same class as anchor_invalid drops —
+		// not a schema violation of the whole response. The file's actual line
+		// count is not available at this layer; the range check against it
+		// lives in the reviewer's validateFindings, which drops the finding
+		// (anchor_out_of_range) instead of failing the entire parse.
 		for j := range f.ExternalClaims {
 			c := &f.ExternalClaims[j]
 			if c.Type == ClaimVersionBehavior {
