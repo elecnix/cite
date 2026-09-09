@@ -131,9 +131,13 @@ var (
 )
 
 // falsifyingOccurrence scans the post-image lines for an occurrence of the
-// symbol that contradicts the negative claim. Lines the finding anchored or
-// quoted are excluded — the reviewer saw those and used them as its own
-// basis. It returns the 1-based line number of the first contradiction.
+// symbol that contradicts the negative claim. For a strong phrase
+// ("no other occurrence"), lines the finding anchored or quoted are
+// excluded — the reviewer saw those and used them as its own basis, and a
+// true strong claim quotes the import as its basis. For a weak call-phrase
+// the exclusion does not apply (issue #68): every line of the post-image,
+// including any quoted span, is scanned. It returns the 1-based line number
+// of the first contradiction.
 //
 // For a strong phrase ("no other occurrence"), any word occurrence
 // falsifies. For a weak call-phrase ("never called"), only a call-shaped
@@ -188,14 +192,25 @@ func checkNegativeClaims(f *model.Finding, lines []string, partial bool) (drop b
 		}
 		return false, false, fmt.Sprintf("negative claim %q has no extractable symbol to verify against", phrase)
 	}
-	excluded := map[int]bool{}
-	for l := f.Anchor.StartLine; l <= f.Anchor.EndLine; l++ {
-		excluded[l] = true
-	}
-	for _, e := range f.Evidence {
-		excluded[e.Line] = true
-	}
 	strong := isStrongOccurrencePhrase(phrase)
+	// Quoted/anchored spans are excluded from the falsification scan only
+	// for strong occurrence-phrases (issue #68). A strong claim asserts the
+	// absence of any other occurrence and legitimately quotes the import as
+	// its basis, so without the exclusion every true strong claim would
+	// falsify itself on its own quote. A weak call-claim ("never called")
+	// gains nothing from the exclusion — an import line is neither
+	// call-shaped nor a definition head, so it can never falsify one — and
+	// the exclusion only hides a fabricated claim that quotes its own
+	// contradicting call site.
+	excluded := map[int]bool{}
+	if strong {
+		for l := f.Anchor.StartLine; l <= f.Anchor.EndLine; l++ {
+			excluded[l] = true
+		}
+		for _, e := range f.Evidence {
+			excluded[e.Line] = true
+		}
+	}
 	for _, sym := range symbols {
 		if n, hit := falsifyingOccurrence(lines, excluded, sym, strong); hit {
 			return true, false, fmt.Sprintf(
