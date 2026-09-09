@@ -82,7 +82,10 @@ func runReReview(args []string) error {
 	if token == "" {
 		return fmt.Errorf("GITHUB_TOKEN is required for re-review")
 	}
-	cfg := loadConfig(*cfgPath)
+	cfg, err := loadConfig(*cfgPath)
+	if err != nil {
+		return err
+	}
 	c := githubclient.New(token, "", nil).WithRepo(owner, repo)
 	ctx := context.Background()
 	cutoff := time.Now().Add(-*since)

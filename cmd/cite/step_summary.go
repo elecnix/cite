@@ -32,15 +32,15 @@ const stepSummaryDropCap = 10
 func writeDropSummary(w *strings.Builder, ds []model.DropEntry) bool {
 	var notable []model.DropEntry
 	for _, d := range ds {
-		if d.Reason == model.DropAnchorInvalid {
+		if d.Reason == model.DropAnchorInvalid || d.Reason == model.DropAnchorOutOfRange {
 			notable = append(notable, d)
 		}
 	}
 	if len(notable) == 0 {
 		return false
 	}
-	fmt.Fprintf(w, "### Dropped findings (anchor_invalid)\n\n")
-	fmt.Fprintf(w, "These findings were structurally sound but could not be pinned to a specific diff line, so they were not posted as inline comments. They need manual localization.\n\n")
+	fmt.Fprintf(w, "### Dropped findings (anchor_invalid, anchor_out_of_range)\n\n")
+	fmt.Fprintf(w, "These findings were structurally sound but could not be pinned to a specific diff line (or fell outside the reviewed file's line range), so they were not posted as inline comments. They need manual localization.\n\n")
 	shown := notable
 	overflow := 0
 	if len(shown) > stepSummaryDropCap {

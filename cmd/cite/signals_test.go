@@ -14,9 +14,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/elecnix/cite/internal/githubclient"
 	"github.com/elecnix/cite/internal/metrics"
+	"github.com/elecnix/cite/internal/publisher"
 )
 
 const (
@@ -141,5 +143,60 @@ func TestSignalsResolutionDisambiguation(t *testing.T) {
 	// No evidence data ⇒ unverifiable ⇒ record neither disposition.
 	if metrics.SpanChanged(nil, contentA) {
 		t.Fatal("no evidence must never claim change")
+	}
+}
+
+// Issue #48: a resolved ledger entry must carry the flagged file's blob SHA
+// AT RESOLUTION TIME — hashed from the content the signals walk just
+// fetched at head — never a SHA remembered from the LAST REVIEW's sticky
+// state. A commit landing between the last review and the human's resolve
+// makes the remembered SHA stale: the next reconciler run then reads "blob
+// changed" and re-files the very finding the human resolved, defeating the
+// fix in exactly the window it exists for.
+func TestSignalsResolvedEntryCarriesResolutionTimeBlobSHA(t *testing.T) {
+	// "stable line\n" → git hash-object → dede009e959581dd80bf8fe392816379ec8d1846.
+	const wantSHA = "dede009e959581dd80bf8fe392816379ec8d1846"
+	srv := fakeGitHubForSignals(t, map[string]string{
+		"a.go": "stable line\n", // unchanged at head: content the walk fetches NOW
+		"b.go": "stable line\n",
+	})
+	c := githubclient.New("tok", srv.URL, srv.Client()).WithRepo("o", "r")
+	ctx := context.Background()
+
+	// The sticky state remembers a DIFFERENT SHA from the last review —
+	// the file changed after the last review ran but before the human
+	// resolved the threads. The recorded SHA must still be the
+	// resolution-time one.
+	// The stale SHA below is only evidence that the walk must NOT look
+	// at it: the fix records the resolution-time SHA regardless.
+	var l publisher.DismissalLedger
+	sig := &signalDisposition{
+		ledger:    &l,
+		blobSHAfn: gitBlobSHA,
+		now:       time.Now(),
+		repoFull:  "o/r",
+	}
+	threads, err := c.ListReviewThreads(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quiet := func(string, ...any) {}
+	if err := sig.count(ctx, c, threads, "headsha", quiet); err != nil {
+		t.Fatal(err)
+	}
+
+	var resolved []publisher.DismissalEntry
+	for _, e := range sig.ledger.Entries {
+		if e.Kind == publisher.EntryResolved {
+			resolved = append(resolved, e)
+		}
+	}
+	if len(resolved) != 2 {
+		t.Fatalf("want 2 resolved entries for the 2 resolved threads, got %d (%+v)", len(resolved), sig.ledger.Entries)
+	}
+	for _, e := range resolved {
+		if e.BlobSHA != wantSHA {
+			t.Fatalf("INVARIANT BROKEN (issue #48): resolved entry carries blob SHA %q, want resolution-time %q — a stale remembered SHA disarms the unchanged-blob suppression condition", e.BlobSHA, wantSHA)
+		}
 	}
 }

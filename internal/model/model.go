@@ -235,6 +235,23 @@ func (v *ValidatedFinding) FingerprintOf() string {
 	return hex.EncodeToString(sum[:16])
 }
 
+// CoarseFingerprintOf is a quote-independent identity for ledger dedup
+// (§10, issue #48): hash(category, path, normalized title). Unlike
+// FingerprintOf it excludes the quoted span, so sampled-quote drift between
+// review rounds does not churn it. Path IS part of the coarse fingerprint:
+// it exists to suppress re-filing on the same file, not to track a finding
+// across renames.
+func (v *ValidatedFinding) CoarseFingerprintOf() string {
+	var sb strings.Builder
+	sb.WriteString(string(v.Category))
+	sb.WriteString("\x1f")
+	sb.WriteString(v.Path)
+	sb.WriteString("\x1f")
+	sb.WriteString(NormalizeForFingerprint(v.Title))
+	sum := sha256.Sum256([]byte(sb.String()))
+	return hex.EncodeToString(sum[:16])
+}
+
 // NormalizeForFingerprint lowercases, collapses whitespace and strips
 // punctuation so a reformat does not churn identity.
 func NormalizeForFingerprint(s string) string {
@@ -270,6 +287,7 @@ type DropReason string
 const (
 	DropEvidenceMismatch                 DropReason = "evidence_mismatch"
 	DropAnchorInvalid                    DropReason = "anchor_invalid"
+	DropAnchorOutOfRange                 DropReason = "anchor_out_of_range"
 	DropAnchorNotAddedLine               DropReason = "anchor_not_added_line"
 	DropClaimUnverified                  DropReason = "external_claim_unverified"
 	DropClaimRejectedType                DropReason = "external_claim_rejected_type"
@@ -280,7 +298,9 @@ const (
 	DropAssemblyCut                      DropReason = "assembly_cut"
 	DropAmbiguousQuote                   DropReason = "ambiguous_quote"
 	DropVerifierUnsupported              DropReason = "verifier_unsupported"
+	DropSelfNegating                     DropReason = "self_negating"
 	DropAbsenceOnPartial                 DropReason = "absence_claim_on_partial_context"
+	DropNegativeClaimFalsified           DropReason = "negative_claim_falsified"
 	DropParseFailure                     DropReason = "parse_failure"
 )
 

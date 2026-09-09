@@ -79,6 +79,11 @@ type ReconcileOptions struct {
 	// (possibly human-authored) and ledger-dismissed fingerprints (human
 	// adjudication) are never resolved on this basis.
 	ReReviewedFresh func(LiveThread) bool
+	// BlobSHAs maps path → blob SHA at this run's head, used to honour the
+	// blob-unchanged condition on resolved ledger entries (issue #48). Nil
+	// means unknown: resolved-entry suppression then does not require a
+	// blob match.
+	BlobSHAs map[string]string
 }
 
 // Reconcile computes the plan. Matching is greedy and documented:
@@ -207,7 +212,14 @@ func Reconcile(current []model.ValidatedFinding, live []LiveThread, ledger Dismi
 		if matched[i] {
 			continue
 		}
-		if ledger.Active(fingerprintOf(f), opts.Repository, now) {
+		fp := fingerprintOf(f)
+		// Issue #48: a human-resolved thread suppresses re-filing even
+		// after quote drift churned the exact fingerprint, via the
+		// coarse fingerprint — but only when the file's blob SHA is
+		// known on both sides and unchanged since resolution
+		// (ledger.ResolvedActive); an unknown SHA surfaces the finding.
+		if ledger.Active(fp, opts.Repository, now) ||
+			ledger.ResolvedActive(fp, f.CoarseFingerprintOf(), opts.Repository, opts.BlobSHAs[f.Path], now) {
 			// Not re-raised — but listed, so the gate verdict is unchanged.
 			// A dismissal never clears the current gate (§12).
 			plan.SuppressedByLedger = append(plan.SuppressedByLedger, f)

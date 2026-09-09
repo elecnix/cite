@@ -20,29 +20,31 @@ func TestStepSummaryDropsEmptyWhenNothingDropped(t *testing.T) {
 	}
 }
 
-// TestStepSummaryDropsOnlyWritesAnchorInvalid: anchor_invalid drops are the
-// ones worth surfacing on the run page (structurally sound, just unanchored).
-// Other drop reasons are noise on the Actions summary — they are already
-// counted in the run record.
+// TestStepSummaryDropsOnlyWritesAnchorDrops: anchor_invalid and
+// anchor_out_of_range drops are the ones worth surfacing on the run page
+// (structurally sound, just unanchored or outside the file's line range —
+// issue #60). Other drop reasons are noise on the Actions summary — they are
+// already counted in the run record.
 func TestStepSummaryDropsOnlyWritesAnchorInvalid(t *testing.T) {
 	drops := []model.DropEntry{
 		{Path: "a.go", Category: model.CategoryLogicInversion, Title: "Inverted guard", Reason: model.DropAnchorInvalid},
 		{Path: "b.go", Category: model.CategoryCrash, Title: "Nil deref", Reason: model.DropAnchorInvalid},
+		{Path: "d.go", Category: model.CategoryCrash, Title: "Past EOF", Reason: model.DropAnchorOutOfRange},
 		{Path: "c.go", Category: model.CategoryConvention, Title: "nit", Reason: model.DropSuppressed},
 	}
 	var sb strings.Builder
 	wrote := writeDropSummary(&sb, drops)
 	if !wrote {
-		t.Fatal("anchor_invalid drops must produce a step summary")
+		t.Fatal("anchor drops must produce a step summary")
 	}
 	out := sb.String()
-	for _, want := range []string{"a.go", "Inverted guard", "b.go", "Nil deref", "anchor_invalid"} {
+	for _, want := range []string{"a.go", "Inverted guard", "b.go", "Nil deref", "d.go", "Past EOF", "anchor_invalid", "anchor_out_of_range"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("step summary missing %q\n---\n%s", want, out)
 		}
 	}
 	if strings.Contains(out, "nit") || strings.Contains(out, "c.go") {
-		t.Errorf("non-anchor_invalid drops must not appear in the step summary:\n%s", out)
+		t.Errorf("non-anchor drops must not appear in the step summary:\n%s", out)
 	}
 }
 

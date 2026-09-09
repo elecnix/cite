@@ -50,6 +50,7 @@ func (r *Reviewer) validateFindings(fc *fileContext, fr *model.FileReview) ([]mo
 	}
 
 	occurrence := map[string]int{}
+findingsLoop:
 	for i := range fr.Findings {
 		f := &fr.Findings[i]
 
@@ -89,6 +90,21 @@ func (r *Reviewer) validateFindings(fc *fileContext, fr *model.FileReview) ([]mo
 		// Anchor validation (§8): anchor lines must be added-or-context
 		// lines within the parsed diff hunks for this path. A line outside
 		// the hunks was neither seen nor touched by this change.
+		//
+		// First gate (issue #60): the anchor must sit inside the reviewed
+		// file's ACTUAL line range — 1..len(fc.lines). The model only ever
+		// saw the post-image, so an anchor past EOF (or a non-positive start,
+		// or an end before the start) references a line the model was never
+		// shown. That is degraded output about ONE finding, not a schema
+		// violation of the whole response: it is dropped with reason
+		// anchor_out_of_range the same way anchor_invalid drops are, keeping
+		// the healthy findings and the file's verdict.
+		if f.Anchor.StartLine <= 0 || f.Anchor.EndLine < f.Anchor.StartLine || f.Anchor.EndLine > len(fc.lines) {
+			drop(f, model.DropAnchorOutOfRange,
+				fmt.Sprintf("anchor [%d,%d] is outside the reviewed file's line range (1..%d post-image lines for %s)",
+					f.Anchor.StartLine, f.Anchor.EndLine, len(fc.lines), fc.path))
+			continue
+		}
 		anchorOK := true
 		for line := f.Anchor.StartLine; line <= f.Anchor.EndLine; line++ {
 			if !fc.anchorable[line] {
@@ -176,6 +192,47 @@ func (r *Reviewer) validateFindings(fc *fileContext, fr *model.FileReview) ([]mo
 			continue
 		}
 
+		// Negative-existence claims (issue #45): a narrative claim that a
+		// symbol is "never called" / "no other occurrence" is mechanically
+		// checkable against the post-image. A contradicted claim drops the
+		// finding; a claim that cannot be checked (partial view, no
+		// extractable symbol) can never ground a block — fail open to a
+		// note, never to a merge blocker.
+		negDrop, negVerified, negDetail := checkNegativeClaims(f, fc.lines, fc.partial)
+		if negDrop {
+			drop(f, model.DropNegativeClaimFalsified, negDetail)
+			continue
+		}
+
+		// Self-negating findings (issue #65): a finding whose own impact
+		// field opens by disclaiming any defect contradicts itself — a
+		// statement that there is nothing to be confident about must not
+		// carry certain confidence and block the gate. Checked only on
+		// findings that would otherwise be blocking candidates (right
+		// category, matching evidence, added-line anchor, verified claims,
+		// certain confidence) and only when the impact field OPENS with the
+		// disclaimer, so an ordinary sentence that merely contains "no" or
+		// "impact" is never caught. The narrower the rule, the lower the
+		// recall cost: a genuine finding is never dropped for its wording.
+		// Runs AFTER the negative-claims check so a finding that both
+		// fabricates a claim about the file and disclaims impact is
+		// recorded under the stronger reason, negative_claim_falsified.
+		if f.Category.MayBlock() &&
+			r.blockingSet[f.Category] &&
+			evidenceOK &&
+			anchorHasAddedLine(f.Anchor, fc.added) &&
+			claimsOK &&
+			f.Confidence == model.ConfidenceCertain {
+			imp := strings.ToLower(strings.TrimSpace(f.Impact))
+			for _, pre := range []string{"no impact", "no defect", "no mismatch"} {
+				if strings.HasPrefix(imp, pre) {
+					drop(f, model.DropSelfNegating,
+						fmt.Sprintf("impact field disclaims a defect: %q", model.SanitizeText(f.Impact)))
+					continue findingsLoop
+				}
+			}
+		}
+
 		// Blocking formula (§8), computed exactly as written:
 		//
 		//   blocks = category ∈ gate.blocking_categories
@@ -189,6 +246,7 @@ func (r *Reviewer) validateFindings(fc *fileContext, fr *model.FileReview) ([]mo
 			evidenceOK &&
 			anchorHasAddedLine(f.Anchor, fc.added) &&
 			claimsOK &&
+			negVerified &&
 			f.Confidence == model.ConfidenceCertain
 
 		vf := model.ValidatedFinding{Finding: *f}

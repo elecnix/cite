@@ -128,13 +128,23 @@ func writeRecordOut(rec *model.RunRecord, runErr error, recordOut string) {
 	}
 }
 
-func loadConfig(path string) *config.Config {
+// loadConfig reads the Cite configuration, failing closed on an invalid file
+// (issue #59): a config that fails to parse or validate must never degrade to
+// defaults, because the fallback silently discards the entire roles block —
+// including the explicit per-call timeouts an operator tuned (a configured
+// roles.review.timeout was never in force for exactly this reason). A missing
+// file is the documented "no configuration" case and still yields defaults,
+// but it is logged so runs are honest about which dial was in force.
+func loadConfig(path string) (*config.Config, error) {
+	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+		logToStderr("config %s not found; using built-in defaults", path)
+		return config.Default(), nil
+	}
 	cfg, err := config.Load(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: config invalid, using defaults: %v\n", err)
-		return config.Default()
+		return nil, fmt.Errorf("config %s is invalid; refusing to fall back to defaults (the whole roles block, including explicit timeouts, would be silently discarded): %w", path, err)
 	}
-	return cfg
+	return cfg, nil
 }
 
 func newNonce() string {
@@ -190,7 +200,10 @@ func reviewLocal(diffPath, cfgPath string, sink publisher.Sink) error {
 	if err != nil {
 		return err
 	}
-	cfg := loadConfig(cfgPath)
+	cfg, err := loadConfig(cfgPath)
+	if err != nil {
+		return err
+	}
 	manifest := scope.ParseNameStatus(string(raw))
 	diff, err := scope.ParseUnifiedDiff(string(raw))
 	if err != nil {
@@ -300,7 +313,10 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 		return err
 	}
 	repoFull := owner + "/" + repo
-	cfg := loadConfig(cfgPath)
+	// Issue #59: load before the run commits to anything review-shaped, but
+	// conclude only once the check run exists, so an invalid config surfaces
+	// as COULD_NOT_EVALUATE on the check run instead of a silent default run.
+	cfg, cfgErr := loadConfig(cfgPath)
 
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
@@ -322,6 +338,11 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 		if err != nil {
 			return fmt.Errorf("creating check run: %w", err)
 		}
+	}
+	if cfgErr != nil {
+		// Fail closed (issue #59): an invalid config must never degrade the
+		// run to defaults — conclude COULD_NOT_EVALUATE, never green.
+		return concludeFailure(ctx, c, checkID, dryRun, model.VerdictCouldNotEvaluate, cfgErr.Error())
 	}
 	if disabled {
 		v, reason := gate.DecideDisabled(cfg)
@@ -467,7 +488,11 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 		toReview := publisher.FilesToReview(prevState.BlobSHAs, curSHAs)
 		if len(prevState.BlobSHAs) > 0 && len(toReview) < len(entries) {
 			logToStderr("incremental: %d of %d files changed content since last review", len(toReview), len(entries))
-			carryIntoRecord(rec, prevState, toReview)
+			manifestSet := make(map[string]bool, len(entries))
+			for _, e := range entries {
+				manifestSet[e.Path] = true
+			}
+			carryIntoRecord(rec, prevState, toReview, manifestSet, diffs)
 		}
 
 		var err error
@@ -505,6 +530,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 			Now:             time.Now(),
 			SpanGone:        spanGone,
 			ReReviewedFresh: func(t publisher.LiveThread) bool { return reviewedOK[t.Path] },
+			BlobSHAs:        curSHAs,
 		})
 	}
 
@@ -644,14 +670,35 @@ func rankForBudget(fs []model.ValidatedFinding) []model.ValidatedFinding {
 
 // carryIntoRecord re-adds previous findings whose files were not re-reviewed
 // this run. They carry forward as candidates requiring verification — never
-// silently dropped (§10: incremental fails toward re-review).
-func carryIntoRecord(rec *model.RunRecord, prev *stickyState, toReview []string) {
+// silently dropped (§10: incremental fails toward re-review) — but a carried
+// finding is re-anchored against the CURRENT diff before it may block
+// (issue #47): the documented contract is that every finding intersects an
+// added or modified line of this change (docs/noise.md Rule 1), and a
+// finding whose file left the PR diff (force-push, revert, base change)
+// intersects nothing. Re-arming it with Blocks = Category.MayBlock() — the
+// old behaviour — let a stale, out-of-diff finding conclude the gate as
+// FOUND on a file with no diff, and could even promote a previous run's
+// non-blocking note to a blocker.
+func carryIntoRecord(rec *model.RunRecord, prev *stickyState, toReview []string, manifest map[string]bool, diffs map[string]*scope.DiffFile) {
 	reviewing := map[string]bool{}
 	for _, p := range toReview {
 		reviewing[p] = true
 	}
 	for _, tf := range prev.Findings {
 		if reviewing[tf.Path] {
+			continue
+		}
+		// The file is no longer part of this pull request's change: the
+		// finding cannot intersect an added or modified line of this diff,
+		// so it is dropped with a logged reason (§8 drop log), never re-armed.
+		if !manifest[tf.Path] {
+			rec.Drops = append(rec.Drops, model.DropEntry{
+				Path:     tf.Path,
+				Category: tf.Category,
+				Title:    tf.Title,
+				Reason:   model.DropAnchorNotAddedLine,
+				Detail:   "carried finding's file is no longer in the pull request diff; its anchor intersects no added line",
+			})
 			continue
 		}
 		dup := false
@@ -664,6 +711,25 @@ func carryIntoRecord(rec *model.RunRecord, prev *stickyState, toReview []string)
 		if dup {
 			continue
 		}
+		// Re-anchor against the current parsed diff: a carried finding blocks
+		// only if one of its quoted evidence lines is an ADDED line of this
+		// change (the same bar validateFindings applies to fresh findings).
+		// Without a parsed diff for the file — patch missing or unparsable —
+		// the intersection cannot be checked, so the finding fails closed to
+		// a note: an unverifiable anchor never grounds a block (§8).
+		blocks := false
+		if df := diffs[tf.Path]; df != nil && tf.Category.MayBlock() {
+			added := map[int]bool{}
+			for _, n := range df.AddedLines() {
+				added[n] = true
+			}
+			for _, ev := range tf.Evidence {
+				if added[ev.Line] {
+					blocks = true
+					break
+				}
+			}
+		}
 		rec.Findings = append(rec.Findings, model.ValidatedFinding{
 			Finding: model.Finding{
 				ID: "carried-" + tf.Fingerprint[:8], Category: tf.Category, Title: tf.Title,
@@ -671,7 +737,7 @@ func carryIntoRecord(rec *model.RunRecord, prev *stickyState, toReview []string)
 				IntroducedBy: model.IntroducedAddedLine,
 			},
 			Path: tf.Path, EvidenceLevel: model.EvidenceNormalized,
-			Blocks: tf.Category.MayBlock(), Fingerprint: tf.Fingerprint,
+			Blocks: blocks, Fingerprint: tf.Fingerprint,
 		})
 	}
 }

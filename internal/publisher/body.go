@@ -45,10 +45,11 @@ type ReviewBodyInput struct {
 	Unanchorable []model.ValidatedFinding
 	// AnchorInvalidDrops are candidate findings the model produced but the
 	// harness could not pin to a diff line. They are structurally sound — the
-	// drop reason is anchor_invalid, not evidence_mismatch — so they reach the
-	// human via a labelled body section instead of vanishing into the CI log
-	// (issue #42). Only DropAnchorInvalid entries belong here; other drop
-	// reasons stay in DropsSummary.
+	// drop reason is anchor_invalid or anchor_out_of_range, not
+	// evidence_mismatch — so they reach the human via a labelled body
+	// section instead of vanishing into the CI log (issues #42, #60).
+	// Only those two entries belong here; other drop reasons stay in
+	// DropsSummary.
 	AnchorInvalidDrops []model.DropEntry
 	// DropsSummary points at the run record and its drop log ("why didn't
 	// you say that" lives there, not here).
@@ -72,13 +73,13 @@ type ReviewBodyInput struct {
 // nothing to say (§10).
 func BuildReviewBody(in ReviewBodyInput) string {
 	hasUnanchored := len(in.Unanchorable) > 0
-	// Only DropAnchorInvalid entries belong here; other drop reasons (budget,
-	// suppressed, evidence_mismatch) are not "real but imprecise" — they stay in
-	// DropsSummary. Filter at render time so callers can pass the full drop
-	// log without screening it themselves.
+	// Only DropAnchorInvalid and DropAnchorOutOfRange entries belong here;
+	// other drop reasons (budget, suppressed, evidence_mismatch) are not
+	// "real but imprecise" — they stay in DropsSummary. Filter at render time
+	// so callers can pass the full drop log without screening it themselves.
 	notable := make([]model.DropEntry, 0, len(in.AnchorInvalidDrops))
 	for _, d := range in.AnchorInvalidDrops {
-		if d.Reason == model.DropAnchorInvalid {
+		if d.Reason == model.DropAnchorInvalid || d.Reason == model.DropAnchorOutOfRange {
 			notable = append(notable, d)
 		}
 	}
