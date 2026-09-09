@@ -57,3 +57,43 @@ func TestPruneKeepsAcceptedFixed(t *testing.T) {
 		t.Fatalf("survivor kind = %q, want accepted-and-fixed", entryKind(l.Entries[0]))
 	}
 }
+
+// Issue #48: a resolved entry carries the coarse fingerprint and the
+// resolution-time blob SHA through the sticky-comment round trip — the
+// blob SHA is the anchor for "suppress only while the file is unchanged",
+// so losing either field in marshal/unmarshal silently disarms the fix.
+func TestResolvedKindRoundtrip(t *testing.T) {
+	var l DismissalLedger
+	l.Entries = append(l.Entries, DismissalEntry{
+		Kind:              EntryResolved,
+		Fingerprint:       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		CoarseFingerprint: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		Repository:        "o/r",
+		BlobSHA:           "dede009e959581dd80bf8fe392816379ec8d1846",
+		DismissedAt:       time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC),
+	})
+	blob, err := l.MarshalBlob()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := UnmarshalBlob(blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Entries) != 1 {
+		t.Fatalf("entries after roundtrip = %d", len(got.Entries))
+	}
+	e := got.Entries[0]
+	if entryKind(e) != EntryResolved {
+		t.Fatalf("kind after roundtrip = %q, want %q", entryKind(e), EntryResolved)
+	}
+	if e.CoarseFingerprint != "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" || e.BlobSHA != "dede009e959581dd80bf8fe392816379ec8d1846" {
+		t.Fatalf("coarse/blob lost in roundtrip: %+v", e)
+	}
+	if got.Active("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "o/r", e.DismissedAt.Add(time.Hour)) {
+		t.Fatal("resolved entry must not count as a dismissal")
+	}
+	if !got.ResolvedActive("x", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "o/r", "dede009e959581dd80bf8fe392816379ec8d1846", e.DismissedAt.Add(time.Hour)) {
+		t.Fatal("resolved entry must match on coarse fingerprint while blob unchanged")
+	}
+}

@@ -49,6 +49,14 @@ const (
 	// fixing". It never suppresses re-raising — the code moved, so there is
 	// nothing to suppress — and it feeds the accept-rate signal.
 	EntryAcceptedFixed LedgerEntryKind = "accepted-and-fixed"
+	// EntryResolved records a human-resolved Cite thread (issue #48), with
+	// the blob SHA of the flagged file at resolution time. Unlike a
+	// dismissal it suppresses only while that blob SHA is unchanged: a
+	// genuine re-occurrence after further edits still surfaces, but pure
+	// sampling/line-position drift does not re-file the finding. Matching is
+	// by exact fingerprint or by the quote-independent coarse fingerprint
+	// (category + path + normalized title).
+	EntryResolved LedgerEntryKind = "resolved"
 )
 
 // DismissalEntry is one ledger record. AdjudicatorAuthor and
@@ -61,6 +69,13 @@ type DismissalEntry struct {
 	AdjudicatorAuthor string          `json:"adjudicator_author,omitempty"`
 	AuthorAssociation string          `json:"author_association,omitempty"`
 	DismissedAt       time.Time       `json:"dismissed_at"`
+	// CoarseFingerprint is the quote-independent identity (category + path
+	// + normalized title) recorded only on EntryResolved.
+	CoarseFingerprint string `json:"coarse_fingerprint,omitempty"`
+	// BlobSHA is the flagged file's blob SHA at resolution time, recorded
+	// only on EntryResolved. Suppression applies only while the file's blob
+	// is unchanged (or unknown on either side).
+	BlobSHA string `json:"blob_sha,omitempty"`
 }
 
 // DismissalLedger is the append-only set of entries. Zero-value entries whose
@@ -95,6 +110,21 @@ func (l *DismissalLedger) addPublished(fingerprint, repo string, now time.Time) 
 		Fingerprint: fingerprint,
 		Repository:  repo,
 		DismissedAt: now,
+	})
+}
+
+// AddResolved records a human-resolved Cite thread (issue #48): exact
+// fingerprint, quote-independent coarse fingerprint and the flagged file's
+// blob SHA at resolution time. Suppression via ResolvedActive applies only
+// while that blob SHA is unchanged.
+func (l *DismissalLedger) AddResolved(fingerprint, coarseFingerprint, repo, blobSHA string, now time.Time) {
+	l.Entries = append(l.Entries, DismissalEntry{
+		Kind:              EntryResolved,
+		Fingerprint:       fingerprint,
+		CoarseFingerprint: coarseFingerprint,
+		Repository:        repo,
+		BlobSHA:           blobSHA,
+		DismissedAt:       now,
 	})
 }
 
@@ -136,6 +166,32 @@ func (l *DismissalLedger) Published(fingerprint, repo string) bool {
 	return false
 }
 
+// ResolvedActive reports whether an unexpired resolved entry for
+// (repo) matches the finding at (exactFP, coarseFP). Issue #48's guard
+// rail: the unchanged-blob condition must be VERIFIABLE to suppress —
+// both the recorded SHA and this run's SHA must be known and equal. An
+// unknown SHA on either side (file absent from this run's map, map not
+// provided, or entry recorded before SHAs were tracked) cannot honour
+// "only while the file is unchanged", so the finding surfaces: failing
+// toward re-raising a possibly-fixed finding costs one redundant
+// comment, while failing toward suppressing a genuine re-occurrence
+// silences it for the entry's whole 90-day horizon.
+func (l *DismissalLedger) ResolvedActive(exactFP, coarseFP, repo, blobSHA string, now time.Time) bool {
+	for _, e := range l.Entries {
+		if entryKind(e) != EntryResolved || e.Repository != repo || expired(e, now) {
+			continue
+		}
+		if e.Fingerprint != exactFP && (coarseFP == "" || e.CoarseFingerprint != coarseFP) {
+			continue
+		}
+		if e.BlobSHA == "" || blobSHA == "" || e.BlobSHA != blobSHA {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 func expired(e DismissalEntry, now time.Time) bool {
 	return !now.Before(e.DismissedAt.Add(LedgerExpiry))
 }
@@ -144,7 +200,7 @@ func expired(e DismissalEntry, now time.Time) bool {
 func (l *DismissalLedger) Prune(now time.Time) {
 	kept := l.Entries[:0]
 	for _, e := range l.Entries {
-		if entryKind(e) == EntryDismissal && expired(e, now) {
+		if (entryKind(e) == EntryDismissal || entryKind(e) == EntryResolved) && expired(e, now) {
 			continue
 		}
 		kept = append(kept, e)

@@ -269,3 +269,90 @@ func TestJaccardSimilarity(t *testing.T) {
 		t.Fatalf("identical sets must score 1, got %f", s)
 	}
 }
+
+// Issue #48: after a human resolves a Cite thread, the next review must not
+// re-file the same finding. Quote drift (a different sample or line
+// position) churns the exact fingerprint, so suppression must fall back to
+// the quote-independent coarse fingerprint — but only while the flagged
+// file's blob SHA is unchanged since resolution.
+func TestResolvedThreadNotRefiledOnQuoteDrift(t *testing.T) {
+	now := time.Now()
+	resolved := mkFinding("a.go", "crash", "Undefined variable used in guard", "if name == value:")
+	drifted := mkFinding("a.go", "crash", "Undefined variable used in guard", "if (name == value) { // drift")
+	if drifted.Fingerprint == resolved.Fingerprint {
+		t.Fatal("precondition: quote drift must churn the exact fingerprint")
+	}
+	if drifted.CoarseFingerprintOf() != resolved.CoarseFingerprintOf() {
+		t.Fatal("precondition: coarse fingerprint must survive quote drift")
+	}
+
+	var ledger DismissalLedger
+	ledger.AddResolved(resolved.Fingerprint, resolved.CoarseFingerprintOf(), "o/r", "blob1", now)
+
+	plan := Reconcile([]model.ValidatedFinding{drifted}, nil, ledger, ReconcileOptions{
+		Repository: "o/r",
+		Now:        now.Add(time.Minute),
+		BlobSHAs:   map[string]string{"a.go": "blob1"},
+	})
+	if len(plan.CommentsToPost) != 0 {
+		t.Fatalf("INVARIANT BROKEN (issue #48): resolved finding re-filed as %d new thread(s)", len(plan.CommentsToPost))
+	}
+	if len(plan.SuppressedByLedger) != 1 {
+		t.Fatalf("drifted resolved finding should be suppressed by ledger, got %+v", plan.SuppressedByLedger)
+	}
+}
+
+// The other half of #48's fix direction: a genuine new occurrence after the
+// file was edited must still surface.
+func TestResolvedFindingSurfacesAfterBlobChange(t *testing.T) {
+	now := time.Now()
+	resolved := mkFinding("a.go", "crash", "Undefined variable used in guard", "if name == value:")
+
+	var ledger DismissalLedger
+	ledger.AddResolved(resolved.Fingerprint, resolved.CoarseFingerprintOf(), "o/r", "blob1", now)
+
+	plan := Reconcile([]model.ValidatedFinding{resolved}, nil, ledger, ReconcileOptions{
+		Repository: "o/r",
+		Now:        now.Add(time.Minute),
+		BlobSHAs:   map[string]string{"a.go": "blob2-changed"},
+	})
+	if len(plan.CommentsToPost) != 1 {
+		t.Fatalf("edited file must surface a re-raised finding, got %d new", len(plan.CommentsToPost))
+	}
+}
+
+// Issue #48's guard rail: a resolved ledger entry may only suppress a
+// re-raised finding while the flagged file's blob SHA is known and unchanged
+// on both sides. An unknown SHA — the file absent from this run's map, or
+// the map itself absent — cannot honour that condition, so the finding must
+// surface: a genuine re-occurrence after further edits must never be
+// silenced by an unverifiable match.
+func TestResolvedEntryWithoutBlobEvidenceMustSurface(t *testing.T) {
+	now := time.Now()
+	f := mkFinding("a.go", "crash", "Undefined variable used in guard", "if name == value:")
+
+	var ledger DismissalLedger
+	ledger.AddResolved(f.Fingerprint, f.CoarseFingerprintOf(), "o/r", "blob1", now)
+
+	for _, tc := range []struct {
+		name     string
+		blobSHAs map[string]string
+	}{
+		{"nil map suppresses nothing", nil},
+		{"path missing from map suppresses nothing", map[string]string{"other.go": "blob1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := Reconcile([]model.ValidatedFinding{f}, nil, ledger, ReconcileOptions{
+				Repository: "o/r",
+				Now:        now.Add(time.Minute),
+				BlobSHAs:   tc.blobSHAs,
+			})
+			if len(plan.CommentsToPost) != 1 {
+				t.Fatalf("INVARIANT BROKEN (issue #48): unresolved blob check re-filed %d thread(s); want the finding surfaced", len(plan.CommentsToPost))
+			}
+			if len(plan.SuppressedByLedger) != 0 {
+				t.Fatalf("finding must not be suppressed without a verifiable blob SHA, got %+v", plan.SuppressedByLedger)
+			}
+		})
+	}
+}
