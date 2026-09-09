@@ -13,10 +13,12 @@
 # pull request head — the action fetches everything it needs from the GitHub
 # API — and the model key arrives as a secret, never in the diff.
 #
-# The one exception is .github/cite.yml: `cite review --config` reads that
-# path from the LOCAL filesystem, so with no checkout it would be missing
-# and internal/config silently falls back to defaults. The steps below
-# fetch it explicitly from the BASE ref.
+# As of the v0.6.0 pin, the action itself fetches .github/cite.yml from
+# the base ref (scripts/fetch-config.sh, shipped in the action), so the
+# released review job below needs no hand-rolled fetch step. The one
+# exception is the review-head job, which runs a locally built binary
+# directly rather than through the action, so it keeps its own fetch
+# of the config from the BASE ref.
 #
 # Two reviewers run in parallel on every same-repository pull request:
 #
@@ -102,8 +104,11 @@ jobs:
           name: cite-head-binary
           path: .
 
-      # Same trusted-config fetch as the released reviewer above: the config
-      # comes from the BASE ref, never from the PR head (§12).
+      # Unlike the released reviewer above — which gets its config from
+      # the action's own scripts/fetch-config.sh, since it runs through
+      # the action — this job runs the locally built binary directly, so
+      # it fetches the config explicitly from the BASE ref, never from
+      # the PR head (§12).
       - name: Fetch trusted Cite config from the base branch
         env:
           GH_TOKEN: ${{ github.token }}
