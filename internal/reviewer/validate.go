@@ -50,6 +50,7 @@ func (r *Reviewer) validateFindings(fc *fileContext, fr *model.FileReview) ([]mo
 	}
 
 	occurrence := map[string]int{}
+findingsLoop:
 	for i := range fr.Findings {
 		f := &fr.Findings[i]
 
@@ -186,6 +187,35 @@ func (r *Reviewer) validateFindings(fc *fileContext, fr *model.FileReview) ([]mo
 		if negDrop {
 			drop(f, model.DropNegativeClaimFalsified, negDetail)
 			continue
+		}
+
+		// Self-negating findings (issue #65): a finding whose own impact
+		// field opens by disclaiming any defect contradicts itself — a
+		// statement that there is nothing to be confident about must not
+		// carry certain confidence and block the gate. Checked only on
+		// findings that would otherwise be blocking candidates (right
+		// category, matching evidence, added-line anchor, verified claims,
+		// certain confidence) and only when the impact field OPENS with the
+		// disclaimer, so an ordinary sentence that merely contains "no" or
+		// "impact" is never caught. The narrower the rule, the lower the
+		// recall cost: a genuine finding is never dropped for its wording.
+		// Runs AFTER the negative-claims check so a finding that both
+		// fabricates a claim about the file and disclaims impact is
+		// recorded under the stronger reason, negative_claim_falsified.
+		if f.Category.MayBlock() &&
+			r.blockingSet[f.Category] &&
+			evidenceOK &&
+			anchorHasAddedLine(f.Anchor, fc.added) &&
+			claimsOK &&
+			f.Confidence == model.ConfidenceCertain {
+			imp := strings.ToLower(strings.TrimSpace(f.Impact))
+			for _, pre := range []string{"no impact", "no defect", "no mismatch"} {
+				if strings.HasPrefix(imp, pre) {
+					drop(f, model.DropSelfNegating,
+						fmt.Sprintf("impact field disclaims a defect: %q", model.SanitizeText(f.Impact)))
+					continue findingsLoop
+				}
+			}
 		}
 
 		// Blocking formula (§8), computed exactly as written:
