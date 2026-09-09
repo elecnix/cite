@@ -246,6 +246,28 @@ one. A typo in a configuration key is rejected loudly; it is never silently
 ignored, because a silently ignored suppression or gate setting is a merge gate
 that is not doing what its owner believes.
 
+## Where the config file comes from
+
+The action runs without `actions/checkout`, so `.github/cite.yml` is usually
+not on the runner filesystem. The action fetches the file named by
+`config_path` from the pull request's **base ref** before the review step —
+never from the pull request head or the merge ref, so a pull request cannot
+rewrite its own review settings or redirect `base_url` to an attacker
+endpoint ([security.md](security.md#i3--everything-controlling-the-model-call-or-verdict-is-read-from-the-base-ref)).
+Each run logs exactly one line naming the source used:
+
+- `cite: config source: local file` — the file was already present on the
+  runner (e.g. a workflow that does check out).
+- `cite: config <path> fetched from base ref <ref>` — fetched via the
+  GitHub contents API with the ambient token (`contents: read`).
+- `cite: no <path> on base ref; running with defaults` — the base ref has no
+  config file. This is not an error; the run continues with the defaults on
+  this page. Before this fetch ran, that case was silent: every tuned key
+  was dropped without a trace in the logs.
+
+A fetch or decode failure other than "no such file" is a hard error and fails
+the step, rather than quietly reviewing with the wrong settings.
+
 ## What is deliberately absent
 
 - No severity thresholds. There is no severity scale; blocking is computed in
