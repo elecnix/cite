@@ -16,7 +16,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha1"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -122,6 +124,98 @@ func runListen(args []string) error {
 
 // --- cite signals ------------------------------------------------------------
 
+// gitBlobSHA computes the git blob SHA (as GitHub reports it in the
+// contents API) for content: sha1("blob " + len + "\x00" + content).
+// Issue #48 records it on resolved ledger entries at RESOLUTION time —
+// never a SHA remembered from an earlier review run — so the reconciler's
+// "suppress only while the file is unchanged" condition is honest.
+func gitBlobSHA(content []byte) string {
+	h := sha1.New()
+	fmt.Fprintf(h, "blob %d\x00", len(content))
+	h.Write(content)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// dispositionResolvedThread fetches the flagged path at head for a resolved
+// Cite thread and returns its content plus the quote-independent coarse
+// fingerprint (issue #48).
+func dispositionResolvedThread(ctx context.Context, c *githubclient.Client, headSHA string, tf *threadFinding) ([]byte, string, error) {
+	content, _, err := c.GetFileContent(ctx, headSHA, tf.Path)
+	if err != nil {
+		return nil, "", fmt.Errorf("fetching %s at head for resolution check: %w", tf.Path, err)
+	}
+	coarse := (&model.ValidatedFinding{
+		Finding: model.Finding{Category: tf.Category, Title: tf.Title},
+		Path:    tf.Path,
+	}).CoarseFingerprintOf()
+	return content, coarse, nil
+}
+
+// signalDisposition carries the state of the resolved-thread walk (§14) so
+// the per-thread decision is testable without a full runSignals: it counts
+// thread/resolution tallies and appends ledger entries for every resolved
+// Cite thread. Issue #48: each resolution also records an EntryResolved
+// whose blob SHA must come from blobSHAfn applied to the content AT HEAD —
+// the bytes just fetched — never from state remembered from an earlier
+// review run.
+type signalDisposition struct {
+	ledger                                             *publisher.DismissalLedger
+	blobSHAfn                                          func([]byte) string
+	now                                                time.Time
+	repoFull                                           string
+	citeThreads, resolvedCount, accepted, byResolution int
+}
+
+// count walks the review threads and dispositions every resolved Cite one.
+// printf is injected so tests can silence the human-readable progress lines.
+func (s *signalDisposition) count(ctx context.Context, c *githubclient.Client, threads []githubclient.Thread, headSHA string, printf func(string, ...any)) error {
+	for _, t := range threads {
+		if len(t.Comments) == 0 {
+			continue
+		}
+		fp, tf, ok := parseCiteCommentBody(t.Comments[0].Body)
+		if !ok {
+			continue
+		}
+		s.citeThreads++
+		if !t.IsResolved {
+			continue
+		}
+		s.resolvedCount++
+		// §14: a human resolving a thread means handled, disambiguated
+		// mechanically. If the quoted span changed in a later push it was
+		// accepted-and-fixed; if it is still identical, the human read it
+		// and said no — a dismissal. No evidence data means unverifiable:
+		// record neither.
+		if tf == nil || len(tf.Evidence) == 0 {
+			continue
+		}
+		content, coarse, err := dispositionResolvedThread(ctx, c, headSHA, tf)
+		if err != nil {
+			return err
+		}
+		// Issue #48: record a resolved entry (exact + coarse fingerprint,
+		// blob SHA at RESOLUTION time — hashed from the content this run
+		// just fetched, not a SHA remembered from an earlier review) so
+		// the next review does not re-file this finding merely because
+		// the sampled quote drifted. Suppression applies only while the
+		// file's blob SHA is unchanged, so a genuine re-occurrence after
+		// further edits still surfaces.
+		blobSHA := s.blobSHAfn(content)
+		s.ledger.AddResolved(fp, coarse, s.repoFull, blobSHA, s.now)
+		if metrics.SpanChanged(tf.Evidence, content) {
+			s.accepted++
+			s.ledger.AddAcceptedFixed(fp, s.repoFull, s.now)
+			printf("resolved %s with the span changed → accepted-and-fixed recorded\n", fp)
+		} else {
+			s.byResolution++
+			s.ledger.Add(fp, s.repoFull, "thread-resolution", "UNKNOWN", s.now)
+			printf("resolved %s with the span identical → dismissal recorded\n", fp)
+		}
+	}
+	return nil
+}
+
 func runSignals(args []string) error {
 	fs := flag.NewFlagSet("signals", flag.ContinueOnError)
 	prSpec := fs.String("pr", "", "pull request as owner/repo#N")
@@ -219,55 +313,18 @@ func runSignals(args []string) error {
 	if err != nil {
 		return err
 	}
-	citeThreads, resolvedCount, accepted, byResolution := 0, 0, 0, 0
-	for _, t := range threads {
-		if len(t.Comments) == 0 {
-			continue
-		}
-		fp, tf, ok := parseCiteCommentBody(t.Comments[0].Body)
-		if !ok {
-			continue
-		}
-		citeThreads++
-		if !t.IsResolved {
-			continue
-		}
-		resolvedCount++
-		// §14: a human resolving a thread means handled, disambiguated
-		// mechanically. If the quoted span changed in a later push it was
-		// accepted-and-fixed; if it is still identical, the human read it
-		// and said no — a dismissal. No evidence data means unverifiable:
-		// record neither.
-		if tf == nil || len(tf.Evidence) == 0 {
-			continue
-		}
-		content, _, err := c.GetFileContent(ctx, headSHA, tf.Path)
-		if err != nil {
-			return fmt.Errorf("fetching %s at head for resolution check: %w", tf.Path, err)
-		}
-		// Issue #48: record a resolved entry (exact + coarse fingerprint,
-		// blob SHA at resolution) so the next review does not re-file this
-		// finding merely because the sampled quote drifted. Suppression
-		// applies only while the file's blob SHA is unchanged, so a genuine
-		// re-occurrence after further edits still surfaces. Blob SHA comes
-		// from the last review's incremental state; unknown means suppress
-		// on fingerprint match alone.
-		coarse := (&model.ValidatedFinding{
-			Finding: model.Finding{Category: tf.Category, Title: tf.Title},
-			Path:    tf.Path,
-		}).CoarseFingerprintOf()
-		ledger.AddResolved(fp, coarse, repoFull, prevState.BlobSHAs[tf.Path], now)
-		if metrics.SpanChanged(tf.Evidence, content) {
-			accepted++
-			ledger.AddAcceptedFixed(fp, repoFull, now)
-			fmt.Printf("resolved %s with the span changed → accepted-and-fixed recorded\n", fp)
-		} else {
-			byResolution++
-			ledger.Add(fp, repoFull, "thread-resolution", "UNKNOWN", now)
-			fmt.Printf("resolved %s with the span identical → dismissal recorded\n", fp)
-		}
+	sig := &signalDisposition{
+		blobSHAfn: gitBlobSHA,
+		now:       now,
+		repoFull:  repoFull,
 	}
-
+	sig.ledger = &ledger
+	if err := sig.count(ctx, c, threads, headSHA, func(s string, args ...any) {
+		fmt.Printf(s, args...)
+	}); err != nil {
+		return err
+	}
+	citeThreads, resolvedCount, accepted, byResolution := sig.citeThreads, sig.resolvedCount, sig.accepted, sig.byResolution
 	fmt.Printf("%s#%d: %d Cite thread(s), %d resolved / %d open; "+
 		"%d 👎 dismissal(s), %d accepted-and-fixed, %d dismissed-by-resolution\n",
 		repoFull, num, citeThreads, resolvedCount, citeThreads-resolvedCount, dismissals, accepted, byResolution)

@@ -167,12 +167,15 @@ func (l *DismissalLedger) Published(fingerprint, repo string) bool {
 }
 
 // ResolvedActive reports whether an unexpired resolved entry for
-// (repo) matches the finding at (exactFP, coarseFP) while the file's blob
-// SHA is unchanged from resolution time. A blob SHA unknown on either side
-// suppresses: the dominant failure mode (issue #48) is quote drift on a
-// file that did not change, and failing toward dedup there is the point of
-// the entry. A changed blob SHA never suppresses — the file was edited, so
-// a fresh occurrence must surface.
+// (repo) matches the finding at (exactFP, coarseFP). Issue #48's guard
+// rail: the unchanged-blob condition must be VERIFIABLE to suppress —
+// both the recorded SHA and this run's SHA must be known and equal. An
+// unknown SHA on either side (file absent from this run's map, map not
+// provided, or entry recorded before SHAs were tracked) cannot honour
+// "only while the file is unchanged", so the finding surfaces: failing
+// toward re-raising a possibly-fixed finding costs one redundant
+// comment, while failing toward suppressing a genuine re-occurrence
+// silences it for the entry's whole 90-day horizon.
 func (l *DismissalLedger) ResolvedActive(exactFP, coarseFP, repo, blobSHA string, now time.Time) bool {
 	for _, e := range l.Entries {
 		if entryKind(e) != EntryResolved || e.Repository != repo || expired(e, now) {
@@ -181,7 +184,7 @@ func (l *DismissalLedger) ResolvedActive(exactFP, coarseFP, repo, blobSHA string
 		if e.Fingerprint != exactFP && (coarseFP == "" || e.CoarseFingerprint != coarseFP) {
 			continue
 		}
-		if e.BlobSHA != "" && blobSHA != "" && e.BlobSHA != blobSHA {
+		if e.BlobSHA == "" || blobSHA == "" || e.BlobSHA != blobSHA {
 			continue
 		}
 		return true

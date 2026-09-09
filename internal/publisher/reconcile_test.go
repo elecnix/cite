@@ -320,3 +320,39 @@ func TestResolvedFindingSurfacesAfterBlobChange(t *testing.T) {
 		t.Fatalf("edited file must surface a re-raised finding, got %d new", len(plan.CommentsToPost))
 	}
 }
+
+// Issue #48's guard rail: a resolved ledger entry may only suppress a
+// re-raised finding while the flagged file's blob SHA is known and unchanged
+// on both sides. An unknown SHA — the file absent from this run's map, or
+// the map itself absent — cannot honour that condition, so the finding must
+// surface: a genuine re-occurrence after further edits must never be
+// silenced by an unverifiable match.
+func TestResolvedEntryWithoutBlobEvidenceMustSurface(t *testing.T) {
+	now := time.Now()
+	f := mkFinding("a.go", "crash", "Undefined variable used in guard", "if name == value:")
+
+	var ledger DismissalLedger
+	ledger.AddResolved(f.Fingerprint, f.CoarseFingerprintOf(), "o/r", "blob1", now)
+
+	for _, tc := range []struct {
+		name     string
+		blobSHAs map[string]string
+	}{
+		{"nil map suppresses nothing", nil},
+		{"path missing from map suppresses nothing", map[string]string{"other.go": "blob1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := Reconcile([]model.ValidatedFinding{f}, nil, ledger, ReconcileOptions{
+				Repository: "o/r",
+				Now:        now.Add(time.Minute),
+				BlobSHAs:   tc.blobSHAs,
+			})
+			if len(plan.CommentsToPost) != 1 {
+				t.Fatalf("INVARIANT BROKEN (issue #48): unresolved blob check re-filed %d thread(s); want the finding surfaced", len(plan.CommentsToPost))
+			}
+			if len(plan.SuppressedByLedger) != 0 {
+				t.Fatalf("finding must not be suppressed without a verifiable blob SHA, got %+v", plan.SuppressedByLedger)
+			}
+		})
+	}
+}
