@@ -256,6 +256,68 @@ func TestBypassSummaryFormat(t *testing.T) {
 	}
 }
 
+func TestDecideToolFailureTolerated(t *testing.T) {
+	// Issue #59: a repository may opt out of a TOOL FAILURE blocking the
+	// merge while a real finding still does. The gate expresses the opt-out
+	// as NeutralToolFailure: COULD_NOT_EVALUATE keeps its verdict and its
+	// reason, but no longer concludes failure. FOUND is never touched.
+	rec := baseRecord()
+	rec.VerdictReason = "provider 503 after 3 retries"
+	// The realistic tool-failure shape: the provider died mid-run, so the
+	// job reports it and the gate concludes COULD_NOT_EVALUATE.
+	var opts Options
+	opts.NeutralToolFailure = true
+	opts.ProviderFailed = true
+	v, reason := Decide(rec, config.Default(), opts)
+	if v != model.VerdictCouldNotEvaluate {
+		t.Fatalf("verdict = %s, want COULD_NOT_EVALUATE (the state itself must not change)", v)
+	}
+	if !strings.Contains(reason, "provider 503") {
+		t.Fatalf("reason %q should survive verbatim", reason)
+	}
+	if got := Conclusion(v, Options{NeutralToolFailure: true}); got != "neutral" {
+		t.Fatalf("conclusion = %q, want neutral when the repository opted out", got)
+	}
+	if got := Conclusion(v, Options{}); got != "failure" {
+		t.Fatalf("conclusion = %q, want failure with the opt-out unset", got)
+	}
+}
+
+func TestDecideToolFailureToleratedStillBlocksOnFinding(t *testing.T) {
+	// The case that matters: opting out of tool-failure blocking must not
+	// also wave real findings through. A blocking finding decides FOUND
+	// regardless of the opt-out, and FOUND still concludes failure.
+	rec := baseRecord()
+	rec.Findings = []model.ValidatedFinding{{
+		Finding: model.Finding{
+			ID:         "f1",
+			Category:   model.CategoryInjection,
+			Title:      "user input reaches shell",
+			Confidence: model.ConfidenceCertain,
+		},
+		Path:   "app/handler.go",
+		Blocks: true,
+	}}
+	v, reason := Decide(rec, config.Default(), Options{NeutralToolFailure: true})
+	if v != model.VerdictFound {
+		t.Fatalf("verdict = %s, want FOUND; the opt-out covers tool failures only", v)
+	}
+	if got := Conclusion(v, Options{NeutralToolFailure: true}); got != "failure" {
+		t.Fatalf("conclusion = %q, want failure for a real finding even opted out", got)
+	}
+	if !strings.Contains(reason, "injection") {
+		t.Fatalf("reason %q should name the category", reason)
+	}
+}
+
+func TestConclusionDefaultRemainsFailClosed(t *testing.T) {
+	// Red stays the default: with the opt-out unset, COULD_NOT_EVALUATE
+	// concludes failure exactly as before (issue #59, requirement 1).
+	if got := model.VerdictCouldNotEvaluate.Conclusion(); got != "failure" {
+		t.Fatalf("default conclusion for COULD_NOT_EVALUATE = %q, want failure", got)
+	}
+}
+
 func TestNeedsReaper(t *testing.T) {
 	open := []PRState{
 		{HeadSHA: "aaa", HasTerminalCheck: true, AgeMinutes: 999},

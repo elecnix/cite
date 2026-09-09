@@ -124,6 +124,29 @@ A red coverage failure is recoverable by design. An absent check is not — the
 gate job creates the check run first thing and always concludes it, even when
 the review job dies.
 
+### My tool failures block the merge and I want them not to
+
+By default a `COULD_NOT_EVALUATE` check run concludes `failure`, so a
+repository that requires the check blocks the merge until the tool failure is
+resolved. Some repositories prefer to block only on real findings: a
+transient provider outage should not hold every pull request hostage. Set the
+action input `tool_failure_blocks: false` in the workflow's `with:` block:
+
+```yaml
+with:
+  model_api_key: ${{ secrets.MODEL_API_KEY }}
+  tool_failure_blocks: false
+```
+
+With that set, a tool failure still publishes `COULD_NOT_EVALUATE` on the
+check run — the title and summary say exactly what failed — but the check-run
+conclusion is `neutral`, which GitHub counts as a satisfied required check,
+so the pull request is not blocked. A real finding (`FOUND`) always concludes
+`failure` and blocks, whether or not the repository opted out: the opt-out
+covers "the tool could not read its own output", never "the tool found
+something". The default remains `true` — red — so repositories that do
+nothing keep fail-closed behaviour.
+
 ### Rate limits
 
 - **Model provider 429s.** Default concurrency is 6–8, capped at 16; lower the

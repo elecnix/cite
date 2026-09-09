@@ -53,6 +53,18 @@ inputs:
       downloadable from the run's summary page once the job completes.
     required: false
     default: 'true'
+  tool_failure_blocks:
+    description: >
+      Set to "true" (the default) to keep a tool failure — Cite could not
+      evaluate the pull request, e.g. an unparseable model reply or a
+      provider timeout, published as COULD_NOT_EVALUATE — concluding the
+      check run as a failure that blocks a required check. Set to "false"
+      to let a tool failure conclude "neutral" instead, which does not
+      block the merge. A real finding (FOUND) always concludes "failure"
+      and blocks regardless of this input: the opt-out covers "the tool
+      could not read its own output", never "the tool found something".
+    required: false
+    default: 'true'
 
 runs:
   using: 'composite'
@@ -109,6 +121,7 @@ runs:
         GITHUB_TOKEN: ${{ github.token }}
         CITE_CONFIG_PATH: ${{ inputs.config_path }}
         CITE_DRY_RUN: ${{ inputs.dry_run }}
+        CITE_TOOL_FAILURE_BLOCKS: ${{ inputs.tool_failure_blocks }}
       run: |
         set -euo pipefail
         # PR_NUMBER is not a default runner variable; pull_request events put
@@ -126,6 +139,14 @@ runs:
         if [ "$CITE_DRY_RUN" = "true" ]; then
           ARGS="$ARGS --dry-run"
         fi
+        # Issue #59: default is fail-closed — a tool failure blocks. A
+        # repository may set tool_failure_blocks: false to conclude neutral
+        # instead; a real finding still blocks either way.
+        case "${CITE_TOOL_FAILURE_BLOCKS:-true}" in
+          true)  ;;
+          false) ARGS="$ARGS --tool-failure-blocks=false" ;;
+          *) echo "cite: invalid tool_failure_blocks value: ${CITE_TOOL_FAILURE_BLOCKS}" >&2; exit 1 ;;
+        esac
         # Archive for forensics: tee the full log and dump the run record
         # (per-call timings, token usage, per-file outcomes) even when the run
         # fails. pipefail preserves cite's exit code through the tee.
