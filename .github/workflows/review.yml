@@ -17,6 +17,14 @@
 # path from the LOCAL filesystem, so with no checkout it would be missing
 # and internal/config silently falls back to 120s defaults. The step below
 # fetches it explicitly from the BASE ref.
+#
+# NOTE: this hand-rolled step must stay until the pin below is bumped to
+# the first release containing the action's own base-ref config fetch —
+# v0.4.0 predates that change, so removing this step early would leave our
+# own reviews with no config at all (model, require_parameters, role output
+# caps all silently lost). Remove this step in the same change that bumps
+# the pin; once the pin is past this change the local file will already be
+# present and the action's own step logs "local file" and does nothing.
 
 name: review
 
