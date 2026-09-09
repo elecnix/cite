@@ -463,7 +463,11 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 		toReview := publisher.FilesToReview(prevState.BlobSHAs, curSHAs)
 		if len(prevState.BlobSHAs) > 0 && len(toReview) < len(entries) {
 			logToStderr("incremental: %d of %d files changed content since last review", len(toReview), len(entries))
-			carryIntoRecord(rec, prevState, toReview)
+			manifestSet := make(map[string]bool, len(entries))
+			for _, e := range entries {
+				manifestSet[e.Path] = true
+			}
+			carryIntoRecord(rec, prevState, toReview, manifestSet, diffs)
 		}
 
 		var err error
@@ -640,14 +644,35 @@ func rankForBudget(fs []model.ValidatedFinding) []model.ValidatedFinding {
 
 // carryIntoRecord re-adds previous findings whose files were not re-reviewed
 // this run. They carry forward as candidates requiring verification — never
-// silently dropped (§10: incremental fails toward re-review).
-func carryIntoRecord(rec *model.RunRecord, prev *stickyState, toReview []string) {
+// silently dropped (§10: incremental fails toward re-review) — but a carried
+// finding is re-anchored against the CURRENT diff before it may block
+// (issue #47): the documented contract is that every finding intersects an
+// added or modified line of this change (docs/noise.md Rule 1), and a
+// finding whose file left the PR diff (force-push, revert, base change)
+// intersects nothing. Re-arming it with Blocks = Category.MayBlock() — the
+// old behaviour — let a stale, out-of-diff finding conclude the gate as
+// FOUND on a file with no diff, and could even promote a previous run's
+// non-blocking note to a blocker.
+func carryIntoRecord(rec *model.RunRecord, prev *stickyState, toReview []string, manifest map[string]bool, diffs map[string]*scope.DiffFile) {
 	reviewing := map[string]bool{}
 	for _, p := range toReview {
 		reviewing[p] = true
 	}
 	for _, tf := range prev.Findings {
 		if reviewing[tf.Path] {
+			continue
+		}
+		// The file is no longer part of this pull request's change: the
+		// finding cannot intersect an added or modified line of this diff,
+		// so it is dropped with a logged reason (§8 drop log), never re-armed.
+		if !manifest[tf.Path] {
+			rec.Drops = append(rec.Drops, model.DropEntry{
+				Path:     tf.Path,
+				Category: tf.Category,
+				Title:    tf.Title,
+				Reason:   model.DropAnchorNotAddedLine,
+				Detail:   "carried finding's file is no longer in the pull request diff; its anchor intersects no added line",
+			})
 			continue
 		}
 		dup := false
@@ -660,6 +685,25 @@ func carryIntoRecord(rec *model.RunRecord, prev *stickyState, toReview []string)
 		if dup {
 			continue
 		}
+		// Re-anchor against the current parsed diff: a carried finding blocks
+		// only if one of its quoted evidence lines is an ADDED line of this
+		// change (the same bar validateFindings applies to fresh findings).
+		// Without a parsed diff for the file — patch missing or unparsable —
+		// the intersection cannot be checked, so the finding fails closed to
+		// a note: an unverifiable anchor never grounds a block (§8).
+		blocks := false
+		if df := diffs[tf.Path]; df != nil && tf.Category.MayBlock() {
+			added := map[int]bool{}
+			for _, n := range df.AddedLines() {
+				added[n] = true
+			}
+			for _, ev := range tf.Evidence {
+				if added[ev.Line] {
+					blocks = true
+					break
+				}
+			}
+		}
 		rec.Findings = append(rec.Findings, model.ValidatedFinding{
 			Finding: model.Finding{
 				ID: "carried-" + tf.Fingerprint[:8], Category: tf.Category, Title: tf.Title,
@@ -667,7 +711,7 @@ func carryIntoRecord(rec *model.RunRecord, prev *stickyState, toReview []string)
 				IntroducedBy: model.IntroducedAddedLine,
 			},
 			Path: tf.Path, EvidenceLevel: model.EvidenceNormalized,
-			Blocks: tf.Category.MayBlock(), Fingerprint: tf.Fingerprint,
+			Blocks: blocks, Fingerprint: tf.Fingerprint,
 		})
 	}
 }
