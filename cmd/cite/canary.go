@@ -101,7 +101,10 @@ func runCanary(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg := loadConfig(*cfgPath)
+	cfg, err := loadConfig(*cfgPath)
+	if err != nil {
+		return err
+	}
 	legs := canaryLegs(cfg)
 	if len(legs) == 0 {
 		fmt.Println("canary: no providers or fallback chain configured — nothing to exercise")

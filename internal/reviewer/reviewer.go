@@ -304,8 +304,9 @@ func (r *Reviewer) completeWithRetry(ctx context.Context, unit string, req model
 		if errors.Is(err, model.ErrDeadline) {
 			// Terminal, never retried: the first attempt already burned its
 			// full time budget (and the provider's tokens). Name the knob so
-			// the fix is one line away (issue #28).
-			r.logf("%s call exceeded its %s per-call deadline; NOT retrying — a timeout retry would pay twice for the same wait. Raise roles.%s.timeout in .github/cite.yml if calls legitimately need longer", unit, timeout, unit)
+			// the fix is one line away (issue #28; truthful remedy strings
+			// for both the derived and the explicit case, issue #59).
+			r.logf("%s call exceeded its %s per-call deadline; NOT retrying — a timeout retry would pay twice for the same wait. If calls legitimately need longer, set an explicit roles.%s.timeout in .github/cite.yml (the built-in review deadline only derives from roles.%s.max_output_tokens when no explicit timeout is set: 60s + tokens/128, so RAISE the cap for a longer derived deadline — lowering it tightens the deadline)", unit, timeout, unit, unit)
 			return nil, err
 		}
 		if ctx.Err() != nil {
@@ -560,6 +561,37 @@ func (r *Reviewer) runBatch(ctx context.Context, in *Inputs, rec *model.RunRecor
 
 // segB is built once in Run: the per-run cached context segment.
 
+// explicitReviewTimeout reports whether the configuration sets a literal
+// roles.review.timeout. Issue #59: a remedy string that says "your
+// configured deadline" when nobody configured one (it derived from the
+// output-token cap) — or that recommends lowering the cap, which tightens
+// a derived deadline — names a dial that does not move, in exactly the
+// case the operator needs to move one.
+func explicitReviewTimeout(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	spec, ok := cfg.Roles[model.RoleReview]
+	if !ok {
+		return false
+	}
+	d, err := time.ParseDuration(spec.Timeout)
+	return err == nil && d > 0
+}
+
+// deadlineRemedy is the remedy sentence carried by a deadline-exceeded
+// error. It must say which deadline tripped and name only levers that
+// exist and move in the direction the remedy implies (issue #59).
+func deadlineRemedy(cfg *config.Config, timeout time.Duration) string {
+	if explicitReviewTimeout(cfg) {
+		return fmt.Sprintf("the call hit its configured %.0fs review deadline; raise roles.review.timeout in .github/cite.yml if calls legitimately need longer", timeout.Seconds())
+	}
+	// Derived: 60s base + max_output_tokens/128 tok/s (config.DerivedReviewTimeout).
+	// The cap RAISES the deadline; lowering it would tighten the very
+	// deadline that tripped.
+	return fmt.Sprintf("the call hit its %.0fs review deadline (derived, not configured: 60s + roles.review.max_output_tokens/128); set an explicit roles.review.timeout in .github/cite.yml for a deadline the cap cannot move, or RAISE the output-token cap if the model was legitimately still generating — lowering the cap tightens this deadline", timeout.Seconds())
+}
+
 func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRecord, e scope.ManifestEntry) error {
 	if ctx.Err() != nil {
 		r.recordFile(rec, model.FileOutcome{
@@ -603,9 +635,14 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 				reason = "canceled"
 			} else if errors.Is(err, model.ErrDeadline) {
 				reason = "deadline_exceeded"
-				// Name the knob, not just the symptom (issue #28): a bare
-				// "context deadline exceeded" gives an operator nothing to turn.
-				err = fmt.Errorf("%w: the call hit its configured %.0fs review deadline; raise roles.review.timeout in .github/cite.yml, or lower the output-token cap that drives the derived deadline (roles.review.max_output_tokens, or the model entry's max_tokens)", err, timeout.Seconds())
+				// Name the knob, not just the symptom (issue #28), and be
+				// truthful about WHICH deadline tripped (issue #59): an
+				// explicit roles.review.timeout is what the operator
+				// configured, and the token cap drives nothing for it; a
+				// derived deadline is nobody's configured value and GROWS
+				// with the cap (60s + tokens/128), so "lower the cap"
+				// would tighten the very deadline that tripped.
+				err = fmt.Errorf("%w: %s", err, deadlineRemedy(r.o.Cfg, timeout))
 			}
 			r.logf("review of %s ended in error: %v", e.Path, err)
 			r.recordFile(rec, model.FileOutcome{
@@ -621,31 +658,50 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 		fr, perr = model.ParseFileReview([]byte(resp.Text))
 		syntaxErr := perr != nil && errors.Is(perr, model.ErrSyntax)
 		blankBody := strings.TrimSpace(resp.Text) == ""
-		if perr == nil || (!syntaxErr && !blankBody) {
+		// Issue #59: a schema-level failure (wrong schema_version, unknown
+		// outcome, an anchor out of range, or a valid review naming the
+		// wrong file) is also a mechanical failure of the output format,
+		// not a confident wrong answer about the code. The §8
+		// never-re-quote rule is about re-asking the model to re-quote
+		// inside a validated finding — a complete fresh re-request faces
+		// the full validation pipeline and cannot launder a bad claim
+		// through a matching quote. These failures carry no findings for
+		// the file under review, so a bounded re-ask (same run-global
+		// bucket, same exhaustion point as every transient failure) is
+		// taken before going terminal.
+		if perr == nil && fr != nil && fr.Path == e.Path {
 			break
 		}
-		// A blank body is transient provider garbage, and a syntax error is a
+		// A blank body is transient provider garbage, a syntax error is a
 		// mechanical formatting artifact (single-quoted keys, truncated
-		// output): neither is a confident wrong answer, so there is no claim
-		// for a re-ask to invite back. Semantic schema violations and wrong-
-		// path echoes stay terminal (§8). Both draw from the same run-global
-		// bucket as other transient failures; with retries exhausted they stay
-		// terminal as parse_failure. (Deadline expiry draws from no bucket at
-		// all: it is terminal without a retry — see completeWithRetry.)
+		// output), and a schema error is the model breaking its own
+		// output contract: none carries a validated finding, so a re-ask
+		// invites nothing back (§8's grounding concern does not reach
+		// here). All draw from the same run-global bucket as other
+		// transient failures; with retries exhausted they stay terminal as
+		// parse_failure. (Deadline expiry draws from no bucket at all:
+		// it is terminal without a retry — see completeWithRetry.)
 		if !r.tryRetry(unitReview) {
 			break
 		}
 		kind := "was empty"
 		if !blankBody {
-			kind = "failed strict JSON decode"
+			if syntaxErr {
+				kind = "failed strict JSON decode"
+			} else if perr != nil {
+				kind = "violated the review schema"
+			} else {
+				kind = fmt.Sprintf("echoed path %q", fr.Path)
+			}
 		}
 		r.logf("review of %s response %s (%v); retrying from run-global bucket", e.Path, kind, perr)
 	}
 
 	if perr != nil || (fr.Path != "" && fr.Path != e.Path) {
-		// A semantic schema violation or wrong-path echo is terminal for this
-		// unit: re-asking invites a matching quote for the same wrong claim (§8).
-		// Syntax-level failures are retried above.
+		// Terminal once the bucket is exhausted: this unit ends errored
+		// (parse_failure), coverage stays incomplete, the gate fails
+		// closed — a re-ask beyond the bound would convert a bounded cost
+		// into an unbounded one (issue #59).
 		detail := fmt.Sprintf("parse failure: %v", perr)
 		if perr == nil {
 			detail = fmt.Sprintf("response echoes path %q, want %q", fr.Path, e.Path)
