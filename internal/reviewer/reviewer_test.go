@@ -1437,16 +1437,18 @@ func TestDeadlineErrorNamesTheTimeoutKnob(t *testing.T) {
 // Issue #59: a remedy line that names a dial the operator cannot move,
 // or advice that worsens the condition, is the bug. Two shapes:
 //
-//  - a DERIVED deadline (no explicit roles.review.timeout): the operator
-//    never configured anything, so "its configured deadline" is false, and
-	// the derived deadline GROWS with the output-token cap (60s +
-	// tokens/128) — "lower the cap" would tighten the very deadline that
-	// tripped. The truthful lever is: set roles.review.timeout explicitly,
-	// or RAISE the cap if the model was legitimately still generating.
+//   - a DERIVED deadline (no explicit roles.review.timeout): the operator
+//     never configured anything, so "its configured deadline" is false, and
 //
-//  - an EXPLICIT deadline: the token cap drives nothing — naming it as
-	// the remedy is a lie in exactly the case the operator did write
-	// the timeout down.
+// the derived deadline GROWS with the output-token cap (60s +
+// tokens/128) — "lower the cap" would tighten the very deadline that
+// tripped. The truthful lever is: set roles.review.timeout explicitly,
+// or RAISE the cap if the model was legitimately still generating.
+//
+//   - an EXPLICIT deadline: the token cap drives nothing — naming it as
+//
+// the remedy is a lie in exactly the case the operator did write
+// the timeout down.
 func TestDeadlineRemedyNamesTheRealLevers(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -1572,5 +1574,101 @@ func TestCallLogRecordsEveryAttempt(t *testing.T) {
 	}
 	if !sort.SliceIsSorted(rec.Calls, func(i, j int) bool { return rec.Calls[i].StartS < rec.Calls[j].StartS }) {
 		t.Errorf("call log not ordered by start time")
+	}
+}
+
+// TestSelfNegatingFindingDropped is the red test for issue #65: a finding
+// whose own impact field disclaims any impact must never block the gate,
+// even at certain confidence in a blocking category. The rule is deliberately
+// narrow — it fires only on findings that would otherwise be blocking
+// candidates, and only when the impact field opens by disclaiming a defect.
+// Findings that merely mention words like "no" or "impact" mid-sentence, or
+// whose title/body asserts agreement while the impact names a real defect,
+// keep blocking.
+func TestSelfNegatingFindingDropped(t *testing.T) {
+	build := func(title, impact, body string) (*model.RunRecord, *fakeDisc) {
+		in := baseInputs()
+		disc := &fakeDisc{res: "supported"}
+		c := &fakeClient{fn: func(_ int, req model.CompletionRequest) (string, error) {
+			if isTriageCall(req) {
+				return triageJSON("a.go"), nil
+			}
+			f := mkFinding("f1", model.CategoryLogicInversion, 2, 2, "certain",
+				[]map[string]any{mkEvidence(2, "added line alpha here")})
+			f["title"] = title
+			f["impact"] = impact
+			f["body"] = body
+			return reviewJSON("a.go", "reviewed", []map[string]any{f}), nil
+		}}
+		o := baseOptions(c)
+		o.DiscVerifier = disc
+		rec, err := runOnce(t, in, o)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		return rec, disc
+	}
+
+	cases := []struct {
+		name      string
+		title     string
+		impact    string
+		body      string
+		wantDrop  bool // dropped with DropSelfNegating, absent from findings
+		wantBlock bool
+	}{
+		{
+			name:     "impact disclaims impact at certain confidence: dropped, never blocks",
+			title:    "Call and signature agree",
+			impact:   "No impact; the call and signature agree.",
+			body:     "The call site passes manifestSet and diffs in that order, matching the signature. No mismatch.",
+			wantDrop: true,
+		},
+		{
+			name:      "genuine blocking finding with a real impact still blocks",
+			title:     "Inverted guard",
+			impact:    "Every valid request is rejected and the process logs a fatal error.",
+			body:      "The guard tests the negation of the intended condition.",
+			wantBlock: true,
+		},
+		{
+			name:      "ordinary sentence mentioning no/impact still blocks",
+			title:     "Nil deref after cast",
+			impact:    "The impact is a crash on every request; no other path recovers.",
+			body:      "The cast is unchecked.",
+			wantBlock: true,
+		},
+		{
+			name:      "agreement claim in title/body with a real impact still blocks",
+			title:     "Call and signature agree on argument order",
+			impact:    "The swapped arguments silently corrupt the diff computation.",
+			body:      "No mismatch in the arity; the order is what breaks.",
+			wantBlock: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec, disc := build(tc.title, tc.impact, tc.body)
+			if tc.wantDrop {
+				if len(rec.Findings) != 0 {
+					t.Fatalf("self-negating finding must be dropped, got %+v", rec.Findings)
+				}
+				d := findDrop(rec, model.DropSelfNegating)
+				if d == nil {
+					t.Fatalf("no %q drop entry; drops = %+v", model.DropSelfNegating, rec.Drops)
+				}
+				if d.Path != "a.go" || d.Category != model.CategoryLogicInversion {
+					t.Errorf("drop entry = %+v, want a.go/logic-inversion", d)
+				}
+				if disc.calls != 0 {
+					t.Errorf("disc verifier consulted %d time(s) for a self-negating finding", disc.calls)
+				}
+				return
+			}
+			if len(rec.Findings) != 1 || !rec.Findings[0].Blocks {
+				t.Fatalf("finding must survive and block: findings %+v, drops %+v", rec.Findings, rec.Drops)
+			}
+		})
 	}
 }

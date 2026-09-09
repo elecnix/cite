@@ -298,6 +298,7 @@ const (
 	DropAssemblyCut                      DropReason = "assembly_cut"
 	DropAmbiguousQuote                   DropReason = "ambiguous_quote"
 	DropVerifierUnsupported              DropReason = "verifier_unsupported"
+	DropSelfNegating                     DropReason = "self_negating"
 	DropAbsenceOnPartial                 DropReason = "absence_claim_on_partial_context"
 	DropNegativeClaimFalsified           DropReason = "negative_claim_falsified"
 	DropParseFailure                     DropReason = "parse_failure"
