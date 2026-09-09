@@ -34,6 +34,45 @@ func TestStickyVisibleBodyShowsVerdictAndErrors(t *testing.T) {
 	}
 }
 
+// When the run executes inside GitHub Actions, the sticky comment must link
+// to the Actions run that produced it, so a maintainer reading a finding can
+// open the reviewer's log.
+func TestStickyVisibleBodyLinksRun(t *testing.T) {
+	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
+	t.Setenv("GITHUB_REPOSITORY", "elecnix/cite")
+	t.Setenv("GITHUB_RUN_ID", "1234567890")
+	rec := &model.RunRecord{
+		Model:    "m",
+		Verdict:  model.VerdictPass,
+		Coverage: model.Coverage{APIFiles: 1, Reviewed: 1, Complete: true},
+	}
+	out := stickyVisibleBody(rec)
+	want := "https://github.com/elecnix/cite/actions/runs/1234567890"
+	if !strings.Contains(out, want) {
+		t.Errorf("sticky body missing run link %q\n---\n%s", want, out)
+	}
+}
+
+// Outside GitHub Actions (local run, other CI) the link must be absent —
+// silently, with no broken or empty link markdown.
+func TestStickyVisibleBodyNoRunLinkWithoutEnv(t *testing.T) {
+	t.Setenv("GITHUB_SERVER_URL", "")
+	t.Setenv("GITHUB_REPOSITORY", "")
+	t.Setenv("GITHUB_RUN_ID", "")
+	rec := &model.RunRecord{
+		Model:    "m",
+		Verdict:  model.VerdictPass,
+		Coverage: model.Coverage{APIFiles: 1, Reviewed: 1, Complete: true},
+	}
+	out := stickyVisibleBody(rec)
+	if strings.Contains(out, "actions/runs") {
+		t.Errorf("sticky body must not link a run outside Actions:\n%s", out)
+	}
+	if strings.Contains(out, "](") || strings.Contains(out, "()") {
+		t.Errorf("sticky body must not contain malformed link markdown:\n%s", out)
+	}
+}
+
 // Clean runs must not render an errors section or stray formatting.
 func TestStickyVisibleBodyCleanRun(t *testing.T) {
 	rec := &model.RunRecord{

@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -320,10 +321,25 @@ func stickyVisibleBody(rec *model.RunRecord) string {
 	}
 	fmt.Fprintf(&sb, " · samples: %d · cost: $%.4f (in %d out %d)\n",
 		rec.Samples, rec.CostUSD, rec.Usage.InputTokens, rec.Usage.OutputTokens)
+	if u := actionsRunURL(); u != "" {
+		fmt.Fprintf(&sb, "\nReviewer log: [Actions run #%s](%s)\n", os.Getenv("GITHUB_RUN_ID"), u)
+	}
 	for _, fo := range rec.Files {
 		if fo.State == model.FileErrored && fo.Reason != "" {
 			fmt.Fprintf(&sb, "- ⚠️ `%s` errored (%s)\n", fo.Path, fo.Reason)
 		}
 	}
 	return sb.String()
+}
+
+// actionsRunURL returns the URL of the GitHub Actions run Cite is executing
+// in, or "" when the ambient environment does not identify one (local runs,
+// other CI). Only the standard Actions variables are consulted — never the
+// API — so rendering stays offline-testable.
+func actionsRunURL() string {
+	srv, repo, id := os.Getenv("GITHUB_SERVER_URL"), os.Getenv("GITHUB_REPOSITORY"), os.Getenv("GITHUB_RUN_ID")
+	if srv == "" || repo == "" || id == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/%s/actions/runs/%s", srv, repo, id)
 }
