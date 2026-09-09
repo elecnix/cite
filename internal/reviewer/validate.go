@@ -176,6 +176,18 @@ func (r *Reviewer) validateFindings(fc *fileContext, fr *model.FileReview) ([]mo
 			continue
 		}
 
+		// Negative-existence claims (issue #45): a narrative claim that a
+		// symbol is "never called" / "no other occurrence" is mechanically
+		// checkable against the post-image. A contradicted claim drops the
+		// finding; a claim that cannot be checked (partial view, no
+		// extractable symbol) can never ground a block — fail open to a
+		// note, never to a merge blocker.
+		negDrop, negVerified, negDetail := checkNegativeClaims(f, fc.lines, fc.partial)
+		if negDrop {
+			drop(f, model.DropNegativeClaimFalsified, negDetail)
+			continue
+		}
+
 		// Blocking formula (§8), computed exactly as written:
 		//
 		//   blocks = category ∈ gate.blocking_categories
@@ -189,6 +201,7 @@ func (r *Reviewer) validateFindings(fc *fileContext, fr *model.FileReview) ([]mo
 			evidenceOK &&
 			anchorHasAddedLine(f.Anchor, fc.added) &&
 			claimsOK &&
+			negVerified &&
 			f.Confidence == model.ConfidenceCertain
 
 		vf := model.ValidatedFinding{Finding: *f}

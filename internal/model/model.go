@@ -281,6 +281,7 @@ const (
 	DropAmbiguousQuote                   DropReason = "ambiguous_quote"
 	DropVerifierUnsupported              DropReason = "verifier_unsupported"
 	DropAbsenceOnPartial                 DropReason = "absence_claim_on_partial_context"
+	DropNegativeClaimFalsified           DropReason = "negative_claim_falsified"
 	DropParseFailure                     DropReason = "parse_failure"
 )
 
