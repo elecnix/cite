@@ -57,14 +57,19 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    # The config file named by config_path is read from the LOCAL filesystem
-    # by `cite review`, but the documented install path has no
+    # The config file named by config_path is read from the LOCAL
+    # filesystem by `cite review`, but the documented install path has no
     # actions/checkout, so it is usually absent from the runner. Fetch it
     # from the pull request's BASE ref — never the head or merge ref, so a
     # pull request cannot rewrite its own review settings or redirect
-    # model_base_url to an attacker endpoint (docs/security.md, I3). A base
-    # ref without the file is not an error: the run continues with Cite's
-    # built-in defaults, and which source was used is always logged.
+    # model_base_url to an attacker endpoint (docs/security.md, I3).
+    # The base ref is authoritative whenever a pull request context
+    # exists: a checkout of the merge ref would leave a head-controlled
+    # config on disk, so a local file is only trusted when there is no
+    # base ref at all to fetch from. A base ref without the file is not
+    # an error: any local file from a checkout is discarded and the run
+    # continues with Cite's built-in defaults. Which source was used is
+    # always logged.
     - name: Fetch Cite config from the base ref
       shell: bash
       env:

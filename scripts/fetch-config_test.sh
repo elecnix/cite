@@ -69,17 +69,42 @@ expect_no_tmp() {
   if [ -e "$f" ]; then echo "FAIL: leftover temp file $f"; fails=$((fails+1)); fi
 }
 
-# 1. File already present locally: no fetch at all.
+# 1. File present locally WITH a base ref: still fetched from the base
+# ref — on pull_request a checkout step gives the merge ref, so a local
+# .github/cite.yml can be head-controlled and must not be trusted. The
+# base-ref content wins and overwrites it.
+build_stub 0 '' "$(printf 'model: from-base\\n' | base64)"
+run_case "local file never overrides base ref" 0 "mkdir -p .github && printf 'model: attacker\\n' > .github/cite.yml"
+if ! grep -q 'model: from-base' "$LAST_CASE_DIR/.github/cite.yml" 2>/dev/null; then
+  echo "FAIL: local head-controlled config was not replaced by base-ref content"
+  fails=$((fails+1))
+fi
+expect_log "cite: config .github/cite.yml fetched from base ref main"
+
+# 1b. Local file present but base ref has none (404): the local file is
+# still not trusted in a pull_request context — it is removed and the run
+# continues with defaults, so a PR cannot supply its own config via
+# checkout.
+rm -rf "${work:?}/bin" "${work:?}/gh-calls.log" "${work:?}"/case.*
+build_stub 1 'gh: Not Found (HTTP 404)' ''
+run_case "404 removes untrusted local file" 0 "mkdir -p .github && printf 'model: attacker\\n' > .github/cite.yml"
+expect_file no
+expect_no_tmp
+expect_log "cite: no .github/cite.yml on base ref; ignoring the local file from the checkout (pull request context) and running with defaults"
+
+# 1c. File present locally with NO base ref (no pull_request context at
+# all — e.g. a workflow that checks out and runs on push): there is
+# nothing to fetch from and nothing head-controlled about the file, so it
+# is left alone.
+rm -rf "${work:?}/bin" "${work:?}/gh-calls.log" "${work:?}"/case.*
 build_stub 1 'gh: should not be called' ''
 run_case "no base ref means defaults" 0 "unset GITHUB_BASE_REF"
-run_case "local file present skips fetch" 0 "mkdir -p .github && printf 'model: gpt\\n' > .github/cite.yml"
-rm -f "$work/gh-calls.log"
-run_case "local file present skips fetch (with file)" 0 "mkdir -p .github && printf 'model: gpt\\n' > .github/cite.yml"
+run_case "no base ref, local file present" 0 "unset GITHUB_BASE_REF; mkdir -p .github && printf 'model: gpt\\n' > .github/cite.yml"
 if [ -e "$LAST_CASE_DIR/.github/cite.yml.tmp" ]; then
   echo "FAIL: local-present case left a temp file"; fails=$((fails+1))
 fi
 if [ -f "$work/gh-calls.log" ]; then
-  echo "FAIL: gh was invoked although config was present locally"; fails=$((fails+1))
+  echo "FAIL: gh was invoked although there was no base ref"; fails=$((fails+1))
 fi
 expect_log "cite: config source: local file"
 

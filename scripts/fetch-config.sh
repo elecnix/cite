@@ -34,7 +34,13 @@ GITHUB_REPOSITORY="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set}"
 GITHUB_BASE_REF="${GITHUB_BASE_REF:-}"
 GH="${GH:-gh}"
 
-if [ -f "$CONFIG_PATH" ]; then
+if [ -f "$CONFIG_PATH" ] && [ -z "$GITHUB_BASE_REF" ]; then
+  # A local file is only trustworthy when there is no pull_request
+  # context at all (e.g. a workflow that checks out and runs on push):
+  # nothing can have planted a head-controlled file there. On
+  # pull_request a checkout step materializes the MERGE ref, so any
+  # local config could be authored by the pull request itself — in that
+  # context the base ref below is authoritative and always wins.
   echo "cite: config source: local file ($CONFIG_PATH)"
   exit 0
 fi
@@ -60,7 +66,15 @@ trap defer_rm_errfile EXIT
 if ! content="$("$GH" api "repos/$GITHUB_REPOSITORY/contents/$CONFIG_PATH?ref=$GITHUB_BASE_REF" --jq '.content' 2>"$errfile")"; then
   rm -f "$tmp"
   if grep -q 'HTTP 404' "$errfile"; then
-    echo "cite: no $CONFIG_PATH on base ref; running with defaults"
+    # No config on the base ref. In a pull_request context any local
+    # file at CONFIG_PATH was put there by the checkout of the merge
+    # ref — i.e. by the pull request itself — and must not be used.
+    if [ -f "$CONFIG_PATH" ]; then
+      rm -f "$CONFIG_PATH"
+      echo "cite: no $CONFIG_PATH on base ref; ignoring the local file from the checkout (pull request context) and running with defaults"
+    else
+      echo "cite: no $CONFIG_PATH on base ref; running with defaults"
+    fi
     exit 0
   fi
   echo "cite: failed to fetch $CONFIG_PATH from base ref $GITHUB_BASE_REF" >&2
