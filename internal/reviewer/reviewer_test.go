@@ -699,14 +699,26 @@ func TestBlankBodiesUntilRetriesExhaustedRecordParseFailure(t *testing.T) {
 	}
 }
 
-func TestNonEmptySchemaViolationStaysTerminal(t *testing.T) {
+// Issue #59: a well-formed JSON response that violates the closed schema
+// (wrong schema_version, unknown outcome, an anchor out of range) is a
+// mechanical failure of the output format, not a confident wrong answer —
+// it carries no findings, so a fresh re-ask faces the full validation
+// pipeline and cannot convert a detectable failure into an undetectable
+// one. (The §8 never-re-quote rule is about re-asking inside a validated
+// finding; a complete re-request is a different thing.) One wrong-path
+// echo from the reviewer model on this repository's own CI ended a run as
+// COULD_NOT_EVALUATE with 0 blocking findings; schema garbage now gets the
+// same bounded re-ask syntax garbage already gets.
+func TestSchemaViolationRetriedFromRunGlobalBucket(t *testing.T) {
 	in := baseInputs()
-	c := &fakeClient{fn: func(_ int, req model.CompletionRequest) (string, error) {
+	c := &fakeClient{fn: func(i int, req model.CompletionRequest) (string, error) {
 		if isTriageCall(req) {
 			return triageJSON("a.go"), nil
 		}
-		// Non-empty but schema-violating: no re-ask (§8), one call only.
-		return `{"schema_version":999,"path":"a.go","outcome":"nope","findings":[]}`, nil
+		if i == 1 { // first review call: well-formed JSON, schema-invalid
+			return `{"schema_version":999,"path":"a.go","outcome":"reviewed","findings":[]}`, nil
+		}
+		return reviewJSON("a.go", "reviewed", nil), nil
 	}}
 	rec, err := runOnce(t, in, baseOptions(c))
 	if err != nil {
@@ -718,8 +730,81 @@ func TestNonEmptySchemaViolationStaysTerminal(t *testing.T) {
 			reviewCalls++
 		}
 	}
-	if reviewCalls != 1 {
-		t.Errorf("review calls = %d, want exactly 1 (schema violation is terminal)", reviewCalls)
+	if reviewCalls != 2 {
+		t.Errorf("review calls = %d, want 2 (one schema-error re-ask)", reviewCalls)
+	}
+	var fo *model.FileOutcome
+	for i := range rec.Files {
+		if rec.Files[i].Path == "a.go" {
+			fo = &rec.Files[i]
+		}
+	}
+	if fo == nil || fo.State != model.FileReviewed || !fo.Reviewed {
+		t.Fatalf("file outcome = %+v, want reviewed after schema re-ask", fo)
+	}
+}
+
+// The observed CI shape: a valid review response that names the wrong file
+// under review. Re-askable for the same reason as schema garbage — the
+// response carries no findings for this file — and terminal only once the
+// run-global bucket is exhausted.
+func TestWrongPathEchoRetriedFromRunGlobalBucket(t *testing.T) {
+	in := baseInputs()
+	c := &fakeClient{fn: func(i int, req model.CompletionRequest) (string, error) {
+		if isTriageCall(req) {
+			return triageJSON("a.go"), nil
+		}
+		if i == 1 { // first review call: valid JSON naming the wrong file
+			return reviewJSON("internal/reviewer/reviewer.go", "reviewed", nil), nil
+		}
+		return reviewJSON("a.go", "reviewed", nil), nil
+	}}
+	rec, err := runOnce(t, in, baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	reviewCalls := 0
+	for _, call := range c.calls {
+		if !isTriageCall(call) {
+			reviewCalls++
+		}
+	}
+	if reviewCalls != 2 {
+		t.Errorf("review calls = %d, want 2 (one wrong-path re-ask)", reviewCalls)
+	}
+	var fo *model.FileOutcome
+	for i := range rec.Files {
+		if rec.Files[i].Path == "a.go" {
+			fo = &rec.Files[i]
+		}
+	}
+	if fo == nil || fo.State != model.FileReviewed || !fo.Reviewed {
+		t.Fatalf("file outcome = %+v, want reviewed after wrong-path re-ask", fo)
+	}
+}
+
+// Schema garbage until the retry bucket is exhausted still ends terminal:
+// parse_failure, coverage incomplete, gate fail-closed (issue #59).
+func TestSchemaViolationUntilExhaustedRecordsParseFailure(t *testing.T) {
+	in := baseInputs()
+	c := &fakeClient{fn: func(_ int, req model.CompletionRequest) (string, error) {
+		if isTriageCall(req) {
+			return triageJSON("a.go"), nil
+		}
+		return `{"schema_version":999,"path":"a.go","outcome":"reviewed","findings":[]}`, nil
+	}}
+	rec, err := runOnce(t, in, baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	reviewCalls := 0
+	for _, call := range c.calls {
+		if !isTriageCall(call) {
+			reviewCalls++
+		}
+	}
+	if reviewCalls != 1+defaultRetriesPerUnitType {
+		t.Errorf("review calls = %d, want %d (retry budget exhausted)", reviewCalls, 1+defaultRetriesPerUnitType)
 	}
 	var fo *model.FileOutcome
 	for i := range rec.Files {
@@ -729,6 +814,9 @@ func TestNonEmptySchemaViolationStaysTerminal(t *testing.T) {
 	}
 	if fo == nil || fo.State != model.FileErrored || fo.Reason != "parse_failure" {
 		t.Fatalf("file outcome = %+v, want errored(parse_failure)", fo)
+	}
+	if rec.Coverage.Complete {
+		t.Errorf("coverage complete despite errored file — gate must fail closed")
 	}
 }
 
@@ -965,14 +1053,18 @@ func TestCacheCountersAccumulateAndHoldFloor(t *testing.T) {
 		in.PostImage[p] = []byte("context line one\nadded line alpha here\ncontext line two\n")
 	}
 
-	// Responses carry no findings. Usage is scripted per call shape:
-	// triage (cold), first review (serialized, pays the cache write), later
-	// reviews (read the cached prefix).
+	// Responses carry no findings, and each review response is schema-valid
+	// naming the file under review (issue #59: schema garbage is re-asked
+	// from the run-global bucket now, so a garbage fixture here would
+	// silently consume retry budget and shift the counters).
+	// Usage is scripted per call shape: triage (cold), first review
+	// (serialized, pays the cache write), later reviews (read the cached
+	// prefix).
 	c := &fakeClient{fn: func(i int, req model.CompletionRequest) (string, error) {
 		if isTriageCall(req) {
 			return triageJSON("a.go", "b.go", "c.go"), nil
 		}
-		return "{}", nil
+		return reviewJSON(requestPath(req), "reviewed", nil), nil
 	}}
 	client := &usageClient{inner: c, usageFor: func(i int) model.Usage {
 		switch {
@@ -1339,6 +1431,84 @@ func TestDeadlineErrorNamesTheTimeoutKnob(t *testing.T) {
 	}
 	if !strings.Contains(joined, "NOT retrying") {
 		t.Errorf("deadline log must say the call was not retried; logs:\n%s", joined)
+	}
+}
+
+// Issue #59: a remedy line that names a dial the operator cannot move,
+// or advice that worsens the condition, is the bug. Two shapes:
+//
+//  - a DERIVED deadline (no explicit roles.review.timeout): the operator
+//    never configured anything, so "its configured deadline" is false, and
+	// the derived deadline GROWS with the output-token cap (60s +
+	// tokens/128) — "lower the cap" would tighten the very deadline that
+	// tripped. The truthful lever is: set roles.review.timeout explicitly,
+	// or RAISE the cap if the model was legitimately still generating.
+//
+//  - an EXPLICIT deadline: the token cap drives nothing — naming it as
+	// the remedy is a lie in exactly the case the operator did write
+	// the timeout down.
+func TestDeadlineRemedyNamesTheRealLevers(t *testing.T) {
+	cases := []struct {
+		name       string
+		cfgYAML    string
+		wantSubstr []string
+		wantAbsent []string
+	}{
+		{
+			name:    "derived deadline",
+			cfgYAML: "", // no roles block: deadline derives from the cap
+			wantSubstr: []string{
+				"derived",
+				"roles.review.timeout",
+				"roles.review.max_output_tokens",
+			},
+			wantAbsent: []string{"its configured", "lower the output-token cap"},
+		},
+		{
+			name: "explicit deadline",
+			cfgYAML: `
+roles:
+  review: { timeout: 45s, max_output_tokens: 4096 }
+`,
+			wantSubstr: []string{"roles.review.timeout"},
+			wantAbsent: []string{"lower the output-token cap"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs []string
+			c := &fakeClient{fn: func(_ int, req model.CompletionRequest) (string, error) {
+				if isTriageCall(req) {
+					return triageJSON("a.go"), nil
+				}
+				return "", model.ErrDeadline
+			}}
+			o := baseOptions(c)
+			if tc.cfgYAML != "" {
+				o.Cfg = mustCfg(t, tc.cfgYAML)
+			}
+			o.Logger = func(format string, args ...any) {
+				logs = append(logs, fmt.Sprintf(format, args...))
+			}
+			rec, err := runOnce(t, baseInputs(), o)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if rec.Files[0].Reason != "deadline_exceeded" {
+				t.Fatalf("file reason = %q, want deadline_exceeded", rec.Files[0].Reason)
+			}
+			joined := strings.Join(logs, "\n")
+			for _, want := range tc.wantSubstr {
+				if !strings.Contains(joined, want) {
+					t.Errorf("remedy does not name the real lever %q; logs:\n%s", want, joined)
+				}
+			}
+			for _, bad := range tc.wantAbsent {
+				if strings.Contains(joined, bad) {
+					t.Errorf("remedy contains the untruth %q; logs:\n%s", bad, joined)
+				}
+			}
+		})
 	}
 }
 
