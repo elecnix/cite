@@ -161,3 +161,26 @@ func TestUnverifiableNegativeClaimOnPartialFileNeverBlocks(t *testing.T) {
 		t.Errorf("Blocks = true, want false on a partial view")
 	}
 }
+
+// A negative claim whose symbol cannot be mechanically extracted (plain
+// English prose, no backticks, no identifier-shaped token) cannot be
+// checked. On a fully-sent file the claim may survive as a note, but it
+// must never ground a merge blocker — fail open (issue #45, "no
+// extractable symbol" branch of the stated design).
+func TestUnextractableSymbolNegativeClaimNeverBlocks(t *testing.T) {
+	in := reproInputs("\tresult = helper(\n")
+	f := reproFinding()
+	f["title"] = "the helper is never called by this module"
+	f["body"] = "No call site for the helper exists, so the branch is dead."
+	c := &fakeClient{fn: reproScript(f)}
+	rec, err := runOnce(t, in, baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(rec.Findings) != 1 {
+		t.Fatalf("Findings = %d, want 1 (fail open to note); drops %+v", len(rec.Findings), rec.Drops)
+	}
+	if rec.Findings[0].Blocks {
+		t.Errorf("Blocks = true, want false: the negative claim could not be mechanically verified")
+	}
+}

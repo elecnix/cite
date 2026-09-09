@@ -123,9 +123,6 @@ func negativeClaimSymbols(text string) []string {
 }
 
 var (
-	callShapedRe = func(sym string) *regexp.Regexp {
-		return regexp.MustCompile(`\b` + regexp.QuoteMeta(sym) + `\b[[:space:]]*\(`)
-	}
 	// defHeadRe matches a definition head immediately before the symbol:
 	// "func name(", Go receivers ("func (r *T) name("), "def name(",
 	// "function name(", "class name(" and friends. An occurrence there is
@@ -182,12 +179,14 @@ func checkNegativeClaims(f *model.Finding, lines []string, partial bool) (drop b
 	}
 	symbols := negativeClaimSymbols(text)
 	if len(symbols) == 0 {
+		// No symbol could be extracted, so the claim cannot be checked
+		// against the file at all — the absence was never mechanically
+		// observed, whatever the file's length. Fail open: the finding
+		// may survive as a note but can never ground a blocker.
 		if partial {
-			// The claim is about the full file; the reviewer saw only part
-			// of it, so the absence was never actually observed (§8).
 			return false, false, fmt.Sprintf("negative claim %q on a partially-sent file cannot be verified", phrase)
 		}
-		return false, true, ""
+		return false, false, fmt.Sprintf("negative claim %q has no extractable symbol to verify against", phrase)
 	}
 	excluded := map[int]bool{}
 	for l := f.Anchor.StartLine; l <= f.Anchor.EndLine; l++ {
