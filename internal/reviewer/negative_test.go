@@ -80,6 +80,34 @@ func TestNegativeClaimFalsifiedByCallSiteDropped(t *testing.T) {
 	}
 }
 
+// Issue #68 repro: a weak call-claim ("imported but never called") that
+// quotes its own call site as evidence must still be falsified by that
+// call site. The quoted-span exclusion is load-bearing only for strong
+// occurrence-claims; applying it to weak call-claims lets a fabricated
+// "never called" that quotes the call site verify clean and block.
+func TestWeakCallClaimQuotingCallSiteDropped(t *testing.T) {
+	in := reproInputs("\tagentName = maybeSuffixForkIdentity(\n")
+	f := reproFinding()
+	f["title"] = "maybeSuffixForkIdentity imported but never called"
+	f["body"] = "The symbol maybeSuffixForkIdentity is never invoked anywhere in this file."
+	f["evidence"] = []map[string]any{mkEvidence(4, "agentName = maybeSuffixForkIdentity(")}
+	c := &fakeClient{fn: reproScript(f)}
+	rec, err := runOnce(t, in, baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(rec.Findings) != 0 {
+		t.Fatalf("Findings = %d, want 0 (weak call-claim falsified by its own quoted call site); drops %+v", len(rec.Findings), rec.Drops)
+	}
+	d := findDrop(rec, model.DropNegativeClaimFalsified)
+	if d == nil {
+		t.Fatalf("no DropNegativeClaimFalsified entry; drops %+v", rec.Drops)
+	}
+	if !strings.Contains(d.Detail, "line 4") {
+		t.Errorf("Detail = %q, want the falsifying line number 4", d.Detail)
+	}
+}
+
 // The negative claim is true (no call site anywhere in the file): the
 // finding survives and the ordinary blocking formula applies.
 func TestTrueNegativeClaimStillBlocks(t *testing.T) {
