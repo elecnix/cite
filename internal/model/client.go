@@ -409,12 +409,16 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 	ch := out.Choices[0]
 	if ch.FinishReason == "length" {
 		// A truncated response truncates identically on retry. Terminal.
+		// Always capture the partial content to a file first: the error
+		// discards it, and without this there is nothing to inspect after
+		// the fact.
+		_ = os.WriteFile("/tmp/cite-truncated-response.json", raw, 0o600)
 		if os.Getenv("CITE_DEBUG") != "" {
-			// The partial content is discarded below by design, but a CI
-			// run that captures stderr preserves it in the job log, so
-			// the operator can see what the model was emitting when it
-			// hit the cap.
+			// A CI run that captures stderr preserves the partial content
+			// in the job log, where it can be downloaded later.
 			fmt.Fprintf(os.Stderr, "cite debug: partial output at token cap (%d bytes):\n%s\n", len(ch.Message.Content), ch.Message.Content)
+		} else {
+			fmt.Fprintf(os.Stderr, "cite: partial output before the token cap captured to /tmp/cite-truncated-response.json (%d bytes)\n", len(raw))
 		}
 		return nil, fmt.Errorf("%w: output truncated at token cap (finish_reason=length)", ErrDeterministic)
 	}

@@ -108,6 +108,47 @@ func TestCompleteTruncatedIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestCompleteTruncatedAlwaysCapturesFile(t *testing.T) {
+	// A finish_reason=length response discards its partial content with
+	// the error. That content must be captured to a file on every
+	// truncation, with no env flag required: after the run ends the file
+	// is the only place the pre-cap output is kept.
+	os.Remove("/tmp/cite-truncated-response.json")
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{
+				"message":       map[string]any{"content": "partial review JSON"},
+				"finish_reason": "length",
+			}},
+		})
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+
+	old := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	_, err := c.Complete(context.Background(), CompletionRequest{})
+	os.Stderr = old
+	w.Close()
+	if !errors.Is(err, ErrDeterministic) {
+		t.Fatalf("finish_reason=length must be a deterministic (terminal) failure, got %v", err)
+	}
+	raw, rerr := os.ReadFile("/tmp/cite-truncated-response.json")
+	if rerr != nil {
+		t.Fatalf("truncated-response capture missing without CITE_DEBUG: %v", rerr)
+	}
+	if !strings.Contains(string(raw), "partial review JSON") {
+		t.Fatalf("capture must contain the raw response body, got %q", string(raw))
+	}
+	captured, _ := io.ReadAll(r)
+	if !strings.Contains(string(captured), "/tmp/cite-truncated-response.json") {
+		t.Fatalf("stderr must name the capture file, got %q", string(captured))
+	}
+}
+
 func TestCompleteDebugDumpsRawResponse(t *testing.T) {
 	// CITE_DEBUG must capture the raw response body too, not just the
 	// request. Otherwise a finish_reason=length truncation, where the

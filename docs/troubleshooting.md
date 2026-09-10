@@ -113,10 +113,11 @@ summary names the cause:
   `roles.review.max_output_tokens`, or declare the model's real `max_tokens`
   under its provider entry; see
   [the output cap](configuration.md#the-output-cap). A truncated review is
-  always reported as an error, never accepted as a short clean one. To see what
-  the model was emitting when it hit the cap, run with `CITE_DEBUG=1`: the
-  partial content is written to stderr (so a CI run keeps it in the job log)
-  and the full raw response body to `/tmp/cite-last-response.json`.
+  always reported as an error, never accepted as a short clean one. The partial
+  output is always captured to `/tmp/cite-truncated-response.json` (no flag
+  required), and stderr names the file. With `CITE_DEBUG=1` the partial
+  content is also written to stderr, so a CI run keeps it in the job log, and
+  the full raw response body is dumped to `/tmp/cite-last-response.json`.
 - **Zero in-scope files.** A pull request that changed files but resolved to an
   empty in-scope set is treated as a possible path-filter bypass, never as a
   pass.
