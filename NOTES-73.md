@@ -65,7 +65,14 @@ purpose: a knob invites raising it until a fast red becomes a slow red.
       Reasks=1, remedy names roles.review.timeout), TestDeadlineErrorNamesTheTimeoutKnob
       updated (1 → 1+defaultPerFileDeadlineRetries calls; log wording now "fresh-budget").
       Run-record fields ReasksSpent/EchoCorrections asserted.
+- [x] Gate surfacing (red → green): `TestErroredReasonNamesMechanismAndBudgetSpent` — red
+      run showed the old reason `"file errored during review: bad.go, slow.go"`; green now
+      reads `"2 file(s) never evaluated: bad.go (parse_failure, 2 re-ask(s) spent), slow.go
+      (deadline_exceeded, 1 re-ask(s) spent); 3 bounded re-ask(s) spent"`.
+      `TestErroredWithoutMechanismStillNamesPaths` pins the legacy shape (no reason/re-asks
+      → path still named). Reason flows verbatim into check summary + sticky comment via
+      the existing VerdictReason plumbing.
 - [x] `go build ./...` + `go test ./...`: 11/11 packages ok.
-- [ ] Gate surfacing: red test → green.
-- [ ] `go build ./... && go test ./...` green; push after every commit.
+- [x] Gate surfacing: red test → green.
+- [x] `go build ./...` + `go test ./...` green; push after every commit.
 - [ ] Draft PR linking #73 (never ready, never merge — operator's call).

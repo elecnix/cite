@@ -70,8 +70,9 @@ func approvedSkip(reason string) bool {
 // Decide maps a run record onto one of the three §11 states, fail-closed:
 //
 //	COULD_NOT_EVALUATE — provider or budget failure, zero in-scope files
-//	(the path-filter bypass shape), an errored file, an unapproved skip,
-//	incomplete coverage, or samples < 1.
+//	(the path-filter bypass shape), a file that was never evaluated (with
+//	its mechanism and the bounded retry spent, issue #73), an unapproved
+//	skip, incomplete coverage, or samples < 1.
 //	FOUND              — at least one finding blocks.
 //	PASS               — every in-scope file reached a terminal reviewed or
 //	approved-skip state, nothing blocks, and there was at least one sample.
@@ -124,16 +125,32 @@ func Decide(rec *model.RunRecord, cfg *config.Config, opts Options) (model.Verdi
 		return model.VerdictCouldNotEvaluate, "zero in-scope files (path-filter bypass shape)"
 	}
 
-	// An errored file is terminal but not covered.
+	// An errored file is terminal but not covered. Name the judge's
+	// condition (issue #73): which files were never evaluated, by which
+	// mechanism, and how much bounded retry was spent before giving up —
+	// a human must see why a gate is red, not just a coverage count with
+	// nothing behind it. The reason flows verbatim into the check summary
+	// and the sticky comment.
 	var errored []string
 	for _, f := range rec.Files {
 		if f.State == model.FileErrored {
-			errored = append(errored, f.Path)
+			s := f.Path
+			if f.Reason != "" {
+				s += " (" + f.Reason
+				if f.Reasks > 0 {
+					s += fmt.Sprintf(", %d re-ask(s) spent", f.Reasks)
+				}
+				s += ")"
+			}
+			errored = append(errored, s)
 		}
 	}
 	if len(errored) > 0 {
-		return model.VerdictCouldNotEvaluate,
-			fmt.Sprintf("file errored during review: %s", strings.Join(errored, ", "))
+		reason := fmt.Sprintf("%d file(s) never evaluated: %s", len(errored), strings.Join(errored, ", "))
+		if rec.ReasksSpent > 0 {
+			reason += fmt.Sprintf("; %d bounded re-ask(s) spent", rec.ReasksSpent)
+		}
+		return model.VerdictCouldNotEvaluate, reason
 	}
 
 	// A skipped file with an unexpected reason is not a reviewed file.
