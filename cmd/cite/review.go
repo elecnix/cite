@@ -35,6 +35,12 @@ func runReview(args []string) error {
 	dryRun := fs.Bool("dry-run", false, "print results, post nothing")
 	cfgPath := fs.String("config", ".github/cite.yml", "config file (optional)")
 	disabled := fs.Bool("disabled", false, "kill switch: conclude disabled-by-configuration")
+	// Issue #59: when true, COULD_NOT_EVALUATE concludes the check run as
+	// "neutral" (which GitHub counts as a satisfied required check) instead
+	// of "failure", so a tool failure does not block the merge. A real
+	// finding (FOUND) always concludes "failure". Default is fail-closed.
+	toolFailureBlocks := fs.Bool("tool-failure-blocks", true,
+		"a COULD_NOT_EVALUATE tool failure blocks the merge (default); -tool-failure-blocks=false concludes neutral instead")
 	reportFmt := fs.String("report", "", "write a full report instead of publishing to GitHub: json or markdown")
 	outPath := fs.String("out", "", "report destination file (default stdout; requires --report)")
 	recordOut := fs.String("record-out", os.Getenv("CITE_RECORD_OUT"), "write the raw run record JSON to this path, even when the run fails (forensics; defaults to $CITE_RECORD_OUT)")
@@ -78,7 +84,7 @@ func runReview(args []string) error {
 		if err != nil {
 			return fmt.Errorf("review: %w", err)
 		}
-		return reviewPR(*prSpec, *cfgPath, *dryRun, *disabled, sink, *recordOut, reviewerID)
+		return reviewPR(*prSpec, *cfgPath, *dryRun, *disabled, *toolFailureBlocks, sink, *recordOut, reviewerID)
 	default:
 		fs.Usage()
 		return fmt.Errorf("review: one of --diff or --pr is required")
@@ -301,7 +307,10 @@ type threadFinding struct {
 	Evidence    []model.Evidence `json:"evidence"`
 }
 
-func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, recordOut, reviewerID string) error {
+func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, sink publisher.Sink, recordOut, reviewerID string) error {
+	// Issue #59: the repository's opt-out reaches every conclusion site below
+	// as one gate option. Zero value (unset) keeps the fail-closed default.
+	gateOpts := gate.Options{NeutralToolFailure: !toolFailureBlocks}
 	// Report mode: a full run against the real pull request whose outcome goes
 	// to a local sink instead of GitHub. It is not a dry-run — nothing is
 	// simulated — but every mutation (check run, review, thread resolution,
@@ -342,14 +351,14 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 	if cfgErr != nil {
 		// Fail closed (issue #59): an invalid config must never degrade the
 		// run to defaults — conclude COULD_NOT_EVALUATE, never green.
-		return concludeFailure(ctx, c, checkID, dryRun, model.VerdictCouldNotEvaluate, cfgErr.Error())
+		return concludeFailure(ctx, c, checkID, dryRun, gateOpts, model.VerdictCouldNotEvaluate, cfgErr.Error())
 	}
 	if disabled {
 		v, reason := gate.DecideDisabled(cfg)
 		title, summary := gate.CheckRunPayload(&model.RunRecord{Samples: 0}, v, reason)
 		fmt.Printf("%s — %s\n%s\n%s\n", v, reason, title, summary)
 		if !dryRun && checkID != 0 {
-			if err := c.ConcludeCheckRun(ctx, checkID, v.Conclusion(), title, summary); err != nil {
+			if err := c.ConcludeCheckRun(ctx, checkID, gate.Conclusion(v, gateOpts), title, summary); err != nil {
 				return err
 			}
 		}
@@ -420,7 +429,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 	modelClient, err := model.NewOpenAICompatClient()
 	if err != nil {
 		// Fail-closed: conclude COULD_NOT_EVALUATE, never green.
-		return concludeFailure(ctx, c, checkID, dryRun, model.VerdictCouldNotEvaluate, err.Error())
+		return concludeFailure(ctx, c, checkID, dryRun, gateOpts, model.VerdictCouldNotEvaluate, err.Error())
 	}
 	verifier := &apiVerifier{c: c, owner: owner, repo: repo, ref: pr.BaseRef, tree: baseTree}
 	r := reviewer.New(reviewer.Options{
@@ -443,7 +452,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 	// operator needs to answer "why did this take so long".
 	writeRecordOut(rec, err, recordOut)
 	if err != nil && rec == nil {
-		return concludeFailure(ctx, c, checkID, dryRun, model.VerdictCouldNotEvaluate, err.Error())
+		return concludeFailure(ctx, c, checkID, dryRun, gateOpts, model.VerdictCouldNotEvaluate, err.Error())
 	}
 	rec.Repository = repoFull
 	rec.PRNumber = num
@@ -498,7 +507,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 		var err error
 		live, threadData, threadNodeIDs, err = threadsFromGitHub(ctx, c, num)
 		if err != nil {
-			return concludeFailure(ctx, c, checkID, dryRun, model.VerdictCouldNotEvaluate, "fetching review threads: "+err.Error())
+			return concludeFailure(ctx, c, checkID, dryRun, gateOpts, model.VerdictCouldNotEvaluate, "fetching review threads: "+err.Error())
 		}
 		if prevState.Ledger != "" {
 			if l, err := publisher.UnmarshalBlob(prevState.Ledger); err == nil {
@@ -560,7 +569,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 		if body != "" || len(comments) > 0 {
 			if err := c.CreateReview(ctx, num, body, comments); err != nil {
 				logToStderr("review posting failed: %v", err)
-				return concludeFailure(ctx, c, checkID, dryRun, verdict, "publish failed: "+err.Error())
+				return concludeFailure(ctx, c, checkID, dryRun, gateOpts, verdict, "publish failed: "+err.Error())
 			}
 		} else {
 			logToStderr("nothing to say: no review posted (§10)")
@@ -602,7 +611,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 		fmt.Printf("(moved to review body): %d finding(s)\n", unanchorable)
 	}
 	if !dryRun && checkID != 0 {
-		if err := c.ConcludeCheckRun(ctx, checkID, verdict.Conclusion(), title, summary); err != nil {
+		if err := c.ConcludeCheckRun(ctx, checkID, gate.Conclusion(verdict, gateOpts), title, summary); err != nil {
 			return err
 		}
 	}
@@ -612,10 +621,10 @@ func reviewPR(spec, cfgPath string, dryRun, disabled bool, sink publisher.Sink, 
 	return fmt.Errorf("gate: %s", verdict)
 }
 
-func concludeFailure(ctx context.Context, c *githubclient.Client, checkID int64, dryRun bool, v model.Verdict, reason string) error {
+func concludeFailure(ctx context.Context, c *githubclient.Client, checkID int64, dryRun bool, gateOpts gate.Options, v model.Verdict, reason string) error {
 	fmt.Printf("%s — %s\n", v, reason)
 	if !dryRun && checkID != 0 {
-		if err := c.ConcludeCheckRun(ctx, checkID, v.Conclusion(), "Cite could not evaluate", reason); err != nil {
+		if err := c.ConcludeCheckRun(ctx, checkID, gate.Conclusion(v, gateOpts), "Cite could not evaluate", reason); err != nil {
 			return err
 		}
 	}

@@ -26,9 +26,22 @@ const BypassLabel = "cite-bypass"
 // ProviderFailed and BudgetTripped come from job B's outcome; either forces
 // COULD_NOT_EVALUATE regardless of what partial findings exist, because a
 // run that died halfway cannot vouch for its own coverage.
+//
+// NeutralToolFailure is the escape hatch of issue #59: when the repository
+// opts in, a COULD_NOT_EVALUATE verdict keeps its state and its reason but
+// concludes "neutral" on the check run instead of "failure", so a tool
+// failure does not block the merge. It changes nothing else: a FOUND
+// verdict concludes failure regardless, and with the opt-out unset
+// (the zero value) every conclusion is exactly as before — red stays the
+// default. The verdict stays COULD_NOT_EVALUATE either way: what happened
+// is reported truthfully; only whether it blocks is configurable.
 type Options struct {
 	ProviderFailed bool
 	BudgetTripped  bool
+	// NeutralToolFailure: a COULD_NOT_EVALUATE conclusion becomes
+	// "neutral" instead of "failure". A blocking finding still concludes
+	// failure; see Decide.
+	NeutralToolFailure bool
 }
 
 // ApprovedSkipReasons is the closed set of skip reasons that count toward
@@ -62,6 +75,14 @@ func approvedSkip(reason string) bool {
 //	FOUND              — at least one finding blocks.
 //	PASS               — every in-scope file reached a terminal reviewed or
 //	approved-skip state, nothing blocks, and there was at least one sample.
+//
+// The three states are unchanged by NeutralToolFailure (issue #59): what
+// changes is only how COULD_NOT_EVALUATE maps onto a GitHub check-run
+// conclusion. Conclusion consults the option, so a repository that opts
+// in sees a neutral — which GitHub counts as a satisfied required check —
+// while a repository that does nothing keeps the failure. FOUND concludes
+// failure unconditionally: the opt-out covers "the tool could not read its
+// own output", never "the tool found something".
 //
 // A nil rec fails closed. A nil cfg is treated as the default configuration.
 // The cfg parameter selects nothing today (blocking is already computed in
@@ -231,6 +252,20 @@ func nonEmpty(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// Conclusion maps a verdict onto a GitHub check-run conclusion, consulting
+// the repository's opt-out (issue #59). With Options{} — what every existing
+// caller passes and what the action passes when the input is unset — it is
+// exactly v.Conclusion(): fail-closed, red by default. With
+// NeutralToolFailure set, COULD_NOT_EVALUATE concludes "neutral", which
+// GitHub counts as a satisfied required check, while FOUND still concludes
+// "failure": a real finding blocks whether or not the repository opted out.
+func Conclusion(v model.Verdict, opts Options) string {
+	if opts.NeutralToolFailure && v == model.VerdictCouldNotEvaluate {
+		return "neutral"
+	}
+	return v.Conclusion()
 }
 
 func skippedAggregate(files []model.FileOutcome) map[string][]string {
