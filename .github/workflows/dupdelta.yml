@@ -1,0 +1,37 @@
+# Reports the code duplication a pull request introduces, by scanning the
+# branch and its merge-base and diffing the two. What the repository always
+# had stays quiet; only what this change adds is annotated.
+#
+# Deliberately advisory, and structurally so: dupdelta never sets a failing
+# exit code on findings, so this check cannot go red over a similarity
+# heuristic. Extract the shared logic, or leave it if the resemblance is
+# coincidental — there is nothing to accept and no allowlist to update.
+name: dupdelta
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # One scan per pull request; a push supersedes the run it replaced rather
+  # than queueing behind it. Nothing is published, so cancelling is free.
+  group: dupdelta-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dupdelta:
+    runs-on: ubuntu-latest
+    steps:
+      # No fork guard: dupdelta writes nothing through the API. Its findings
+      # are workflow-command annotations and a job summary, both of which a
+      # read-only token on a fork pull request can still emit.
+      - uses: actions/checkout@v5
+        with:
+          # The merge-base has to be reachable. A shallow clone has no common
+          # ancestor to compare against, and the action fails loudly rather
+          # than reporting every pre-existing duplicate as new.
+          fetch-depth: 0
+      - uses: elecnix/dupdelta@v0.2.0
