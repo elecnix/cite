@@ -83,6 +83,8 @@ type Reviewer struct {
 
 	retryMu   sync.Mutex
 	retryLeft map[string]int // run-global retry token bucket, per unit type
+	reasksSpent      int // run-wide bounded re-asks spent (issue #73)
+	echoCorrections  int // responses relabeled by the echo guard (issue #73)
 	filesMu   sync.Mutex
 	finalized map[string]bool // manifest paths with a recorded terminal state
 
@@ -127,8 +129,21 @@ const (
 
 	// defaultRetriesPerUnitType: ONE run-global token bucket per unit type,
 	// not per-call budgets — 400 call sites × 3 retries each is 1,200
-	// provider calls (§7).
+	// provider calls (§7). Transient provider errors draw from it; per-file
+	// output-contract failures do NOT (issue #73): see defaultPerFileParseRetries.
 	defaultRetriesPerUnitType = 3
+
+	// Per-file budgets (issue #73), deliberately separate from the run-global
+	// transient bucket: the measured CI failures show the judge intermittently
+	// violating one file's output contract while every other file reviews
+	// clean, and a shared bucket let one pathological file starve coverage for
+	// the rest (four files lost in one attempt of PR #71). Worst case per file
+	// is 1 initial + parse re-asks + 1 deadline re-ask — a fixed multiplier,
+	// so an unmeasurable file still fails fast, with the budget spent recorded
+	// on its outcome. Not configurable on purpose: a knob invites raising it
+	// until a fast red becomes a slow red.
+	defaultPerFileParseRetries    = 2
+	defaultPerFileDeadlineRetries = 1
 )
 
 // accumulateUsage folds one response's token counters into the run total.
@@ -166,6 +181,25 @@ func (r *Reviewer) tryRetry(unit string) bool {
 	}
 	r.retryLeft[unit]--
 	return true
+}
+
+// noteReask records one bounded re-ask spent (issue #73): a per-file parse
+// re-ask or a fresh-budget deadline re-ask. The run-wide total surfaces in
+// the gate's COULD_NOT_EVALUATE reason — the judge's condition, not just a
+// coverage count.
+func (r *Reviewer) noteReask() {
+	r.retryMu.Lock()
+	defer r.retryMu.Unlock()
+	r.reasksSpent++
+}
+
+// noteEchoCorrection records one response relabeled by the deterministic echo
+// guard (issue #73) — a saved model round-trip on exactly the flakiness the
+// issue measures.
+func (r *Reviewer) noteEchoCorrection() {
+	r.retryMu.Lock()
+	defer r.retryMu.Unlock()
+	r.echoCorrections++
 }
 
 // recordCall appends one per-attempt entry to the run's call log. The log
@@ -302,11 +336,16 @@ func (r *Reviewer) completeWithRetry(ctx context.Context, unit string, req model
 			return nil, err // terminal: no retry
 		}
 		if errors.Is(err, model.ErrDeadline) {
-			// Terminal, never retried: the first attempt already burned its
-			// full time budget (and the provider's tokens). Name the knob so
-			// the fix is one line away (issue #28; truthful remedy strings
-			// for both the derived and the explicit case, issue #59).
-			r.logf("%s call exceeded its %s per-call deadline; NOT retrying — a timeout retry would pay twice for the same wait. If calls legitimately need longer, set an explicit roles.%s.timeout in .github/cite.yml (the built-in review deadline only derives from roles.%s.max_output_tokens when no explicit timeout is set: 60s + tokens/128, so RAISE the cap for a longer derived deadline — lowering it tightens the deadline)", unit, timeout, unit, unit)
+			// completeWithRetry itself never retries a deadline: the first
+			// attempt already burned its full time budget (and the provider's
+			// tokens), so re-issuing inside this loop would pay twice for the
+			// same wait with no bound. The per-file review caller MAY spend
+			// its single fresh-budget deadline re-ask (issue #73) — the one
+			// case where a slow-but-correct call deserves a second chance —
+			// and stays terminal after that. Name the knob so the fix is one
+			// line away (issue #28; truthful remedy strings for both the
+			// derived and the explicit case, issue #59).
+			r.logf("%s call exceeded its %s per-call deadline; not retried inside completeWithRetry — the review caller may spend its one fresh-budget deadline re-ask (issue #73). If calls legitimately need longer, set an explicit roles.%s.timeout in .github/cite.yml (the built-in review deadline only derives from roles.%s.max_output_tokens when no explicit timeout is set: 60s + tokens/128, so RAISE the cap for a longer derived deadline — lowering it tightens the deadline)", unit, timeout, unit, unit)
 			return nil, err
 		}
 		if ctx.Err() != nil {
@@ -507,6 +546,10 @@ func (r *Reviewer) Run(ctx context.Context, in Inputs) (*model.RunRecord, error)
 
 	rec.Coverage = scope.ComputeCoverage(rec.Files, len(in.Manifest))
 	rec.Usage = r.totalUsage()
+	r.retryMu.Lock()
+	rec.ReasksSpent = r.reasksSpent
+	rec.EchoCorrections = r.echoCorrections
+	r.retryMu.Unlock()
 	r.callMu.Lock()
 	rec.Calls = r.callLog
 	r.callMu.Unlock()
@@ -625,9 +668,31 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 	}
 	var fr *model.FileReview
 	var perr error
+	// Issue #73: per-file budgets, separate from the run-global transient
+	// bucket (which completeWithRetry still uses for provider-level errors).
+	// parseRetries covers output-contract failures (blank body, syntax
+	// garbage, schema violation); deadlineRetries covers exactly one fresh
+	// re-issue of a call that exhausted its wall clock. spent counts both so
+	// a terminal outcome can name the budget it burned.
+	parseRetries := defaultPerFileParseRetries
+	deadlineRetries := defaultPerFileDeadlineRetries
+	spent := 0
 	for {
 		resp, err := r.completeWithRetry(ctx, unitReview, req, timeout)
 		if err != nil {
+			if errors.Is(err, model.ErrDeadline) && deadlineRetries > 0 {
+				// Issue #73: one fresh-budget re-ask for a deadline expiry —
+				// the measured CI shape where a slow-but-correct call (a
+				// docs-only diff lost README.md this way) died terminal on
+				// its first derived deadline. completeWithRetry hands back a
+				// full fresh timeout per attempt. After this one re-ask the
+				// file is terminal: the remedy below names the knob.
+				deadlineRetries--
+				spent++
+				r.noteReask()
+				r.logf("review of %s exceeded its %s deadline; re-asking from the fresh per-file deadline budget, %d left (issue #73)", e.Path, timeout, deadlineRetries)
+				continue
+			}
 			reason := "model_error"
 			if errors.Is(err, model.ErrDeterministic) {
 				reason = "deterministic_failure"
@@ -647,7 +712,7 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 			r.logf("review of %s ended in error: %v", e.Path, err)
 			r.recordFile(rec, model.FileOutcome{
 				Path: e.Path, OldPath: e.OldPath, Status: e.Status,
-				State: model.FileErrored, Reason: reason,
+				State: model.FileErrored, Reason: reason, Reasks: spent,
 			})
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -659,16 +724,29 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 		syntaxErr := perr != nil && errors.Is(perr, model.ErrSyntax)
 		blankBody := strings.TrimSpace(resp.Text) == ""
 		// Issue #59: a schema-level failure (wrong schema_version, unknown
-		// outcome, an anchor out of range, or a valid review naming the
-		// wrong file) is also a mechanical failure of the output format,
-		// not a confident wrong answer about the code. The §8
-		// never-re-quote rule is about re-asking the model to re-quote
+		// outcome, an anchor out of range) is also a mechanical failure of
+		// the output format, not a confident wrong answer about the code.
+		// The §8 never-re-quote rule is about re-asking the model to re-quote
 		// inside a validated finding — a complete fresh re-request faces
 		// the full validation pipeline and cannot launder a bad claim
 		// through a matching quote. These failures carry no findings for
-		// the file under review, so a bounded re-ask (same run-global
-		// bucket, same exhaustion point as every transient failure) is
-		// taken before going terminal.
+		// the file under review, so a bounded re-ask is taken before going
+		// terminal.
+		//
+		// Deterministic echo guard (issue #73): the reviewer already knows
+		// the path it is reviewing. The payload contained exactly one file,
+		// so a schema-valid response naming any other path (the measured
+		// flakiness: "unknown", "", "README.md") is a labeling error, not
+		// a review of something else — relabel it in code WITHOUT a model
+		// round-trip. This is not repair of the review's content: findings
+		// still face the full validation pipeline against the real
+		// post-image, so a response that hallucinated content for a
+		// different file drops every finding it carried.
+		if perr == nil && fr != nil && fr.Path != e.Path {
+			r.noteEchoCorrection()
+			r.logf("review of %s: response echoed path %q; relabeled by the echo guard without spending a re-ask (issue #73)", e.Path, fr.Path)
+			fr.Path = e.Path
+		}
 		if perr == nil && fr != nil && fr.Path == e.Path {
 			break
 		}
@@ -677,13 +755,18 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 		// output), and a schema error is the model breaking its own
 		// output contract: none carries a validated finding, so a re-ask
 		// invites nothing back (§8's grounding concern does not reach
-		// here). All draw from the same run-global bucket as other
-		// transient failures; with retries exhausted they stay terminal as
-		// parse_failure. (Deadline expiry draws from no bucket at all:
-		// it is terminal without a retry — see completeWithRetry.)
-		if !r.tryRetry(unitReview) {
+		// here). Each draws from the file's OWN parse budget (issue #73),
+		// never the run-global bucket — one pathological file cannot
+		// starve coverage for the rest — and with the per-file budget
+		// exhausted the failure is terminal as parse_failure, naming the
+		// budget spent. (A deadline expiry draws from its own separate
+		// fresh budget above, not from this one.)
+		if parseRetries <= 0 {
 			break
 		}
+		parseRetries--
+		spent++
+		r.noteReask()
 		kind := "was empty"
 		if !blankBody {
 			if syntaxErr {
@@ -694,22 +777,20 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 				kind = fmt.Sprintf("echoed path %q", fr.Path)
 			}
 		}
-		r.logf("review of %s response %s (%v); retrying from run-global bucket", e.Path, kind, perr)
+		r.logf("review of %s response %s (%v); re-asking from the per-file budget, %d left (issue #73)", e.Path, kind, perr, parseRetries)
 	}
 
-	if perr != nil || (fr.Path != "" && fr.Path != e.Path) {
-		// Terminal once the bucket is exhausted: this unit ends errored
-		// (parse_failure), coverage stays incomplete, the gate fails
-		// closed — a re-ask beyond the bound would convert a bounded cost
-		// into an unbounded one (issue #59).
-		detail := fmt.Sprintf("parse failure: %v", perr)
-		if perr == nil {
-			detail = fmt.Sprintf("response echoes path %q, want %q", fr.Path, e.Path)
-		}
+	if perr != nil {
+		// Terminal once the per-file budget is exhausted: this unit ends
+		// errored (parse_failure) with the budget spent recorded, coverage
+		// stays incomplete, the gate fails closed — a re-ask beyond the
+		// bound would convert a bounded cost into an unbounded one
+		// (issue #59, sized per issue #73).
+		detail := fmt.Sprintf("parse failure after %d re-ask(s): %v", spent, perr)
 		r.logf("review of %s unusable: %s", e.Path, detail)
 		r.recordFile(rec, model.FileOutcome{
 			Path: e.Path, OldPath: e.OldPath, Status: e.Status,
-			State: model.FileErrored, Reason: "parse_failure",
+			State: model.FileErrored, Reason: "parse_failure", Reasks: spent,
 		})
 		return nil
 	}
