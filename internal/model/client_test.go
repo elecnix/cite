@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -105,6 +106,47 @@ func TestCompleteTruncatedIsDeterministic(t *testing.T) {
 	_, err := c.Complete(context.Background(), CompletionRequest{})
 	if !errors.Is(err, ErrDeterministic) {
 		t.Fatalf("finish_reason=length must be a deterministic (terminal) failure, got %v", err)
+	}
+}
+
+func TestCompleteTruncatedCapturePathFromEnv(t *testing.T) {
+	// The capture file must be archivable by the caller, so the path is
+	// overridable by env: the GitHub Action points it at $RUNNER_TEMP,
+	// which the forensics artifact step already uploads.
+	dir := t.TempDir()
+	t.Setenv("CITE_TRUNCATED_OUT", filepath.Join(dir, "captured.json"))
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{
+				"message":       map[string]any{"content": "partial review JSON"},
+				"finish_reason": "length",
+			}},
+		})
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+
+	old := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	_, err := c.Complete(context.Background(), CompletionRequest{})
+	os.Stderr = old
+	w.Close()
+	if !errors.Is(err, ErrDeterministic) {
+		t.Fatalf("finish_reason=length must be a deterministic (terminal) failure, got %v", err)
+	}
+	raw, rerr := os.ReadFile(filepath.Join(dir, "captured.json"))
+	if rerr != nil {
+		t.Fatalf("env-configured capture path missing: %v", rerr)
+	}
+	if !strings.Contains(string(raw), "partial review JSON") {
+		t.Fatalf("capture must contain the raw response body, got %q", string(raw))
+	}
+	captured, _ := io.ReadAll(r)
+	if !strings.Contains(string(captured), "captured.json") {
+		t.Fatalf("stderr must name the capture file, got %q", string(captured))
 	}
 }
 

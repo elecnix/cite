@@ -31,7 +31,11 @@ the full step log plus `cite-run-record.json`, which carries the per-attempt
 call log — when each model call started, how long it ran, how it ended
 (`ok`, `deadline_exceeded`, `truncated`, …) and what it cost in tokens. This
 answers "why did the run take so long / what did it burn" without the raw log,
-which is truncated and unavailable for in-progress runs. Set
+which is truncated and unavailable for in-progress runs. When the failure was a
+token-cap truncation, the archive also includes
+`cite-truncated-response.json`: the raw response body the model was emitting
+when it hit the cap. The review of that file is recorded as errored rather
+than parsed, so this capture is the only place that content is kept. Set
 `archive_on_failure: false` to disable. Note that a run killed mid-flight
 still archives its partial record.
 
@@ -114,10 +118,13 @@ summary names the cause:
   under its provider entry; see
   [the output cap](configuration.md#the-output-cap). A truncated review is
   always reported as an error, never accepted as a short clean one. The partial
-  output is always captured to `/tmp/cite-truncated-response.json` (no flag
-  required), and stderr names the file. With `CITE_DEBUG=1` the partial
-  content is also written to stderr, so a CI run keeps it in the job log, and
-  the full raw response body is dumped to `/tmp/cite-last-response.json`.
+  output is always captured to a file: cite writes the raw response body to
+  `/tmp/cite-truncated-response.json` by default, overridable with
+  `CITE_TRUNCATED_OUT`, and stderr names the path (the GitHub Action points it
+  at `$RUNNER_TEMP` so the forensics archive uploads it). With `CITE_DEBUG=1`
+  the partial content is also written to stderr, so a CI run keeps it in the
+  job log, and the full raw response body is dumped to
+  `/tmp/cite-last-response.json`.
 - **Zero in-scope files.** A pull request that changed files but resolved to an
   empty in-scope set is treated as a possible path-filter bypass, never as a
   pass.
