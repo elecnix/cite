@@ -394,6 +394,12 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		}
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
+	if os.Getenv("CITE_DEBUG") != "" {
+		// Debug aid: dump the exact response body so a truncation or a
+		// decode failure can be replayed and inspected. Complements the
+		// request dump above. The body contains no credentials.
+		_ = os.WriteFile("/tmp/cite-last-response.json", raw, 0o600)
+	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("%w: malformed provider response", ErrDeterministic)
 	}
@@ -403,6 +409,13 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 	ch := out.Choices[0]
 	if ch.FinishReason == "length" {
 		// A truncated response truncates identically on retry. Terminal.
+		if os.Getenv("CITE_DEBUG") != "" {
+			// The partial content is discarded below by design, but a CI
+			// run that captures stderr preserves it in the job log, so
+			// the operator can see what the model was emitting when it
+			// hit the cap.
+			fmt.Fprintf(os.Stderr, "cite debug: partial output at token cap (%d bytes):\n%s\n", len(ch.Message.Content), ch.Message.Content)
+		}
 		return nil, fmt.Errorf("%w: output truncated at token cap (finish_reason=length)", ErrDeterministic)
 	}
 	return &CompletionResponse{
