@@ -21,3 +21,5 @@ jobs:
       - run: go build ./cmd/cite
       - name: validate own config
         run: go run ./cmd/cite validate .github/cite.yml || test ! -f .github/cite.yml
+      - name: shell tests (fetch-config)
+        run: bash scripts/fetch-config_test.sh
