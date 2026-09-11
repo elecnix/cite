@@ -48,8 +48,9 @@ inputs:
   archive_on_failure:
     description: >
       Set to "true" (the default) to upload a forensics artifact when the
-      review fails: the full step log plus the run record JSON (per-file
-      outcomes, the per-call timing log and token usage). The artifact is
+      review fails: the full step log, the run record JSON (per-file
+      outcomes, the per-call timing log and token usage), and the raw
+      response body of any token-cap truncation. The artifact is
       downloadable from the run's summary page once the job completes.
     required: false
     default: 'true'
@@ -161,6 +162,12 @@ runs:
         CITE_LOG="$RUNNER_TEMP/cite-output.log"
         CITE_RECORD="$RUNNER_TEMP/cite-run-record.json"
         export CITE_RECORD_OUT="$CITE_RECORD"
+        # A token-cap truncation discards the partial model output with its
+        # error, so cite always writes it to a file. Point the capture at
+        # $RUNNER_TEMP so the archive step below uploads it: the file is the
+        # only place the pre-cap output is kept, and the stderr line names it.
+        CITE_TRUNCATED="$RUNNER_TEMP/cite-truncated-response.json"
+        export CITE_TRUNCATED_OUT="$CITE_TRUNCATED"
         cite review $ARGS 2>&1 | tee "$CITE_LOG"
 
     - name: Archive forensics on failure
@@ -171,5 +178,6 @@ runs:
         path: |
           ${{ runner.temp }}/cite-output.log
           ${{ runner.temp }}/cite-run-record.json
+          ${{ runner.temp }}/cite-truncated-response.json
         if-no-files-found: warn
         retention-days: 30

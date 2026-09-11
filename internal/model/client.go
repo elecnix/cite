@@ -394,6 +394,12 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		}
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
+	if os.Getenv("CITE_DEBUG") != "" {
+		// Debug aid: dump the exact response body so a truncation or a
+		// decode failure can be replayed and inspected. Complements the
+		// request dump above. The body contains no credentials.
+		_ = os.WriteFile("/tmp/cite-last-response.json", raw, 0o600)
+	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("%w: malformed provider response", ErrDeterministic)
 	}
@@ -403,6 +409,19 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 	ch := out.Choices[0]
 	if ch.FinishReason == "length" {
 		// A truncated response truncates identically on retry. Terminal.
+		// Always capture the partial content to a file first: the error
+		// discards it, and without this there is nothing to inspect after
+		// the fact. The path is overridable so a caller (the GitHub
+		// Action) can point it at a directory it archives for download.
+		capturePath := os.Getenv("CITE_TRUNCATED_OUT")
+		if capturePath == "" {
+			capturePath = "/tmp/cite-truncated-response.json"
+		}
+		_ = os.WriteFile(capturePath, raw, 0o600)
+		// The partial content is what the operator needs to see, so it
+		// always goes to stderr: a CI run that captures stderr keeps it in
+		// the job log, where it can be downloaded later.
+		fmt.Fprintf(os.Stderr, "cite: partial output before the token cap captured to %s (%d bytes):\n%s\n", capturePath, len(raw), ch.Message.Content)
 		return nil, fmt.Errorf("%w: output truncated at token cap (finish_reason=length)", ErrDeterministic)
 	}
 	return &CompletionResponse{
