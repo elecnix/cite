@@ -109,8 +109,16 @@ runs:
           # redirect — no API call, works with the same curl flags.
           url="https://github.com/elecnix/cite/releases/latest/download/cite-linux-${arch}"
         fi
-        curl -fsSL --retry 3 -o /usr/local/bin/cite "$url"
-        chmod +x /usr/local/bin/cite
+        # Install into a per-run writable directory instead of a system
+        # path: /usr/local/bin is root-owned on self-hosted runners (e.g.
+        # ARC images run the runner as non-root), and installing a CLI
+        # must never require root. Exporting it onto GITHUB_PATH makes it
+        # resolvable as `cite` in every later step, exactly as before.
+        cite_bin="$RUNNER_TEMP/cite-bin"
+        mkdir -p "$cite_bin"
+        curl -fsSL --retry 3 -o "$cite_bin/cite" "$url"
+        chmod +x "$cite_bin/cite"
+        echo "$cite_bin" >> "$GITHUB_PATH"
 
     - name: Run Cite review
       shell: bash
