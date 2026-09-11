@@ -1,0 +1,31 @@
+# Throwaway ARC probe (remove before PR review): measure whether the cite
+# composite action installs and runs on a self-hosted ARC runner
+# (label arc-runners), where /usr/local/bin is expected to be root-owned.
+# Mirrors the dogfooding review job but pins runs-on to the ARC scale set.
+
+name: arc-probe
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+concurrency:
+  group: cite-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  arc:
+    if: github.event.pull_request.head.repo.fork == false
+    runs-on: arc-runners
+    steps:
+      - name: Review this pull request with Cite
+        uses: elecnix/cite@v0.6.0
+        with:
+          model_id: deepseek/deepseek-v4-flash-0731
+          model_base_url: https://openrouter.ai/api/v1
+          model_api_key: ${{ secrets.MODEL_API_KEY }}
