@@ -418,13 +418,10 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 			capturePath = "/tmp/cite-truncated-response.json"
 		}
 		_ = os.WriteFile(capturePath, raw, 0o600)
-		if os.Getenv("CITE_DEBUG") != "" {
-			// A CI run that captures stderr preserves the partial content
-			// in the job log, where it can be downloaded later.
-			fmt.Fprintf(os.Stderr, "cite debug: partial output at token cap (%d bytes):\n%s\n", len(ch.Message.Content), ch.Message.Content)
-		} else {
-			fmt.Fprintf(os.Stderr, "cite: partial output before the token cap captured to %s (%d bytes)\n", capturePath, len(raw))
-		}
+		// The partial content is what the operator needs to see, so it
+		// always goes to stderr: a CI run that captures stderr keeps it in
+		// the job log, where it can be downloaded later.
+		fmt.Fprintf(os.Stderr, "cite: partial output before the token cap captured to %s (%d bytes):\n%s\n", capturePath, len(raw), ch.Message.Content)
 		return nil, fmt.Errorf("%w: output truncated at token cap (finish_reason=length)", ErrDeterministic)
 	}
 	return &CompletionResponse{

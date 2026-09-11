@@ -189,6 +189,9 @@ func TestCompleteTruncatedAlwaysCapturesFile(t *testing.T) {
 	if !strings.Contains(string(captured), "/tmp/cite-truncated-response.json") {
 		t.Fatalf("stderr must name the capture file, got %q", string(captured))
 	}
+	if !strings.Contains(string(captured), "partial review JSON") {
+		t.Fatalf("stderr must always include the partial content, got %q", string(captured))
+	}
 }
 
 func TestCompleteDebugDumpsRawResponse(t *testing.T) {
@@ -220,39 +223,6 @@ func TestCompleteDebugDumpsRawResponse(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "partial review JSON") {
 		t.Fatalf("dump must contain the raw response body, got %q", string(raw))
-	}
-}
-
-func TestCompleteTruncatedLogsPartialUnderDebug(t *testing.T) {
-	// The partial content of a finish_reason=length response is discarded
-	// by design, but under CITE_DEBUG it must still reach stderr so a CI
-	// run preserves it in the job log, where it can be downloaded later.
-	t.Setenv("CITE_DEBUG", "1")
-	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"choices": []any{map[string]any{
-				"message":       map[string]any{"content": "partial review JSON"},
-				"finish_reason": "length",
-			}},
-		})
-	})
-	ts := newTestServer(srv)
-	defer ts.Close()
-	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
-
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	_, err := c.Complete(context.Background(), CompletionRequest{})
-	os.Stderr = old
-	w.Close()
-	if !errors.Is(err, ErrDeterministic) {
-		t.Fatalf("finish_reason=length must be a deterministic (terminal) failure, got %v", err)
-	}
-	captured, _ := io.ReadAll(r)
-	if !strings.Contains(string(captured), "partial review JSON") {
-		t.Fatalf("CITE_DEBUG must log the truncated partial content to stderr, got %q", string(captured))
 	}
 }
 

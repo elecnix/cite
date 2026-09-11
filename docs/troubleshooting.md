@@ -120,10 +120,10 @@ summary names the cause:
   always reported as an error, never accepted as a short clean one. The partial
   output is always captured to a file: cite writes the raw response body to
   `/tmp/cite-truncated-response.json` by default, overridable with
-  `CITE_TRUNCATED_OUT`, and stderr names the path (the GitHub Action points it
-  at `$RUNNER_TEMP` so the forensics archive uploads it). With `CITE_DEBUG=1`
-  the partial content is also written to stderr, so a CI run keeps it in the
-  job log, and the full raw response body is dumped to
+  `CITE_TRUNCATED_OUT`, and stderr always names the path and prints the
+  partial content itself (the GitHub Action points the capture at
+  `$RUNNER_TEMP` so the forensics archive uploads it). With `CITE_DEBUG=1` the
+  full raw response body is also dumped to
   `/tmp/cite-last-response.json`.
 - **Zero in-scope files.** A pull request that changed files but resolved to an
   empty in-scope set is treated as a possible path-filter bypass, never as a
