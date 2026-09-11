@@ -18,8 +18,15 @@
 #   after a successful, non-empty decode, so an empty or partial file is never
 #   left behind.
 # - If the base ref has no config file (HTTP 404), that is not an error: the
-#   run continues with built-in defaults (source: defaults).
-# - Any other fetch or decode failure is an error and exits nonzero.
+#   run continues with built-in defaults (source: defaults). A 404 is
+#   terminal and is never retried.
+# - Transient HTTP failures (403 rate limit, 429, 5xx) are retried
+#   CITE_FETCH_ATTEMPTS times (default 3) with a CITE_FETCH_BACKOFF second
+#   pause (default 2) between attempts, so a secondary rate limit or a
+#   blip on the API side does not turn the whole review job red.
+# - Any other fetch or decode failure is an error and exits nonzero. A
+#   permanent failure (e.g. 401) is not retried, and exhausted retries are
+#   never mistaken for "no config": they exit nonzero, like before.
 #
 # Inputs (environment):
 #   CONFIG_PATH       path of the config file, relative to the repository root
@@ -63,12 +70,22 @@ errfile="$(mktemp)"
 defer_rm_errfile() { rm -f "$errfile"; }
 trap defer_rm_errfile EXIT
 
-if ! content="$("$GH" api "repos/$GITHUB_REPOSITORY/contents/$CONFIG_PATH?ref=$GITHUB_BASE_REF" --jq '.content' 2>"$errfile")"; then
+# Transient HTTP failures (403 rate limit, 429, 5xx) are retried; a 404
+# (no config on the base ref) and a permanent failure (e.g. 401) are
+# terminal on the first attempt. Exhausted retries still exit nonzero: a
+# failed fetch must never be mistaken for "no config".
+fetch_attempts="${CITE_FETCH_ATTEMPTS:-3}"
+fetch_backoff="${CITE_FETCH_BACKOFF:-2}"
+attempt=1
+while :; do
+  if content="$("$GH" api "repos/$GITHUB_REPOSITORY/contents/$CONFIG_PATH?ref=$GITHUB_BASE_REF" --jq '.content' 2>"$errfile")"; then
+    break
+  fi
   rm -f "$tmp"
   if grep -q 'HTTP 404' "$errfile"; then
     # No config on the base ref. In a pull_request context any local
     # file at CONFIG_PATH was put there by the checkout of the merge
-    # ref — i.e. by the pull request itself — and must not be used.
+    # ref (authored by the pull request itself) and must not be used.
     if [ -f "$CONFIG_PATH" ]; then
       rm -f "$CONFIG_PATH"
       echo "cite: no $CONFIG_PATH on base ref; ignoring the local file from the checkout (pull request context) and running with defaults"
@@ -77,9 +94,15 @@ if ! content="$("$GH" api "repos/$GITHUB_REPOSITORY/contents/$CONFIG_PATH?ref=$G
     fi
     exit 0
   fi
-  echo "cite: failed to fetch $CONFIG_PATH from base ref $GITHUB_BASE_REF" >&2
+  if grep -Eq 'HTTP (403|429|5[0-9][0-9])' "$errfile" && [ "$attempt" -lt "$fetch_attempts" ]; then
+    echo "cite: transient failure fetching $CONFIG_PATH (attempt $attempt/$fetch_attempts): $(cat "$errfile"); retrying in ${fetch_backoff}s" >&2
+    sleep "$fetch_backoff"
+    attempt=$((attempt+1))
+    continue
+  fi
+  echo "cite: failed to fetch $CONFIG_PATH from base ref $GITHUB_BASE_REF after $attempt attempt(s)" >&2
   exit 1
-fi
+done
 
 # Decode into the temporary path; only a successful, non-empty decode is moved
 # into place. The base64 content of a real file is never empty.

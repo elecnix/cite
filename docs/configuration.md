@@ -274,6 +274,12 @@ source used:
 
 A fetch or decode failure other than "no such file" is a hard error and fails
 the step, rather than quietly reviewing with the wrong settings.
+Retries cover transient HTTP failures. A 403 rate limit, a 429, or a 5xx is
+retried up to 3 attempts total with a 2-second pause between attempts (log
+line: `cite: transient failure fetching <path> (attempt n/3) ...`). A 404
+and a permanent failure such as a 401 are terminal on the first attempt.
+Exhausted retries still fail the step; a failed fetch is never treated as
+"no config".
 
 ## What is deliberately absent
 

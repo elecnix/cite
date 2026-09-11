@@ -12,6 +12,7 @@ work="$(mktemp -d)"
 trap 'rm -rf "${work:?}"' EXIT
 fails=0
 
+
 # build_stub <exit-code> <stderr-text> <stdout-text> — creates $work/bin/gh
 build_stub() {
   local code="$1" err="$2" out="$3"
@@ -138,12 +139,18 @@ run_case "decode failure" 1
 expect_file no
 expect_no_tmp
 
-# 5. Non-404 API failure (e.g. 401): nonzero exit, no file left behind.
+# 5. Non-404 API failure (e.g. 401): nonzero exit, no file left behind,
+# and fail fast. A 401 is a permanent credential problem, not a
+# transient one, so it must not be retried (exactly one gh call).
 rm -rf "${work:?}/bin" "${work:?}/gh-calls.log" "$work"/case.*
-build_stub 1 'gh: Bad credentials (HTTP 401)' ''
+rm -f "$work/call-count"
+build_stub 1 'gh: bad credentials (HTTP 401)' ''
 run_case "non-404 api failure" 1
 expect_file no
 expect_no_tmp
+if [ "$(wc -l < "$work/gh-calls.log")" -ne 1 ]; then
+  echo "FAIL: permanent 401 failure was retried"; fails=$((fails+1))
+fi
 
 # 6. Empty content (defensive): treated as decode failure, nothing written.
 rm -rf "${work:?}/bin" "${work:?}/gh-calls.log" "$work"/case.*
