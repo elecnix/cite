@@ -339,6 +339,11 @@ type FileOutcome struct {
 	BlobSHA  string            `json:"blob_sha,omitempty"`
 	Findings int               `json:"findings"`
 	Reviewed bool              `json:"-"`
+	// Reasks is the number of bounded re-asks spent on this file before its
+	// terminal state (issue #73): parse-budget re-asks plus the fresh-budget
+	// deadline re-ask. Zero for a first-attempt success, so it is omitted
+	// from the JSON for every clean file.
+	Reasks int `json:"reasks,omitempty"`
 }
 
 // Verdict is the three-state gate. Only one of them is a pass (§11).
@@ -419,6 +424,19 @@ type RunRecord struct {
 	// and unavailable for in-progress runs. A run killed mid-flight still
 	// carries the entries recorded so far.
 	Calls []CallEntry `json:"calls,omitempty"`
+
+	// ReasksSpent is the run-wide count of bounded re-asks spent (issue #73):
+	// per-file parse-budget re-asks plus fresh-budget deadline re-asks. The
+	// gate surfaces it in the COULD_NOT_EVALUATE reason so a human sees the
+	// judge's condition — how much bounded retry was spent before a file was
+	// declared unmeasurable — not just a coverage count.
+	ReasksSpent int `json:"reasks_spent,omitempty"`
+	// EchoCorrections counts responses relabeled by the deterministic echo
+	// guard (issue #73): schema-valid reviews that named a path other than
+	// the file under review and were relabeled in code without spending a
+	// model round-trip. It measures the guard's yield on the exact flakiness
+	// the issue documents.
+	EchoCorrections int `json:"echo_corrections,omitempty"`
 }
 
 // Call outcome values for CallEntry.Outcome.

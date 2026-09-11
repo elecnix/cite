@@ -628,7 +628,7 @@ func TestTransientErrorRetriedOnceThenSucceeds(t *testing.T) {
 	}
 }
 
-func TestBlankBodyParseFailureRetriedFromRunGlobalBucket(t *testing.T) {
+func TestBlankBodyParseFailureRetriedFromPerFileBudget(t *testing.T) {
 	in := baseInputs()
 	c := &fakeClient{fn: func(i int, req model.CompletionRequest) (string, error) {
 		if isTriageCall(req) {
@@ -663,7 +663,7 @@ func TestBlankBodyParseFailureRetriedFromRunGlobalBucket(t *testing.T) {
 	}
 }
 
-func TestBlankBodiesUntilRetriesExhaustedRecordParseFailure(t *testing.T) {
+func TestBlankBodiesUntilPerFileBudgetExhaustedRecordsParseFailure(t *testing.T) {
 	in := baseInputs()
 	c := &fakeClient{fn: func(_ int, req model.CompletionRequest) (string, error) {
 		if isTriageCall(req) {
@@ -675,15 +675,15 @@ func TestBlankBodiesUntilRetriesExhaustedRecordParseFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	// 1 initial attempt + defaultRetriesPerUnitType from the run-global bucket.
+	// 1 initial attempt + defaultPerFileParseRetries from the file's own budget (issue #73).
 	reviewCalls := 0
 	for _, call := range c.calls {
 		if !isTriageCall(call) {
 			reviewCalls++
 		}
 	}
-	if reviewCalls != 1+defaultRetriesPerUnitType {
-		t.Errorf("review calls = %d, want %d (retry budget exhausted)", reviewCalls, 1+defaultRetriesPerUnitType)
+	if reviewCalls != 1+defaultPerFileParseRetries {
+		t.Errorf("review calls = %d, want %d (per-file retry budget exhausted)", reviewCalls, 1+defaultPerFileParseRetries)
 	}
 	var fo *model.FileOutcome
 	for i := range rec.Files {
@@ -709,7 +709,7 @@ func TestBlankBodiesUntilRetriesExhaustedRecordParseFailure(t *testing.T) {
 // echo from the reviewer model on this repository's own CI ended a run as
 // COULD_NOT_EVALUATE with 0 blocking findings; schema garbage now gets the
 // same bounded re-ask syntax garbage already gets.
-func TestSchemaViolationRetriedFromRunGlobalBucket(t *testing.T) {
+func TestSchemaViolationRetriedFromPerFileBudget(t *testing.T) {
 	in := baseInputs()
 	c := &fakeClient{fn: func(i int, req model.CompletionRequest) (string, error) {
 		if isTriageCall(req) {
@@ -745,10 +745,10 @@ func TestSchemaViolationRetriedFromRunGlobalBucket(t *testing.T) {
 }
 
 // The observed CI shape: a valid review response that names the wrong file
-// under review. Re-askable for the same reason as schema garbage — the
-// response carries no findings for this file — and terminal only once the
-// run-global bucket is exhausted.
-func TestWrongPathEchoRetriedFromRunGlobalBucket(t *testing.T) {
+// under review. Superseded by the deterministic echo guard (issue #73): the
+// response is relabeled in code WITHOUT a model round-trip, so one review
+// call suffices — see TestEchoGuardRelabelsWrongPathWithoutReask.
+func TestWrongPathEchoRelabeledWithoutReask(t *testing.T) {
 	in := baseInputs()
 	c := &fakeClient{fn: func(i int, req model.CompletionRequest) (string, error) {
 		if isTriageCall(req) {
@@ -769,8 +769,8 @@ func TestWrongPathEchoRetriedFromRunGlobalBucket(t *testing.T) {
 			reviewCalls++
 		}
 	}
-	if reviewCalls != 2 {
-		t.Errorf("review calls = %d, want 2 (one wrong-path re-ask)", reviewCalls)
+	if reviewCalls != 1 {
+		t.Errorf("review calls = %d, want 1 (echo guard relabels without a re-ask)", reviewCalls)
 	}
 	var fo *model.FileOutcome
 	for i := range rec.Files {
@@ -785,7 +785,7 @@ func TestWrongPathEchoRetriedFromRunGlobalBucket(t *testing.T) {
 
 // Schema garbage until the retry bucket is exhausted still ends terminal:
 // parse_failure, coverage incomplete, gate fail-closed (issue #59).
-func TestSchemaViolationUntilExhaustedRecordsParseFailure(t *testing.T) {
+func TestSchemaViolationUntilPerFileBudgetExhaustedRecordsParseFailure(t *testing.T) {
 	in := baseInputs()
 	c := &fakeClient{fn: func(_ int, req model.CompletionRequest) (string, error) {
 		if isTriageCall(req) {
@@ -803,8 +803,8 @@ func TestSchemaViolationUntilExhaustedRecordsParseFailure(t *testing.T) {
 			reviewCalls++
 		}
 	}
-	if reviewCalls != 1+defaultRetriesPerUnitType {
-		t.Errorf("review calls = %d, want %d (retry budget exhausted)", reviewCalls, 1+defaultRetriesPerUnitType)
+	if reviewCalls != 1+defaultPerFileParseRetries {
+		t.Errorf("review calls = %d, want %d (per-file retry budget exhausted)", reviewCalls, 1+defaultPerFileParseRetries)
 	}
 	var fo *model.FileOutcome
 	for i := range rec.Files {
@@ -822,8 +822,8 @@ func TestSchemaViolationUntilExhaustedRecordsParseFailure(t *testing.T) {
 
 // A non-empty response that fails strict JSON decoding (single-quoted keys,
 // truncated output) is a mechanical formatting artifact like a blank body:
-// it is retried from the run-global bucket, not treated as terminal (§8).
-func TestSyntaxGarbageRetriedFromRunGlobalBucket(t *testing.T) {
+// it is retried from the file's own per-file budget, not treated as terminal (§8).
+func TestSyntaxGarbageRetriedFromPerFileBudget(t *testing.T) {
 	in := baseInputs()
 	c := &fakeClient{fn: func(i int, req model.CompletionRequest) (string, error) {
 		if isTriageCall(req) {
@@ -858,7 +858,7 @@ func TestSyntaxGarbageRetriedFromRunGlobalBucket(t *testing.T) {
 	}
 }
 
-func TestSyntaxGarbageUntilExhaustedRecordsParseFailure(t *testing.T) {
+func TestSyntaxGarbageUntilPerFileBudgetExhaustedRecordsParseFailure(t *testing.T) {
 	in := baseInputs()
 	c := &fakeClient{fn: func(_ int, req model.CompletionRequest) (string, error) {
 		if isTriageCall(req) {
@@ -876,8 +876,8 @@ func TestSyntaxGarbageUntilExhaustedRecordsParseFailure(t *testing.T) {
 			reviewCalls++
 		}
 	}
-	if reviewCalls != 1+defaultRetriesPerUnitType {
-		t.Errorf("review calls = %d, want %d (retry budget exhausted)", reviewCalls, 1+defaultRetriesPerUnitType)
+	if reviewCalls != 1+defaultPerFileParseRetries {
+		t.Errorf("review calls = %d, want %d (per-file retry budget exhausted)", reviewCalls, 1+defaultPerFileParseRetries)
 	}
 	var fo *model.FileOutcome
 	for i := range rec.Files {
@@ -1395,9 +1395,10 @@ func (c *providerFakeClient) DescribeProvider() string { return c.provider }
 
 // When a review call dies at its deadline, the surfaced error must name the
 // knob (roles.review.timeout) rather than only the bare "context deadline
-// exceeded" symptom, and the call must NOT be retried: the first attempt
-// already burned its whole wall-clock budget, and a re-issue pays the
-// provider twice for the same wait.
+// exceeded" symptom. completeWithRetry does not retry inside its own loop,
+// but the review caller spends its ONE fresh per-file deadline re-ask first
+// (issue #73), after which the file is terminal — a timeout retry must never
+// turn a fast red into a slow unbounded one.
 func TestDeadlineErrorNamesTheTimeoutKnob(t *testing.T) {
 	var logs []string
 	c := &fakeClient{fn: func(_ int, _ model.CompletionRequest) (string, error) {
@@ -1414,14 +1415,17 @@ func TestDeadlineErrorNamesTheTimeoutKnob(t *testing.T) {
 	if rec.Files[0].Reason != "deadline_exceeded" {
 		t.Errorf("file reason = %q, want deadline_exceeded", rec.Files[0].Reason)
 	}
+	if rec.Files[0].Reasks != defaultPerFileDeadlineRetries {
+		t.Errorf("Reasks = %d, want %d — the outcome must name the budget spent", rec.Files[0].Reasks, defaultPerFileDeadlineRetries)
+	}
 	reviewCalls := 0
 	for _, call := range c.calls {
 		if !isTriageCall(call) {
 			reviewCalls++
 		}
 	}
-	if reviewCalls != 1 {
-		t.Errorf("review calls = %d, want 1 — a deadline expiry is terminal, never retried", reviewCalls)
+	if reviewCalls != 1+defaultPerFileDeadlineRetries {
+		t.Errorf("review calls = %d, want %d — one fresh-budget deadline re-ask, then terminal", reviewCalls, 1+defaultPerFileDeadlineRetries)
 	}
 	joined := strings.Join(logs, "\n")
 	for _, want := range []string{"roles.review.timeout", "roles.review.max_output_tokens"} {
@@ -1429,8 +1433,8 @@ func TestDeadlineErrorNamesTheTimeoutKnob(t *testing.T) {
 			t.Errorf("error/log output does not name the knob %q; logs:\n%s", want, joined)
 		}
 	}
-	if !strings.Contains(joined, "NOT retrying") {
-		t.Errorf("deadline log must say the call was not retried; logs:\n%s", joined)
+	if !strings.Contains(joined, "fresh-budget") {
+		t.Errorf("deadline log must name the fresh-budget re-ask (issue #73); logs:\n%s", joined)
 	}
 }
 

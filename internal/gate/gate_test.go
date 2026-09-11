@@ -379,3 +379,51 @@ func TestCheckRunPayloadCacheHitBelowFloorStillShown(t *testing.T) {
 		t.Errorf("low cache-hit must still render:\n%s", summary)
 	}
 }
+
+// Issue #73: the gate's COULD_NOT_EVALUATE reason must surface the judge's
+// condition — how many files were never evaluated, by which mechanism, and
+// how much bounded retry was spent before giving up — not just a coverage
+// count with nothing behind it. This reason flows verbatim into the check
+// summary and the sticky comment through the existing plumbing.
+func TestErroredReasonNamesMechanismAndBudgetSpent(t *testing.T) {
+	rec := baseRecord()
+	rec.Coverage = model.Coverage{APIFiles: 3, Reviewed: 1, Complete: false}
+	rec.Files = []model.FileOutcome{
+		{Path: "ok.go", State: model.FileReviewed},
+		{Path: "bad.go", State: model.FileErrored, Reason: "parse_failure", Reasks: 2},
+		{Path: "slow.go", State: model.FileErrored, Reason: "deadline_exceeded", Reasks: 1},
+	}
+	rec.ReasksSpent = 3
+	v, reason := Decide(rec, config.Default(), Options{})
+	if v != model.VerdictCouldNotEvaluate {
+		t.Fatalf("verdict = %s, want COULD_NOT_EVALUATE", v)
+	}
+	for _, want := range []string{
+		"2 file(s) never evaluated",
+		"bad.go (parse_failure, 2 re-ask(s) spent)",
+		"slow.go (deadline_exceeded, 1 re-ask(s) spent)",
+		"3 bounded re-ask(s) spent",
+	} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("reason %q missing %q", reason, want)
+		}
+	}
+}
+
+// An errored file with no re-asks and no reason still fails closed with the
+// path named — the legacy shape must not regress.
+func TestErroredWithoutMechanismStillNamesPaths(t *testing.T) {
+	rec := baseRecord()
+	rec.Coverage = model.Coverage{APIFiles: 2, Reviewed: 1, Complete: false}
+	rec.Files = []model.FileOutcome{
+		{Path: "ok.go", State: model.FileReviewed},
+		{Path: "bad.go", State: model.FileErrored},
+	}
+	v, reason := Decide(rec, config.Default(), Options{})
+	if v != model.VerdictCouldNotEvaluate {
+		t.Fatalf("verdict = %s, want COULD_NOT_EVALUATE", v)
+	}
+	if !strings.Contains(reason, "bad.go") {
+		t.Errorf("reason %q must still name the path", reason)
+	}
+}
