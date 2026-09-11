@@ -29,7 +29,7 @@ jobs:
   diff:
     runs-on: ubuntu-latest
     steps:
-      - uses: elecnix/cite@v1
+      - uses: elecnix/cite@0a74607d97de215006f3db54ccff436d86e61f76  # v0.6.0
         # No MODEL_API_KEY here. This job publishes nothing and holds nothing;
         # it exists so the trusted side has a triggering run and so fork PRs
         # are not silently skipped.
@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Review and publish
-        uses: elecnix/cite@v1
+        uses: elecnix/cite@0a74607d97de215006f3db54ccff436d86e61f76  # v0.6.0
         env:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
         with:
