@@ -1,0 +1,37 @@
+# Prose lint: Vale reads the markdown a pull request changed, against this
+# repository's own rules. `.vale.ini` at the repo root pins the upstream
+# ai-tells packs and `tools/ci/vale/styles/noslop/` holds ours; the action
+# reads its rules from here and carries none of its own, so what it reports
+# matches what `vale` prints on a contributor's laptop after `vale sync`.
+#
+# Error-level alerts fail the `vale` check; warnings and suggestions are
+# reported without failing it. On a fork pull request the read-only token
+# cannot post the comment or set the check, and the action falls back to a
+# job summary rather than failing the run.
+#
+# The full-length SHA pin mirrors docs/release.md: a prose gate that floats
+# on a tag can change its verdict between two runs of the same commit.
+
+name: prose
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+concurrency:
+  # One lint per pull request at a time; the comment is edited in place, so
+  # cancelling a superseded run loses nothing.
+  group: prose-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  prose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: elecnix/vale-action@021794440ee4dfed53e029d6a7cafcac951fd28a # v1.0.0

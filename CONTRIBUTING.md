@@ -45,6 +45,10 @@ See [bench/README.md](bench/README.md) for the case format.
 - Go 1.22 or newer.
 - Build: `go build ./...`
 - Test: `go test ./...`
+- Prose: the `prose` workflow lints the markdown a pull request changed,
+  against `.vale.ini` at the repo root. Locally, run `vale --no-global sync`
+  once after cloning, then `vale --no-global <path>`. Error-level alerts fail
+  the check. Warnings do not.
 - The reviewer never calls GitHub; the publisher never calls a model. Both are
   testable offline against fixtures. Keep it that way.
 
