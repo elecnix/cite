@@ -113,6 +113,55 @@ func DerivedReviewTimeout(maxOutputTokens int) time.Duration {
 	return derived
 }
 
+// TimeoutAdvisories returns one informational line per role whose explicitly
+// configured timeout is SHORTER than the default that would apply if the pin
+// were removed (triage and assemble: their fixed defaults; review: the
+// derivation for the resolved output cap, floored like the real default).
+// Timeouts predate the 15-minute defaults and terminal deadlines; many
+// installs pinned a value that was generous then and is strict now. A pin is
+// honoured — never overridden — so the advisory is the operator's only
+// signal. (Unparsable pins cannot reach this check: Load rejects them.)
+func (c *Config) TimeoutAdvisories() []string {
+	if c == nil {
+		return nil
+	}
+	// A slice, not a map: advisory order must be deterministic, and Go map
+	// iteration is not (the head reviewer flagged exactly this).
+	fixed := []struct {
+		role model.Role
+		def  time.Duration
+	}{
+		{model.RoleTriage, DefaultTriageTimeout},
+		{model.RoleAssemble, DefaultAssembleTimeout},
+	}
+	var out []string
+	for _, pair := range fixed {
+		spec, ok := c.Roles[pair.role]
+		if !ok || spec.Timeout == "" {
+			continue
+		}
+		d, err := time.ParseDuration(spec.Timeout)
+		if err != nil || d <= 0 {
+			continue
+		}
+		if d < pair.def {
+			out = append(out, fmt.Sprintf("roles.%s.timeout is pinned at %s, shorter than the %s default — the pin may be stricter than necessary; deadline expiry is never retried, so a slow-but-correct call dies at the pin (remove the pin or raise it)", pair.role, spec.Timeout, pair.def))
+		}
+	}
+	if spec, ok := c.Roles[model.RoleReview]; ok && spec.Timeout != "" {
+		if d, err := time.ParseDuration(spec.Timeout); err == nil && d > 0 {
+			tokens := spec.MaxOutputTokens
+			if tokens <= 0 {
+				tokens = c.modelEntryMaxTokens(c.Role(model.RoleReview).Model)
+			}
+			if def := DerivedReviewTimeout(tokens); d < def {
+				out = append(out, fmt.Sprintf("roles.review.timeout is pinned at %s, shorter than the derived %s default for the resolved output cap — the pin may be stricter than necessary; deadline expiry is never retried, so a slow-but-correct call dies at the pin (remove the pin or raise it)", spec.Timeout, def))
+			}
+		}
+	}
+	return out
+}
+
 // RoleSpec is one entry of the roles block, before default resolution.
 type RoleSpec struct {
 	Model           string // "provider/modelid" when providers are declared

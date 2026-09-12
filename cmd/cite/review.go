@@ -80,7 +80,11 @@ func runReview(args []string) error {
 	case *diffPath != "":
 		return reviewLocal(*diffPath, *cfgPath, sink)
 	case *prSpec != "":
-		return reviewPR(*prSpec, *cfgPath, *dryRun, *disabled, *toolFailureBlocks, sink, *recordOut)
+		reviewerID, err := resolveReviewerID()
+		if err != nil {
+			return fmt.Errorf("review: %w", err)
+		}
+		return reviewPR(*prSpec, *cfgPath, *dryRun, *disabled, *toolFailureBlocks, sink, *recordOut, reviewerID)
 	default:
 		fs.Usage()
 		return fmt.Errorf("review: one of --diff or --pr is required")
@@ -303,7 +307,7 @@ type threadFinding struct {
 	Evidence    []model.Evidence `json:"evidence"`
 }
 
-func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, sink publisher.Sink, recordOut string) error {
+func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, sink publisher.Sink, recordOut, reviewerID string) error {
 	// Issue #59: the repository's opt-out reaches every conclusion site below
 	// as one gate option. Zero value (unset) keeps the fail-closed default.
 	gateOpts := gate.Options{NeutralToolFailure: !toolFailureBlocks}
@@ -339,7 +343,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, si
 	// synthetic merge commit on pull_request events (§11).
 	var checkID int64
 	if !dryRun && !disabled && !reportMode {
-		checkID, err = c.CreateCheckRun(ctx, pr.HeadSHA, "cite", "Cite is reviewing", "queued", "queued")
+		checkID, err = c.CreateCheckRun(ctx, pr.HeadSHA, checkNameFor(reviewerID), "Cite is reviewing", "queued", "queued")
 		if err != nil {
 			return fmt.Errorf("creating check run: %w", err)
 		}
@@ -489,7 +493,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, si
 		// fresh; findings on untouched files carry forward. Fails toward
 		// re-review: carried findings re-enter the plan so their threads stay
 		// alive.
-		prevState := readSticky(ctx, c, num)
+		prevState := readSticky(ctx, c, num, stickyMarkerFor(reviewerID))
 		toReview := publisher.FilesToReview(prevState.BlobSHAs, curSHAs)
 		if len(prevState.BlobSHAs) > 0 && len(toReview) < len(entries) {
 			logToStderr("incremental: %d of %d files changed content since last review", len(toReview), len(entries))
@@ -594,7 +598,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, si
 				_ = c.MinimizeComment(ctx, t.ID)
 			}
 		}
-		writeSticky(ctx, c, num, rec, ledger, curSHAs, plan.CommentsToPost)
+		writeSticky(ctx, c, num, stickyMarkerFor(reviewerID), rec, ledger, curSHAs, plan.CommentsToPost)
 	} else {
 		fmt.Printf("dry-run: would post %d comment(s), resolve %d thread(s), minimise %d\n",
 			len(comments), len(plan.ThreadsToResolve), len(plan.ThreadsToMinimise))

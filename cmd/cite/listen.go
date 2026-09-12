@@ -259,7 +259,7 @@ func runSignals(args []string) error {
 		assocByID[cm.ID] = cm.AuthorAssociation
 	}
 
-	prevState := readSticky(ctx, c, num)
+	prevState := readSticky(ctx, c, num, stickyMarkerFor(defaultReviewerID))
 	ledger := publisher.DismissalLedger{}
 	replyVerdicts := map[string]string{}
 	if prevState.ReplyVerdicts != nil {
@@ -409,7 +409,7 @@ func updateStickyLedger(ctx context.Context, c *githubclient.Client, prNum int, 
 	if err != nil {
 		return fmt.Errorf("marshalling ledger: %w", err)
 	}
-	st := readSticky(ctx, c, prNum)
+	st := readSticky(ctx, c, prNum, stickyMarkerFor(defaultReviewerID))
 	st.Ledger = blob
 	if len(replyVerdicts) > 0 {
 		st.ReplyVerdicts = replyVerdicts

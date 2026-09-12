@@ -20,8 +20,8 @@ func TestAnchorOutOfRangeDropsFinding(t *testing.T) {
 		wantDetail string // substring expected in the drop detail
 	}{
 		{
-			name:       "past EOF",
-			start:      50, end: 50,
+			name:  "past EOF",
+			start: 50, end: 50,
 			wantDetail: "3 post-image lines",
 		},
 		{

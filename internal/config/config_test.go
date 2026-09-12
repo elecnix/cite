@@ -687,3 +687,98 @@ roles:
 		t.Errorf("Role(review).Timeout = %v, want the explicit 45s to win over the derived %v", rc.Timeout, DerivedReviewTimeout(32768))
 	}
 }
+
+// A pin shorter than the default yields an advisory; a pin longer than the
+// default, an unpinned role and an unparsable pin yield none — the advisory
+// is strictly "you may be stricter than necessary".
+func TestTimeoutAdvisories(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want []string // substrings; empty wants no advisories
+	}{
+		{
+			name: "review pin below the derived default",
+			src: `
+roles:
+  review: { timeout: 600s, max_output_tokens: 65536 }
+`,
+			want: []string{"roles.review.timeout", "600s", "15m"},
+		},
+		{
+			name: "triage pin below the fixed default",
+			src: `
+roles:
+  triage: { timeout: 120s }
+`,
+			want: []string{"roles.triage.timeout", "120s"},
+		},
+		{
+			name: "assemble pin below the fixed default",
+			src: `
+roles:
+  assemble: { timeout: 60s }
+`,
+			want: []string{"roles.assemble.timeout"},
+		},
+		{
+			name: "pin above the default is silent",
+			src: `
+roles:
+  triage: { timeout: 30m }
+`,
+		},
+		{
+			name: "unpinned roles are silent",
+			src:  "model: openai/gpt-5-mini\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mustParse(t, tc.src).TimeoutAdvisories()
+			if len(tc.want) == 0 {
+				if len(got) != 0 {
+					t.Fatalf("TimeoutAdvisories() = %v, want none", got)
+				}
+				return
+			}
+			if len(got) == 0 {
+				t.Fatalf("TimeoutAdvisories() = none, want an advisory containing %v", tc.want)
+			}
+			joined := strings.Join(got, "\n")
+			for _, want := range tc.want {
+				if !strings.Contains(joined, want) {
+					t.Errorf("advisory does not contain %q; got:\n%s", want, joined)
+				}
+			}
+		})
+	}
+}
+
+// Advisory order must be deterministic across runs: map iteration is not.
+func TestTimeoutAdvisoriesDeterministicOrder(t *testing.T) {
+	src := `
+roles:
+  review: { timeout: 600s }
+  triage: { timeout: 120s }
+  assemble: { timeout: 60s }
+`
+	first := mustParse(t, src).TimeoutAdvisories()
+	if len(first) != 3 {
+		t.Fatalf("TimeoutAdvisories() = %d lines, want 3", len(first))
+	}
+	for i := 0; i < 20; i++ {
+		next := mustParse(t, src).TimeoutAdvisories()
+		for j, line := range next {
+			if line != first[j] {
+				t.Fatalf("advisory %d = %q, want stable %q (run %d)", j, line, first[j], i)
+			}
+		}
+	}
+	wantOrder := []string{"roles.triage.timeout", "roles.assemble.timeout", "roles.review.timeout"}
+	for i, want := range wantOrder {
+		if !strings.Contains(first[i], want) {
+			t.Errorf("advisory %d = %q, want it to cover %q (order: triage, assemble, review)", i, first[i], want)
+		}
+	}
+}

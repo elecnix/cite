@@ -13,6 +13,28 @@
 # pull request head — the action fetches everything it needs from the GitHub
 # API — and the model key arrives as a secret, never in the diff.
 #
+# As of the v0.6.0 pin, the action itself fetches .github/cite.yml from
+# the base ref (scripts/fetch-config.sh, shipped in the action), so the
+# released review job below needs no hand-rolled fetch step. The one
+# exception is the review-head job, which runs a locally built binary
+# directly rather than through the action, so it keeps its own fetch
+# of the config from the BASE ref.
+#
+# Two reviewers run in parallel on every same-repository pull request:
+#
+#   review      — the released binary, the "before" reviewer, under the
+#                 canonical identity "cite" (default check run name and
+#                 sticky marker).
+#   review-head — the binary built from THIS pull request's head, the
+#                 "after" reviewer, under identity "cite-head"
+#                 (CITE_REVIEWER_ID). Comparing the two reviews on the same
+#                 pull request shows exactly what the pull request changed
+#                 about the reviewer itself.
+#
+# Identities namespace everything GitHub-facing (check run name, sticky
+# comment marker), so the two reviewers never conclude or overwrite each
+# other's state. See cmd/cite/identity.go.
+
 name: review
 
 on:
@@ -30,6 +52,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The "before" reviewer: the released Cite binary, under the canonical
+  # "cite" identity (check run name and sticky marker unchanged).
   review:
     # Fork pull requests receive a read-only github.token, so posting the
     # review would fail; Cite's own fork-safe two-workflow split (§12) is
@@ -43,3 +67,97 @@ jobs:
           model_id: deepseek/deepseek-v4-flash-0731
           model_base_url: https://openrouter.ai/api/v1
           model_api_key: ${{ secrets.MODEL_API_KEY }}
+
+  # The "after" reviewer: the binary built from THIS pull request's head,
+  # reviewing the same pull request under its own "cite-head" identity
+  # (CITE_REVIEWER_ID).
+  #
+  # I1 (docs/security.md) says a privileged job executes zero PR-head code.
+  # This path is the deliberate, gated exception: it runs ONLY for
+  # same-repository branches, where head code is controlled by the same
+  # people who own the secrets. Fork pull requests get no head review — the
+  # `if` guards below are the security boundary, keep them on both jobs.
+  build-head:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version-file: go.mod
+      - name: Build Cite from the pull request head
+        run: go build -o cite-head ./cmd/cite
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cite-head-binary
+          path: cite-head
+
+  review-head:
+    needs: build-head
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: cite-head-binary
+          path: .
+
+      # Unlike the released reviewer above — which gets its config from
+      # the action's own scripts/fetch-config.sh, since it runs through
+      # the action — this job runs the locally built binary directly, so
+      # it fetches the config explicitly from the BASE ref, never from
+      # the PR head (§12).
+      - name: Fetch trusted Cite config from the base branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname '.github/cite.yml')"
+          if gh api "repos/${{ github.repository }}/contents/.github/cite.yml?ref=${{ github.base_ref }}" \
+               --jq '.content' | base64 -d > .github/cite.yml.tmp; then
+            mv .github/cite.yml.tmp .github/cite.yml
+          else
+            rm -f .github/cite.yml.tmp
+            echo "cite-head: no .github/cite.yml on base ref; running with defaults"
+          fi
+
+      - name: Review this pull request with the head build of Cite
+        env:
+          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
+          MODEL_BASE_URL: https://openrouter.ai/api/v1
+          MODEL_ID: deepseek/deepseek-v4-flash-0731
+          GITHUB_TOKEN: ${{ github.token }}
+          CITE_REVIEWER_ID: cite-head
+          CITE_RECORD_OUT: ${{ runner.temp }}/cite-head-run-record.json
+        run: |
+          set -euo pipefail
+          chmod +x ./cite-head
+          # Archive for forensics: tee the full log and dump the run record
+          # (per-call timings, token usage, per-file outcomes) even when the
+          # run fails. pipefail preserves cite's exit code through the tee.
+          CITE_LOG="$RUNNER_TEMP/cite-head-output.log"
+          # PR_NUMBER is not a default runner variable; pull_request events
+          # put the number in the ref as refs/pull/N/merge.
+          PR_NUM="${PR_NUMBER:-}"
+          if [ -z "$PR_NUM" ] && [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
+            PR_NUM="${GITHUB_REF#refs/pull/}"
+            PR_NUM="${PR_NUM%/merge}"
+          fi
+          if [ -z "$PR_NUM" ]; then
+            echo "cite-head: no pull request context (event: ${GITHUB_EVENT_NAME:-unknown}); nothing to review" >&2
+            exit 0
+          fi
+          ./cite-head review --pr "$GITHUB_REPOSITORY#$PR_NUM" --config .github/cite.yml 2>&1 | tee "$CITE_LOG"
+
+      - name: Archive forensics on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cite-head-forensics-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/cite-head-output.log
+            ${{ runner.temp }}/cite-head-run-record.json
+          if-no-files-found: warn
+          retention-days: 30
