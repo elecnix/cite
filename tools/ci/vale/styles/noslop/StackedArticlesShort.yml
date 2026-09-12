@@ -1,0 +1,19 @@
+---
+# The one-premodifier form of StackedArticles: "the engine the gate uses".
+# English puts the verb between the two phrases, so stacking puts it after
+# both, far from its object. Fix by naming the actor and putting its verb next.
+#
+# Each middle token is listed by tag and none of the tags is a finite verb, so
+# ordinary subject-verb-object prose cannot match. Known miss: the tagger reads
+# a plural noun like "oracles" as VBZ, so "the oracles the gate validates
+# against" is missed here but read correctly by a human. Adding VBZ to the
+# middle catches that miss and also fires on correct English. This pack gates
+# prose on pull requests, so a false positive costs more than a miss.
+extends: sequence
+message: "Stacked articles: '%[1]s %[2]s %[3]s'. Two `the` phrases with the verb placed after both. Name the actor and put its verb next to it."
+level: error
+tokens:
+  - pattern: (?i)the
+  - tag: JJ|JJR|JJS|NN|NNS|NNP|NNPS|VBN|VBG
+  - pattern: (?i)the
+    target: true

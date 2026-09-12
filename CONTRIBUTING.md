@@ -22,8 +22,8 @@ So the workflow for any change to `prompts/` is:
 4. Include both outputs (and the delta) in your pull request.
 
 A change with no delta is rejected as noise. A change with a regression anywhere
-— schema validity, anchor placement, fingerprint stability, detection of planted
-defects — needs a reason in the pull request, and "it reads better" is not one.
+(schema validity, anchor placement, fingerprint stability, detection of planted
+defects) needs a reason in the pull request, and "it reads better" is not one.
 
 ## Benchmark cases
 
@@ -34,7 +34,7 @@ defects — needs a reason in the pull request, and "it reads better" is not one
 - a manifest of planted defects, each with a one-sentence detection rubric.
 
 The corpus targets 40% positive (a planted defect), 40% clean, and 20%
-near-miss — code matching a defect pattern that is actually correct. The near
+near-miss: code matching a defect pattern that is actually correct. The near
 misses are non-negotiable: without them you measure pattern-matching rather than
 reasoning, and false-positive-heavy models score well.
 
@@ -45,7 +45,11 @@ See [bench/README.md](bench/README.md) for the case format.
 - Go 1.22 or newer.
 - Build: `go build ./...`
 - Test: `go test ./...`
-- The reviewer never calls GitHub; the publisher never calls a model. Both are
+- Prose: the `prose` workflow lints the markdown a pull request changed,
+  against `.vale.ini` at the repo root. Locally, run `vale --no-global sync`
+  once after cloning, then `vale --no-global <path>`. Error-level alerts fail
+  the check. Warnings do not.
+- The reviewer never calls GitHub. The publisher never calls a model. Both are
   testable offline against fixtures. Keep it that way.
 
 ```
@@ -56,8 +60,8 @@ go test ./...
 
 ## Commit style
 
-Plain commits. Imperative subject line, no scope prefixes required, body only
-when the why is not obvious from the diff:
+Use plain commits: an imperative subject line, no scope prefixes required, and
+a body only when the why is not obvious from the diff:
 
 ```
 Fix anchor validation on renamed files
@@ -70,11 +74,11 @@ falling through to the whole-file anchor path.
 
 In order:
 
-1. **Benchmark cases** (`bench/cases/`) — especially near-misses you have seen
+1. **Benchmark cases** (`bench/cases/`), especially near-misses you have seen
    fool reviewers in the wild.
-2. **Prompt changes** — with the benchmark delta above.
-3. **Documentation fixes** — this project treats its documentation as part of
-   the product; a divergence that is not written down is a bug.
+2. **Prompt changes**, with the benchmark delta above.
+3. **Documentation fixes**. This project treats its documentation as part of
+   the product, and a divergence nobody writes down is a bug.
 4. **Code**, matching the existing structure: `scope/`, `reviewer/`,
    `publisher/`, `gate/`, `config/`, `instructions/`.
 
