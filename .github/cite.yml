@@ -4,6 +4,39 @@
 
 model: deepseek/deepseek-v4-flash-0731
 
+# Scope: THIS REPOSITORY'S CHOICE ONLY, not a recommendation to consumers.
+# A consumer reading this file should not infer that unsetting the gate is
+# advised; our situation is unusual — the reviewer under test is our own
+# product, and this repository is where its worst failure mode was first
+# felt.
+#
+# What changed and why it matters: three review attempts in a row on PR #71
+# (a docs-only fix for the never-published @v1 pin the operator reported)
+# ended COULD_NOT_EVALUATE with zero findings about the diff — a corrupted
+# model reply each time, the failure set moving between attempts (two files,
+# then four, then one). A diff property does not move between runs; a flaky
+# judge does. Meanwhile the gate is fail-closed, so "the judge was broken"
+# vetoed a verified-sound change for hours, publicly, on the PR that fixes
+# what the operator reported.
+#
+# What this does NOT give up: a real finding (FOUND) still concludes failure
+# and blocks, unchanged. The verdict still publishes truthfully as
+# COULD_NOT_EVALUATE with its reason in the sticky state and run log; only
+# the GitHub check-run conclusion changes — "neutral" instead of "failure" —
+# so we decline to treat "no verdict" as a verdict. Every
+# COULD_NOT_EVALUATE is still diagnosed and reported rather than passed
+# quietly; that compensating pressure is the point of keeping the verdict
+# legible. Retry mechanics for the parse failures remain open work (issue
+# tracking it is filed alongside this change).
+#
+# Wiring note: the gate option is an ACTION INPUT (tool_failure_blocks), not
+# a config-file setting — the flag is wired input → CLI flag → gate option,
+# so it is set in .github/workflows/review.yml's `with:` block. v0.7.0 is
+# the first release carrying that input (issue #59 landed on main after
+# v0.6.0), and the workflow pins v0.7.0 and sets the input, so the choice
+# takes effect: this file documents the scope, the workflow input does the
+# work.
+
 # Dogfooding on PR #40 showed deepseek-v4-flash routed through OpenRouter
 # intermittently returning free text instead of schema-constrained JSON
 # (fenced blocks, single-quoted keys, stray bytes) — an endpoint dropping
