@@ -34,6 +34,25 @@ func TestStickyVisibleBodyShowsVerdictAndErrors(t *testing.T) {
 	}
 }
 
+// The pinned comment's opening line must identify the Cite build that wrote
+// it: a maintainer reading a comment from an unfamiliar run needs to know
+// which release produced it. The version is compiled into the binary — no
+// ambient environment input, so the workflow environment cannot spoof what
+// the comment claims.
+func TestStickyHeaderLineShowsCiteVersion(t *testing.T) {
+	rec := &model.RunRecord{
+		Model:    "m",
+		HeadSHA:  "59a5c93",
+		Verdict:  model.VerdictPass,
+		Coverage: model.Coverage{APIFiles: 1, Reviewed: 1, Complete: true},
+	}
+	out := stickyHeaderLine(rec, 82, 3)
+	want := "Cite " + version + " state for PR #82."
+	if !strings.Contains(out, want) {
+		t.Errorf("sticky header missing cite version %q\n---\n%s", want, out)
+	}
+}
+
 // When the run executes inside GitHub Actions, the sticky comment must link
 // to the Actions run that produced it, so a maintainer reading a finding can
 // open the reviewer's log.

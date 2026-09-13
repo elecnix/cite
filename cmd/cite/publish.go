@@ -294,12 +294,19 @@ func writeSticky(ctx context.Context, c *githubclient.Client, prNum int, rec *mo
 	var sb strings.Builder
 	sb.WriteString(stickyMarker + "\n")
 	fmt.Fprintf(&sb, "<!-- cite-state=%s -->\n", base64.StdEncoding.EncodeToString(raw))
-	fmt.Fprintf(&sb, "Cite state for PR #%d. Ledger entries: %d. Last run: %s on %.7s.\n",
-		prNum, len(ledger.Entries), rec.Model, rec.HeadSHA)
+	sb.WriteString(stickyHeaderLine(rec, prNum, len(ledger.Entries)))
 	sb.WriteString(stickyVisibleBody(rec))
 	if err := c.UpsertIssueComment(ctx, prNum, stickyMarker, sb.String()); err != nil {
 		logToStderr("warning: sticky comment write failed: %v", err)
 	}
+}
+
+// stickyHeaderLine renders the opening line of the pinned comment: which
+// Cite release wrote it, for which pull request, the ledger size, and the
+// model and head SHA of the last run.
+func stickyHeaderLine(rec *model.RunRecord, prNum, ledgerEntries int) string {
+	return fmt.Sprintf("Cite %s state for PR #%d. Ledger entries: %d. Last run: %s on %.7s.\n",
+		version, prNum, ledgerEntries, rec.Model, rec.HeadSHA)
 }
 
 // stickyVisibleBody renders the human-facing tail of the sticky comment: the
