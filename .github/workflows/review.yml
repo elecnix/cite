@@ -9,6 +9,13 @@
 # Pin tracks the latest release rather than an old one: dogfooding should
 # exercise what consumers actually get, including released retry hardening.
 #
+# Consequence of the tool_failure_blocks choice below: the check run
+# concludes "neutral" when the gate reports COULD_NOT_EVALUATE, so a
+# corrupted model reply no longer fails this check. A real finding (FOUND)
+# still concludes failure and blocks, and every COULD_NOT_EVALUATE is
+# still published truthfully and diagnosed (see .github/cite.yml for the
+# why).
+#
 # Security posture mirrors the documented install (§12): no checkout of the
 # pull request head — the action fetches everything it needs from the GitHub
 # API — and the model key arrives as a secret, never in the diff.
@@ -38,8 +45,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Review this pull request with Cite
-        uses: elecnix/cite@v0.6.0
+        uses: elecnix/cite@v0.7.0
         with:
+          tool_failure_blocks: false
           model_id: deepseek/deepseek-v4-flash-0731
           model_base_url: https://openrouter.ai/api/v1
           model_api_key: ${{ secrets.MODEL_API_KEY }}
@@ -51,6 +59,6 @@ jobs:
           # truthfully as COULD_NOT_EVALUATE), the check run concludes
           # "neutral" instead of "failure", so silence from a broken judge
           # does not veto the merge. A real finding (FOUND) always concludes
-          # failure and blocks, unchanged. The input is inert until a release
-          # carries it (issue #59 landed on main after v0.6.0); see the
-          # release-prep note in the PR that added this.
+          # failure and blocks, unchanged. The pin above is v0.7.0, the first
+          # release carrying the tool_failure_blocks input (issue #59 landed
+          # on main after v0.6.0), so the input takes effect as written.
