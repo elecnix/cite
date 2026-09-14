@@ -22,11 +22,21 @@ func init() {
 	registerCommand("reaper", runReaper)
 }
 
+// reaperConclusion maps the reaper's COULD_NOT_EVALUATE verdict onto a
+// check-run conclusion through the same gate option the review path uses
+// (issues #59 and #85): the -tool-failure-blocks opt-out flips it to
+// neutral, and the default still concludes failure.
+func reaperConclusion(toolFailureBlocks bool) string {
+	return gate.Conclusion(model.VerdictCouldNotEvaluate, gate.Options{NeutralToolFailure: !toolFailureBlocks})
+}
+
 func runReaper(args []string) error {
 	fs := flag.NewFlagSet("reaper", flag.ContinueOnError)
 	repo := fs.String("repo", "", "owner/repo to sweep")
 	stale := fs.Int("stale-minutes", 20, "minutes without a terminal check before failing")
 	dryRun := fs.Bool("dry-run", false, "report without writing")
+	toolFailureBlocks := fs.Bool("tool-failure-blocks", true,
+		"a COULD_NOT_EVALUATE reaper conclusion blocks the merge (default); -tool-failure-blocks=false concludes neutral instead")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -63,11 +73,12 @@ func runReaper(args []string) error {
 		})
 	}
 	stuck := gate.NeedsReaper(states, *stale)
+	conclusion := reaperConclusion(*toolFailureBlocks)
 	for _, s := range stuck {
-		fmt.Printf("PR #%d (%s): no terminal check for %dm — concluding failure\n",
-			s.Number, shortSHA(s.HeadSHA), s.AgeMinutes)
+		fmt.Printf("PR #%d (%s): no terminal check for %dm, concluding %s\n",
+			s.Number, shortSHA(s.HeadSHA), s.AgeMinutes, conclusion)
 		if !*dryRun && s.CheckID != 0 {
-			if err := c.ConcludeCheckRun(ctx, s.CheckID, model.VerdictCouldNotEvaluate.Conclusion(),
+			if err := c.ConcludeCheckRun(ctx, s.CheckID, conclusion,
 				"Cite never reported", "run never reported"); err != nil {
 				return err
 			}
