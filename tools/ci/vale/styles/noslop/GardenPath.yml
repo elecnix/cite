@@ -1,0 +1,19 @@
+# Garden path in a zero relative clause. "The model name a client sends
+# now picks ..." reads as the command "sends now" before "picks" forces a
+# re-parse. RE2 has no lookbehind, so this rule and the TokenIgnores line
+# in .vale.ini form one pair: the rule matches "verb-s now verb-s", and the
+# ignore strips pronoun-led clauses (with any words between the pronoun and
+# its verb) before checks run. The ignore applies to every sentence-scoped
+# check, not just this one. Residual false-positive class, stated per the
+# "Adding a rule" rule in the README: a noun subject ending in s reads the
+# same at the regex level ("the tests now pass", "the status now shows"),
+# so it is flagged. Separating it needs POS tagging. Warning level, not
+# error, because Vale exits 0 on warnings: this rule advises, it never
+# fails a run.
+extends: existence
+level: warning
+scope: sentence
+ignorecase: true
+message: "Garden path: '%s' can read as a command. Insert 'that' before the relative clause, or reword."
+tokens:
+  - '\b[a-z]{2,}s\s+now\s+[a-z]{2,}s\b'

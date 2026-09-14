@@ -1,0 +1,8 @@
+# `vale sync` writes these from the pinned Packages line in .vale.ini.
+# Ours are committed; upstream's are not, so an upgrade is a one-line version
+# bump instead of a ten-thousand-line diff.
+styles/*
+!styles/noslop/
+!styles/config/
+styles/config/*
+!styles/config/vocabularies/
