@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Review this pull request with Cite
-        uses: elecnix/cite@v0.7.0
+        uses: elecnix/cite@226a9b0b8fb116a6194c6446cae8d2cf5d46b38d  # v0.7.0
         with:
           tool_failure_blocks: false
           model_id: deepseek/deepseek-v4-flash-0731
