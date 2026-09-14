@@ -281,8 +281,20 @@ func TestListReviewThreadsQueryShape(t *testing.T) {
 func TestGraphQLMutationShapes(t *testing.T) {
 	var bodies []string
 	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		bodies = append(bodies, readBody(r))
-		fmt.Fprint(w, `{"data":{}}`)
+		raw := readBody(r)
+		bodies = append(bodies, raw)
+		var req struct {
+			Query string `json:"query"`
+		}
+		json.Unmarshal([]byte(raw), &req)
+		if strings.Contains(req.Query, "resolveReviewThread") {
+			// The real success shape: the mutation reports the thread
+			// resolved. A resolve that posts its "resolved" reply only on
+			// this confirmation never lies about the thread state.
+			fmt.Fprint(w, `{"data":{"resolveReviewThread":{"thread":{"id":"THREAD_1","isResolved":true}}}}`)
+		} else {
+			fmt.Fprint(w, `{"data":{"minimizeComment":{"minimizedComment":{"isMinimized":true}}}}`)
+		}
 	}))
 	if err := c.ResolveReviewThread(context.Background(), "THREAD_1"); err != nil {
 		t.Fatal(err)
@@ -326,6 +338,59 @@ func TestGraphQLErrorsSurfaceTyped(t *testing.T) {
 	}
 	if !strings.Contains(apiErr.Message, "Could not resolve to a node") {
 		t.Errorf("message = %q", apiErr.Message)
+	}
+}
+
+// TestGraphQLMutationPartialDataFailureSurfaces pins the response shape
+// GitHub actually returns when a mutation fails: `data` is PRESENT (the
+// mutated field decodes to null) alongside the `errors` array, e.g.
+// {"data":{"resolveReviewThread":null},"errors":[{"message":"Could not resolve
+// to a node with the global id of 'NOPE'"}]}. A success check keyed on
+// `len(data) == 0` mistakes that for success: the resolve "succeeds", the
+// resolution reply is posted, and the thread stays open under a comment
+// claiming it was resolved (observed on elecnix/cite PR #78).
+func TestGraphQLMutationPartialDataFailureSurfaces(t *testing.T) {
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"resolveReviewThread":null},"errors":[{"message":"Could not resolve to a node with the global id of 'NOPE'"}]}`)
+	}))
+	err := c.ResolveReviewThread(context.Background(), "NOPE")
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("a data+errors mutation failure is a failure; want APIError, got %#v", err)
+	}
+	if !strings.Contains(apiErr.Message, "Could not resolve") {
+		t.Errorf("message = %q", apiErr.Message)
+	}
+}
+
+// TestResolveReviewThreadConfirmsResolution: the reply that asserts the
+// thread was resolved must only post once the mutation response reports
+// the thread actually resolved.
+func TestResolveReviewThreadConfirmsResolution(t *testing.T) {
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"resolveReviewThread":{"thread":{"id":"THREAD_1","isResolved":true}}}}`)
+	}))
+	if err := c.ResolveReviewThread(context.Background(), "THREAD_1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestResolveReviewThreadRefusesUnconfirmedResolution: a 2xx without errors
+// can still fail to confirm the thread resolved (null thread, or a thread
+// reporting isResolved=false). Cite must never post "Cite resolved this
+// thread" on that: fail rather than assert a state the API did not confirm.
+func TestResolveReviewThreadRefusesUnconfirmedResolution(t *testing.T) {
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"resolveReviewThread":{"thread":null}}}`)
+	}))
+	if err := c.ResolveReviewThread(context.Background(), "THREAD_1"); err == nil {
+		t.Fatal("a null thread in the mutation response must not confirm resolution")
+	}
+	c = newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"resolveReviewThread":{"thread":{"id":"THREAD_1","isResolved":false}}}}`)
+	}))
+	if err := c.ResolveReviewThread(context.Background(), "THREAD_1"); err == nil {
+		t.Fatal("isResolved=false in the mutation response must not confirm resolution")
 	}
 }
 

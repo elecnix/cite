@@ -311,11 +311,28 @@ thread{ id isResolved }
 }`
 
 // ResolveReviewThread resolves one review thread via GraphQL. Individually
-// idempotent, per §10's publish ordering.
+// idempotent, per §10's publish ordering. It fails unless the mutation
+// response confirms the thread is actually resolved: the reply asserting
+// resolution must only post on confirmed state, so a response that does not
+// report isResolved=true (null thread, unresolved thread, any errors) is an
+// error, never a silent success.
 func (c *Client) ResolveReviewThread(ctx context.Context, threadID string) error {
+	var out struct {
+		ResolveReviewThread *struct {
+			Thread *struct {
+				IsResolved bool `json:"isResolved"`
+			} `json:"thread"`
+		} `json:"resolveReviewThread"`
+	}
 	vars := map[string]any{"threadId": threadID}
-	var out map[string]any
-	return c.graphql(ctx, resolveThreadMutation, vars, &out)
+	if err := c.graphql(ctx, resolveThreadMutation, vars, &out); err != nil {
+		return err
+	}
+	if out.ResolveReviewThread == nil || out.ResolveReviewThread.Thread == nil ||
+		!out.ResolveReviewThread.Thread.IsResolved {
+		return &APIError{StatusCode: 200, Message: fmt.Sprintf("graphql: resolveReviewThread did not confirm the thread resolved (thread %s)", threadID)}
+	}
+	return nil
 }
 
 const minimizeCommentMutation = `mutation($subjectId:ID!){
@@ -369,7 +386,15 @@ func (c *Client) graphql(ctx context.Context, query string, vars map[string]any,
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return fmt.Errorf("decoding github response: %w", err)
 	}
-	if len(env.Errors) > 0 && len(env.Data) == 0 {
+	// Any top-level errors mean the operation failed — even when `data` is
+	// present. GitHub reports a failed mutation with BOTH, e.g.
+	// {"data":{"resolveReviewThread":null},"errors":[...]}: the mutated
+	// field decodes to null inside a non-empty data object. Treating that
+	// as success made a failed resolve post the "Cite resolved this thread"
+	// reply on a thread that stayed open. Fail closed: an errors array is
+	// never ignorable, and a caller that needs data must not proceed on a
+	// response the API explicitly failed.
+	if len(env.Errors) > 0 {
 		msgs := make([]string, 0, len(env.Errors))
 		for _, e := range env.Errors {
 			msgs = append(msgs, sanitizeMessage(e.Message))
