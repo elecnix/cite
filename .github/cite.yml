@@ -47,8 +47,10 @@ require_parameters: true
 roles:
   review:
     # Dogfooding on PR #41: reviewing a large diff (cmd/cite/review.go) hit
-    # finish_reason=length at the built-in 32768-token cap. Raise it so big
-    # diffs get complete reviews.
+    # finish_reason=length at the then-built-in 32768-token cap. Raise it so
+    # big diffs get complete reviews. (The built-in default has since been
+    # raised to 131072; this explicit pin is kept as the operator-set value
+    # and wins over the default either way.)
     max_output_tokens: 65536
   # Timeouts are deliberately NOT pinned here any more. The explicit
   # review: 600s / triage: 120s pins predate the 15-minute defaults and

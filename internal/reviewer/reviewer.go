@@ -303,7 +303,7 @@ func (r *Reviewer) roleSettings(role model.Role, defTimeout time.Duration, defCo
 	}
 	if !explicitTimeout && role == model.RoleReview {
 		// Issue #28: scale the deadline to the resolved output cap. An unset
-		// cap (maxTokens <= 0) falls back to the built-in 32768-token default
+		// cap (maxTokens <= 0) falls back to the built-in 131072-token default
 		// inside DerivedReviewTimeout.
 		timeout = config.DerivedReviewTimeout(maxTokens)
 	}

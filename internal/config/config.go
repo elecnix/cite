@@ -38,9 +38,10 @@ const (
 // There is deliberately no fixed DefaultReviewTimeout any more: the review
 // deadline is derived from the resolved output cap (issue #28). The old fixed
 // 120s was calibrated when the review cap defaulted to 4096 output tokens;
-// raising the cap to 32768 (DefaultReviewMaxOutputTokens below) allowed
-// responses eight times longer to finish, and they died at "context deadline
-// exceeded" — surfacing as COULD_NOT_EVALUATE — before emitting a verdict.
+// raising the cap to 32768 then (and 131072 now) allowed responses eight
+// times longer — then thirty-two times — to finish, and they died at
+// "context deadline exceeded" — surfacing as COULD_NOT_EVALUATE — before
+// emitting a verdict.
 //
 // Triage and assemble keep fixed timeouts. History: 30s assumed fast hosted
 // models; 120s still died in dogfooding CI — openrouter-hosted models queue
@@ -84,8 +85,9 @@ const (
 	// sized for a mid-tier hosted model, not a top-tier endpoint. A faster
 	// provider simply finishes early; a deadline sized on a fast rate turns
 	// slow-but-correct runs into deadline_exceeded failures. At 128 tok/s the
-	// 32768-token default yields 60s + 256s ≈ 316s, which the
-	// DefaultReviewTimeout floor raises to 15 minutes.
+	// 131072-token default yields 60s + 1024s ≈ 1084s ≈ 18 minutes, already
+	// past the DefaultReviewTimeout floor — the derivation only clamps for
+	// caps at or below ~107000 tokens.
 	AssumedGenerationRate = 128
 
 	// DefaultReviewMaxOutputTokens is the built-in review output cap. It is
@@ -94,7 +96,14 @@ const (
 	// each), plus reasoning tokens billed against the same budget. The old
 	// 4096 could not hold ten such findings, and large files failed whole
 	// runs with "output truncated at token cap (finish_reason=length)".
-	DefaultReviewMaxOutputTokens = 32768
+	// Raising it from 32768 to 131072 stopped reviews of big scenario-style
+	// files from truncating at the cap: cite's own dogfood hit
+	// finish_reason=length at the 32768 default on a large single-file diff
+	// and pinned 65536 in .github/cite.yml, and a roughly 100 KB briefing
+	// file still ran out of room at the old default. 131072 gives the worst
+	// case four times the room it needs, and the derived review deadline
+	// moves with it.
+	DefaultReviewMaxOutputTokens = 131072
 )
 
 // DerivedReviewTimeout returns the review-role deadline implied by an output
