@@ -1,9 +1,9 @@
 # Configuration
 
 Cite is configurable and optional about it. A repository that never writes a
-configuration file gets sensible behaviour forever: default model selection from
-the ambient key, a comment budget, the standard skip list, `gate: comment`, and
-the current compatibility profile.
+configuration file gets sensible behaviour forever: the default model comes from the
+ambient key, and a comment budget plus the standard skip list apply. The
+current compatibility profile sets the instruction formats.
 
 When you do want to change something, the file is `.github/cite.yml`. This page
 is the complete v1 surface.
@@ -16,7 +16,7 @@ model: openai/gpt-5-mini      # one string; a role map is available below
 max_comments: 10              # hard-capped at 20 by the schema
 paths_ignore: ["**/*.gen.go", "vendor/**"]
 nits: false                   # style and test-gap findings, default off
-gate: comment                 # comment | block
+gate: comment                 # accepted but reserved (issue #86); selects nothing
 compat_profile: "2026-08"     # which snapshot of the instruction formats to honour
 ```
 
@@ -26,7 +26,7 @@ compat_profile: "2026-08"     # which snapshot of the instruction formats to hon
 | `max_comments` | `10` | Upper bound on comments per review. **Hard-capped at 20 by the schema**; values above 20 are rejected by [`cite validate`](#validation), not clamped silently. The per-run budget formula in [noise.md](noise.md#the-budget) can only lower this number, never raise it. |
 | `paths_ignore` | `[]` | Extra glob patterns added to the built-in skip list (generated files, lockfiles, vendored trees, minified output, binaries). See the [glob dialect](instructions.md#glob-dialect). A skipped file is never a passed file — every skip appears on the check summary with its reason. |
 | `nits` | `false` | Enables `convention` and `error-swallow` findings. Off by default, and they consume no comment budget unless enabled. `convention` findings can never block a merge in any configuration. |
-| `gate` | `comment` | `comment` posts findings as a non-blocking review plus a check run that always concludes `success` or `neutral`. `block` makes the check run conclude `failure` when a finding blocks. Turn blocking on after a month of shadowing the tool's output. |
+| `gate` | *(none)* | Accepted and validated, but reserved on the decision path (issue #86): `FOUND` concludes `failure` under every accepted value, so there is no shadow mode and no mode switch. The only conclusion knob is the action's `tool_failure_blocks` input, which governs `COULD_NOT_EVALUATE`. A real finding always blocks. The key exists so a config can store the value without silently dropping a future decision input. |
 | `compat_profile` | `"2026-08"` | Which dated snapshot of instruction-file behaviour Cite honours. Never auto-updates. See [CONFORMANCE.md](../CONFORMANCE.md). |
 | `require_parameters` | `false` | Ask OpenRouter-style routers to route only to endpoints that support every request parameter. See [Require parameters](#require-parameters). |
 

@@ -54,8 +54,8 @@ func TestDefault(t *testing.T) {
 	if c.MaxComments != DefaultMaxComments {
 		t.Errorf("MaxComments = %d, want %d", c.MaxComments, DefaultMaxComments)
 	}
-	if c.Gate != GateComment {
-		t.Errorf("Gate = %q, want %q", c.Gate, GateComment)
+	if c.Gate != "" {
+		t.Errorf("Gate = %q, want \"\" (reserved key, no default mode; issue #86)", c.Gate)
 	}
 	if c.CompatProfile != DefaultCompatProfile {
 		t.Errorf("CompatProfile = %q, want %q", c.CompatProfile, DefaultCompatProfile)

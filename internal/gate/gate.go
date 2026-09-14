@@ -97,7 +97,11 @@ func approvedSkip(reason string) bool {
 // A nil rec fails closed. A nil cfg is treated as the default configuration.
 // The cfg parameter selects nothing today (blocking is already computed in
 // code on each finding); it is part of the contract so callers cannot
-// silently drop configuration from the decision path later.
+// silently drop configuration from the decision path later. Issue #86: the
+// `gate: comment|block` config key is accepted and validated but reserved.
+// The documented "shadow mode" promise is removed rather than implemented:
+// PLAN §11 states FOUND concludes failure, the repository's own config
+// depends on that, and neither accepted gate value changes a conclusion.
 func Decide(rec *model.RunRecord, cfg *config.Config, opts Options) (model.Verdict, string) {
 	_ = cfg // see doc comment: reserved on the decision path by contract.
 
@@ -287,6 +291,7 @@ func nonEmpty(s, fallback string) string {
 // NeutralToolFailure set, COULD_NOT_EVALUATE concludes "neutral", which
 // GitHub counts as a satisfied required check, while FOUND still concludes
 // "failure": a real finding blocks whether or not the repository opted out.
+// The `gate` config key plays no part in this mapping (issue #86).
 func Conclusion(v model.Verdict, opts Options) string {
 	if opts.NeutralToolFailure && v == model.VerdictCouldNotEvaluate {
 		return "neutral"
