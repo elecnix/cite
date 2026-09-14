@@ -104,6 +104,14 @@ because that count is computed by Cite from the GitHub API's changed-file list.
 approved-skip state *and* nothing blocking. Empty, skipped, errored, and outage
 states never render green. A skipped file is not a reviewed file.
 
+One opt-in exception, bounded: a repository that sets the action's
+`tool_failure_blocks` input to `false` makes an errored or outage state
+conclude `neutral`, which branch protection counts as a satisfied required
+check (issue #59). It is off by default, it is declared in the repository's own
+workflow file, and it never applies to a blocking finding: `FOUND` concludes
+`failure` either way. PLAN §11 records why the trade is offered and what it
+costs.
+
 One subtle interaction: a payload of homoglyphs and zero-width characters can
 make a malicious line un-quotable, so its finding fails the evidence gate and is
 mechanically dropped — the safety rail becomes a false-negative amplifier. Two

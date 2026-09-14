@@ -2,8 +2,17 @@
 //
 // The worst failure of a required check is not red — it is absent. So every
 // path here terminates in exactly one of PASS, FOUND or
-// COULD_NOT_EVALUATE, and only PASS concludes success. There is no neutral,
-// no fail-open, and no fourth "probably fine" state.
+// COULD_NOT_EVALUATE, and only PASS concludes success. There is no fourth
+// "probably fine" state.
+//
+// One verdict-to-conclusion mapping is configurable, and only one. A
+// repository that sets the action's tool_failure_blocks input to false makes
+// Conclusion return "neutral" for COULD_NOT_EVALUATE rather than "failure"
+// (issue #59). Verdicts themselves are untouched by it. The default is
+// unchanged and still fail-closed: a tool failure blocks. FOUND concludes
+// "failure" either way, so the opt-out covers "the tool could not read its
+// own output", never "the tool found something". PLAN §11 records the trade.
+// See Options.NeutralToolFailure and Conclusion.
 package gate
 
 import (
