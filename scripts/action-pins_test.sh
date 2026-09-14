@@ -13,8 +13,12 @@
 #   2. its `# vX.Y.Z` comment names a version the SHA does not belong to;
 #   3. the snippets disagree, so a reader copies two different versions.
 #
-# Resolving the comment to a commit needs the tag locally. CI checks out without
-# tags, so fetch the one tag we need when it is missing.
+# The collector is deliberately loose: it matches `uses:` anywhere on a line,
+# quoted or not, in .md, .yml and .yaml alike. A pin this script fails to match
+# is not reported as anything — it is simply absent, and the gate goes green
+# while shipping a bad pin. Missing a real pin is the expensive failure, so
+# `<full-sha>` is the single exemption and it is named explicitly below rather
+# than falling out of a narrow pattern.
 
 set -uo pipefail
 
@@ -26,33 +30,48 @@ fail() {
   fails=$((fails + 1))
 }
 
-# Every `uses:` line naming this Action, as "<file>:<line>:<text>". Prose that
-# mentions a version without a `uses:` (examples/bypass.yml explains why v0.1.4
-# is unsuitable) is deliberately not a pin and is not matched.
-pins="$(git grep -nE '^[[:space:]]*(- )?uses:[[:space:]]*elecnix/cite@' -- '*.md' '*.yml' || true)"
+# Every line naming this Action after a `uses:`, as "<file>:<line>:<text>".
+# Prose that names a version without a `uses:` is not a pin: examples/bypass.yml
+# explains why v0.1.4 cannot be used, and must keep saying v0.1.4.
+pins="$(git grep -nE "uses:[[:space:]]*['\"]?elecnix/cite@" -- '*.md' '*.yml' '*.yaml' || true)"
 
 if [ -z "$pins" ]; then
   fail "no 'uses: elecnix/cite@' pins found — the grep or the layout changed"
   exit 1
 fi
 
-# resolve_tag <tag> — prints the commit a tag points at, fetching it if needed.
+# resolve_tag <tag> — prints the commit a tag points at.
+#
+# Asks origin first and reads the answer out of FETCH_HEAD, so a stale or
+# hand-made local tag cannot answer for it and no local ref is rewritten.
+# Falls back to a local tag only when origin is unreachable, so this still
+# runs offline. CI checks out without tags, which makes the fetch the normal
+# path rather than the exception.
 resolve_tag() {
   local tag="$1"
-  if ! git rev-parse -q --verify "refs/tags/$tag^{commit}" 2>/dev/null; then
-    git fetch --quiet origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null || return 1
-    git rev-parse -q --verify "refs/tags/$tag^{commit}" 2>/dev/null || return 1
+  if git fetch --quiet origin "refs/tags/$tag" 2>/dev/null; then
+    git rev-parse -q --verify 'FETCH_HEAD^{commit}' 2>/dev/null && return 0
   fi
+  git rev-parse -q --verify "refs/tags/$tag^{commit}" 2>/dev/null
 }
 
 versions=""
+placeholders=0
 while IFS= read -r pin; do
   [ -n "$pin" ] || continue
-  where="${pin%%:*}:$(printf '%s' "$pin" | cut -d: -f2)"
+  where="$(printf '%s' "$pin" | cut -d: -f1-2)"
   text="$(printf '%s' "$pin" | cut -d: -f3-)"
 
-  ref="$(printf '%s' "$text" | sed -E 's|.*elecnix/cite@([^[:space:]]+).*|\1|')"
+  # Everything after the `@`, up to whatever ends the YAML scalar or the
+  # surrounding Markdown: whitespace, a quote, a backtick, a brace, a comma.
+  ref="$(printf '%s' "$text" | sed -E "s|.*elecnix/cite@||; s|[][[:space:]'\"\`{}(),].*||")"
   version="$(printf '%s' "$text" | sed -nE 's|.*#[[:space:]]*(v[0-9]+\.[0-9]+\.[0-9]+).*|\1|p')"
+
+  # docs/release.md teaches the rule with a placeholder rather than a real pin.
+  if [ "$ref" = "<full-sha>" ]; then
+    placeholders=$((placeholders + 1))
+    continue
+  fi
 
   # 1. a full 40-hex SHA, never a tag
   if ! printf '%s' "$ref" | grep -qE '^[0-9a-f]{40}$'; then
@@ -87,7 +106,7 @@ EOF
 # 3. one version across every snippet a consumer might copy
 count="$(printf '%s' "$versions" | wc -w | tr -d ' ')"
 if [ "$count" -gt 1 ]; then
-  fail "snippets disagree on the version: $(printf '%s' "$versions" | tr -s ' ')"
+  fail "snippets disagree on the version:$(printf '%s' "$versions")"
 fi
 
 if [ "$fails" -gt 0 ]; then
@@ -95,4 +114,15 @@ if [ "$fails" -gt 0 ]; then
   exit 1
 fi
 
-printf 'ok — every elecnix/cite pin is a full SHA for%s\n' "$versions"
+pinned="$(printf '%s' "$versions" | tr -d ' ')"
+printf 'ok — every elecnix/cite pin is a full SHA for %s (%s placeholder(s) skipped)\n' \
+  "$pinned" "$placeholders"
+
+# Advisory only. Cutting a release is a tag push (docs/release.md), so the
+# pins necessarily lag the newest tag until a refresh PR lands; failing here
+# would redden main on every release for a gap nobody can close in advance.
+newest="$(git ls-remote --tags --refs origin 'v*' 2>/dev/null |
+  sed 's|.*refs/tags/||' | sort -V | tail -1)"
+if [ -n "$newest" ] && [ -n "$pinned" ] && [ "$newest" != "$pinned" ]; then
+  printf 'note: newest release is %s; the snippets pin %s. Refresh them.\n' "$newest" "$pinned"
+fi
