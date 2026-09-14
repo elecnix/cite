@@ -141,12 +141,12 @@ The assumed generation rate (128 tokens per second) is deliberately
 conservative — sized for a mid-tier hosted model, not a top-tier endpoint. A
 faster provider simply finishes early; sizing on a fast rate would turn
 slow-but-correct runs into deadline failures. The floor exists because a
-wall-clock cap is a safety net for a hung call, not a tuning knob: realistic
-caps finish well inside 15 minutes, and the floor only matters when a call is
-genuinely stuck.
+wall-clock cap is a safety net for a hung call, not a tuning knob: the
+built-in default finishes comfortably past it, and the floor only matters
+when a call is genuinely stuck.
 
-- the built-in **32768**-token cap derives ≈316s, which the floor raises to
-  **15 minutes**;
+- the built-in **131072**-token cap derives 60s + 1024s ≈ 1084s ≈ **18
+  minutes** — already past the floor;
 - only caps above ≈107,000 tokens outgrow the floor;
 - an explicit `roles.review.max_output_tokens` or a model entry's `max_tokens`
   moves the deadline with it.
@@ -175,12 +175,16 @@ The output cap resolves most-specific-first, in three layers:
 2. the `max_tokens` of the model the role resolves to — what the model says it
    can emit. This both raises the cap on a roomy model and lowers it on a narrow
    one, and it is the only way Cite can know a ceiling it cannot query.
-3. the built-in default: **32768** for `review`, 8192 for `triage`.
+3. the built-in default: **131072** for `review`, 8192 for `triage`.
 
 The review default is sized for the schema's worst case — `max_comments`'s hard
 cap of 20 findings, each with a title, body, impact, quoted evidence and an
 optional fix, plus whatever reasoning tokens the provider bills against the same
-budget.
+budget. It was raised from 32768 to 131072 because big single-file diffs and
+large briefing-style inputs truncated identically at the old default
+(`finish_reason=length`, a deterministic failure): cite's own dogfood pinned
+65536 on top of it, and a roughly 100 KB briefing file still ran out of room.
+131072 gives the worst case four times the room it needs.
 
 **If the cap is too small, the file errors; it is never quietly shortened.** A
 response cut off at the cap comes back as `finish_reason=length`, which is a

@@ -1306,8 +1306,9 @@ roles:
 	}
 }
 
-// An unset MaxOutputTokens falls back to the built-in 32768-token cap and its
-// derived deadline — the shape of every repository that writes no roles block.
+// An unset MaxOutputTokens falls back to the built-in 131072-token cap and
+// its derived deadline — the shape of every repository that writes no roles
+// block.
 func TestUnsetCapDerivesFromDefaultReviewMaxTokens(t *testing.T) {
 	r := New(Options{Cfg: config.Default(), Client: &fakeClient{}})
 	got, _, maxTokens := r.roleSettings(model.RoleReview, 0, config.DefaultReviewConcurrency, config.DefaultReviewMaxOutputTokens)

@@ -258,8 +258,9 @@ func TestRoleDefaults(t *testing.T) {
 	}{
 		// Review has no fixed timeout default: it derives from the output
 		// cap (issue #28), floored at DefaultReviewTimeout (15m). With no
-		// providers and no role spec, the cap is the built-in 32768, so
-		// 60s + 32768/128s = 316s — below the floor, which wins.
+		// providers and no role spec, the cap is the built-in 131072, so
+		// 60s + 131072/128s ≈ 1084s — past the floor, so the derivation
+		// wins outright.
 		{model.RoleReview, DerivedReviewTimeout(0), 8},
 		{model.RoleTriage, 15 * time.Minute, 0},
 		{model.RoleAssemble, 15 * time.Minute, 0},
@@ -600,11 +601,11 @@ func TestDerivedReviewTimeoutFlooredThenGrows(t *testing.T) {
 		tokens int
 		want   time.Duration
 	}{
-		{0, floor},
 		{4096, floor},   // 60s + 32s — clamped
 		{32768, floor},  // 60s + 256s — clamped
 		{107520, floor}, // 60s + 840s = exactly the floor
-		{115200, 60*time.Second + 900*time.Second}, // first cap past the floor
+		{115200, 60*time.Second + 900*time.Second},  // first cap past the floor
+		{131072, 60*time.Second + 1024*time.Second}, // the built-in default: 60s + 1024s ≈ 1084s
 		{230400, 60*time.Second + 1800*time.Second},
 	}
 	prev := time.Duration(0)
@@ -620,7 +621,7 @@ func TestDerivedReviewTimeoutFlooredThenGrows(t *testing.T) {
 	}
 }
 
-// An unset cap (<=0) falls back to the built-in 32768-token default.
+// An unset cap (<=0) falls back to the built-in 131072-token default.
 func TestDerivedReviewTimeoutUnsetFallsBackToDefault(t *testing.T) {
 	if got := DerivedReviewTimeout(0); got != DerivedReviewTimeout(DefaultReviewMaxOutputTokens) {
 		t.Errorf("DerivedReviewTimeout(0) = %v, want the %d-derived value", got, DefaultReviewMaxOutputTokens)
