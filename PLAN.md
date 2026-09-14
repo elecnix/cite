@@ -954,7 +954,7 @@ reported". A stuck check must self-heal into something a human can act on.
 | -- | -- | -- |
 | `PASS` | success | every in-scope file reached a terminal reviewed state, and nothing blocks |
 | `FOUND` | failure | at least one finding blocks |
-| `COULD_NOT_EVALUATE` | failure | provider unavailable, budget tripped, coverage incomplete, zero in-scope files, a file errored |
+| `COULD_NOT_EVALUATE` | failure, or neutral by opt-in | provider unavailable, budget tripped, coverage incomplete, zero in-scope files, a file errored |
 
 Fail-closed, and the argument is not merely conservative. The input to the thing that fails is
 attacker-controlled: a pathological file, a content-filter trip, or a crafted payload can induce a
@@ -962,6 +962,18 @@ provider error from the diff. Fail-open converts "I can break your reviewer with
 can merge unreviewed with a diff". `neutral` is fail-open wearing a hat, and it depends on a
 branch-protection semantic that has changed more than once — never build a safety property on a
 semantic you do not control.
+
+**Amended, issue #59: one bounded opt-out.** The argument above still holds, and the default is
+unchanged: `COULD_NOT_EVALUATE` concludes `failure`. What it did not anticipate is a judge that
+fails reproducibly on the same pull request, which converts "the reviewer is broken" into "this
+pull request can never merge, however good the code is". A repository may now set the action's
+`tool_failure_blocks` input to `false`, and `COULD_NOT_EVALUATE` then concludes `neutral`.
+
+The trade is bounded and declared. `FOUND` concludes `failure` either way, so the opt-out buys
+"a broken reviewer does not veto", never "a finding does not block". A repository that takes it
+accepts the fail-open described above on the tool-failure path only, and accepts the dependence
+on the branch-protection semantic, in its own workflow file rather than in a log a human has to
+read. `internal/gate.Conclusion` is the only place the mapping varies.
 
 **Zero in-scope files is `COULD_NOT_EVALUATE`, not a pass.** A pull request that changed files but
 resolved to an empty in-scope set is exactly the shape of a path-filter bypass, and the
