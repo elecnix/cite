@@ -427,3 +427,34 @@ func TestErroredWithoutMechanismStillNamesPaths(t *testing.T) {
 		t.Errorf("reason %q must still name the path", reason)
 	}
 }
+
+// Issue #86: the documented gate: comment "shadow mode" promised a
+// non-blocking check run but selected nothing, and the shipped default
+// blocked anyway. The promise is removed, not kept warm: the key stays
+// accepted-but-reserved, and neither accepted value may change the
+// conclusion. FOUND blocks under "comment" exactly as under "block", so
+// no future reader can mistake the key for a working knob.
+func TestGateValuesAreAcceptedButReserved(t *testing.T) {
+	rec := baseRecord()
+	rec.Findings = []model.ValidatedFinding{{
+		Finding: model.Finding{
+			ID:         "f1",
+			Category:   model.CategoryInjection,
+			Title:      "user input reaches shell",
+			Confidence: model.ConfidenceCertain,
+		},
+		Path:   "app/handler.go",
+		Blocks: true,
+	}}
+	for _, mode := range []string{config.GateComment, config.GateBlock} {
+		cfg := config.Default()
+		cfg.Gate = mode
+		v, _ := Decide(rec, cfg, Options{})
+		if v != model.VerdictFound {
+			t.Fatalf("gate %q: verdict = %s, want FOUND", mode, v)
+		}
+		if got := Conclusion(v, Options{}); got != "failure" {
+			t.Fatalf("gate %q must not change the conclusion; got %q, want failure", mode, got)
+		}
+	}
+}

@@ -225,7 +225,7 @@ func Default() *Config {
 	return &Config{
 		Model:              DefaultModel,
 		MaxComments:        DefaultMaxComments,
-		Gate:               GateComment,
+		Gate:               "", // reserved key (issue #86): accepted, selects nothing
 		CompatProfile:      DefaultCompatProfile,
 		BlockingCategories: DefaultBlockingCategories(),
 	}
@@ -285,8 +285,13 @@ func (c *Config) checkBudgetAndGate(probs *[]Problem) {
 		addf(probs, "max_comments", "%d exceeds the hard cap of %d enforced by the schema",
 			c.MaxComments, MaxCommentsCap)
 	}
+	// "" (unset) and both documented values are accepted. Issue #86: the
+	// key is reserved on the decision path — FOUND always concludes failure
+	// regardless of the value — so validation admits the historical surface
+	// rather than rejecting configs that set it, and never implies a mode
+	// that selects anything.
 	switch c.Gate {
-	case GateComment, GateBlock:
+	case "", GateComment, GateBlock:
 	default:
 		addf(probs, "gate", "%q must be %q or %q", c.Gate, GateComment, GateBlock)
 	}
