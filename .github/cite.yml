@@ -31,9 +31,9 @@ model: deepseek/deepseek-v4-flash-0731
 #
 # Wiring note: the gate option is an ACTION INPUT (tool_failure_blocks), not
 # a config-file setting — the flag is wired input → CLI flag → gate option,
-# so it is set in .github/workflows/review.yml's `with:` block. v0.7.0 is
+# so it is set in .github/workflows/review.yml's `with:` block. v0.8.0 is
 # the first release carrying that input (issue #59 landed on main after
-# v0.6.0), and the workflow pins v0.7.0 and sets the input, so the choice
+# v0.6.0), and the workflow pins v0.8.0 and sets the input, so the choice
 # takes effect: this file documents the scope, the workflow input does the
 # work.
 
