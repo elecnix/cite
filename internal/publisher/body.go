@@ -30,7 +30,7 @@ const NotableUnanchoredHeading = "Notable but unanchored (needs manual localizat
 
 // maxUnanchoredDropsInBody caps the notable-but-unanchored section so a
 // pathological run that drops dozens of findings does not drown the review.
-// Extras are counted in DropsSummary and the run record.
+// Extras are counted in DropsCount and the run record.
 const maxUnanchoredDropsInBody = 5
 
 // ReviewBodyInput collects everything the review body needs. Model-authored
@@ -49,11 +49,21 @@ type ReviewBodyInput struct {
 	// evidence_mismatch — so they reach the human via a labelled body
 	// section instead of vanishing into the CI log (issues #42, #60).
 	// Only those two entries belong here; other drop reasons stay in
-	// DropsSummary.
+	// DropsCount.
 	AnchorInvalidDrops []model.DropEntry
-	// DropsSummary points at the run record and its drop log ("why didn't
-	// you say that" lives there, not here).
-	DropsSummary string
+	// DropsCount is the number of candidate findings the safety rails
+	// dropped this run for reasons other than the anchor-shaped ones that
+	// surface in the notable-but-unanchored section. Zero renders no line:
+	// a run that dropped nothing does not need to say so. The sentence is
+	// built by the renderer, so it is tool-authored and needs no
+	// sanitization.
+	DropsCount int
+	// RunLogURL, when non-empty, turns "the run log" into a link to the
+	// GitHub Actions run whose log holds the run record and the drop log
+	// ("why didn't you say that" lives there, not here). The URL is
+	// tool-derived from the ambient Actions environment, never from model
+	// text, so the sanitizer does not see it.
+	RunLogURL string
 	// InstructionsFooterLines are fixed, tool-authored footer lines; they are
 	// not prose and not counted against the cap.
 	InstructionsFooterLines []string
@@ -139,10 +149,14 @@ func BuildReviewBody(in ReviewBodyInput) string {
 		}
 	}
 
-	if in.DropsSummary != "" {
+	if in.DropsCount > 0 {
 		sb.WriteString("\n")
-		sb.WriteString(model.SanitizeText(in.DropsSummary))
-		sb.WriteString("\n")
+		if in.RunLogURL != "" {
+			fmt.Fprintf(&sb, "%d findings dropped by safety rails this run; see [the run log](%s).\n",
+				in.DropsCount, in.RunLogURL)
+		} else {
+			fmt.Fprintf(&sb, "%d findings dropped by safety rails this run; see the run log.\n", in.DropsCount)
+		}
 	}
 
 	for _, line := range in.InstructionsFooterLines {

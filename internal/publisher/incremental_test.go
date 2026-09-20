@@ -72,11 +72,14 @@ func TestBuildReviewBodyCapAndSections(t *testing.T) {
 		FilesReviewed:            7,
 		Posted:                   []model.ValidatedFinding{post},
 		Unanchorable:             []model.ValidatedFinding{unanchored},
-		DropsSummary:             "Full run record and drop log: see the run artifact.",
+		DropsCount:               2,
 		InstructionsFooterLines:  []string{"<!-- cite: footer -->"},
 		RiskRankedNote:           "Risk ranking capped the reviewed set.",
 		ModifiedInstructionsNote: "Using 3 of 5 instruction sections; 1 were authoring.",
 	})
+	if !strings.Contains(body, "2 findings dropped by safety rails this run; see the run log.") {
+		t.Fatalf("drops line missing without a run-log URL:\n%s", body)
+	}
 
 	if !strings.Contains(body, UnanchoredHeading) {
 		t.Fatal("unanchorable findings must appear in the labelled section, never silently dropped")
@@ -145,7 +148,7 @@ func TestBuildReviewBodySurfacesAnchorInvalidDrops(t *testing.T) {
 	body := BuildReviewBody(ReviewBodyInput{
 		FilesReviewed:      2,
 		AnchorInvalidDrops: drops,
-		DropsSummary:       "2 findings dropped by safety rails this run; see the run log.",
+		DropsCount:         2,
 	})
 	if body == "" {
 		t.Fatal("anchor_invalid drops alone must still produce a review body, not silence (issue #42)")
@@ -160,6 +163,53 @@ func TestBuildReviewBodySurfacesAnchorInvalidDrops(t *testing.T) {
 		if !strings.Contains(body, d.Title) {
 			t.Errorf("anchor_invalid drop title %q missing from body:\n%s", d.Title, body)
 		}
+	}
+}
+
+// PLAN.md promises "the review body links the run artifact": when the run
+// executed inside GitHub Actions, "the run log" in the drops line must be a
+// clickable link to that run, not bare text a reviewer has to hunt for.
+func TestBuildReviewBodyLinksRunLog(t *testing.T) {
+	post := mkFinding("a.go", "crash", "Off by one", "i <= n")
+	body := BuildReviewBody(ReviewBodyInput{
+		Posted:     []model.ValidatedFinding{post},
+		DropsCount: 6,
+		RunLogURL:  "https://github.com/elecnix/cite/actions/runs/1234567890",
+	})
+	want := "6 findings dropped by safety rails this run; see [the run log](https://github.com/elecnix/cite/actions/runs/1234567890)."
+	if !strings.Contains(body, want) {
+		t.Fatalf("drops line must link the Actions run, want %q in:\n%s", want, body)
+	}
+}
+
+// Outside GitHub Actions (local run, other CI) there is no run to link: the
+// drops line falls back to plain text, with no empty or malformed link
+// markdown.
+func TestBuildReviewBodyRunLogPlainWithoutURL(t *testing.T) {
+	post := mkFinding("a.go", "crash", "Off by one", "i <= n")
+	body := BuildReviewBody(ReviewBodyInput{
+		Posted:     []model.ValidatedFinding{post},
+		DropsCount: 2,
+	})
+	if !strings.Contains(body, "2 findings dropped by safety rails this run; see the run log.") {
+		t.Fatalf("plain-text drops line missing:\n%s", body)
+	}
+	if strings.Contains(body, "](") {
+		t.Fatalf("no run-log URL must mean no link markdown:\n%s", body)
+	}
+}
+
+// A run that dropped nothing must not render the drops line at all: "0
+// findings dropped" tells the reader nothing the body does not already say.
+func TestBuildReviewBodyNoDropsLineAtZero(t *testing.T) {
+	post := mkFinding("a.go", "crash", "Off by one", "i <= n")
+	body := BuildReviewBody(ReviewBodyInput{
+		Posted:     []model.ValidatedFinding{post},
+		DropsCount: 0,
+		RunLogURL:  "https://github.com/elecnix/cite/actions/runs/1234567890",
+	})
+	if strings.Contains(body, "dropped by safety rails") {
+		t.Fatalf("zero drops must not render a drops line:\n%s", body)
 	}
 }
 
