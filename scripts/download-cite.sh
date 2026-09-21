@@ -43,7 +43,10 @@ CURL="${CURL:-curl}"
 # tags carry the `v`, the version itself does not. One format, and
 # scripts/version-check.sh enforces it at release time so a consumer never
 # downloads a tag that was assembled from two different conventions.
-version_re='^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'
+# The version pattern is the tag pattern without its `^v`, so the two cannot
+# drift apart.
+tag_re='^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'
+version_re="^${tag_re#^v}"
 
 case "$CITE_VERSION" in
   '')
@@ -62,7 +65,7 @@ case "$CITE_VERSION" in
     resolved="latest"
     ;;
   *)
-    if ! printf '%s' "$CITE_VERSION" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
+    if ! printf '%s' "$CITE_VERSION" | grep -qE "$tag_re"; then
       echo "cite: version input '$CITE_VERSION' is not a release tag. Use vX.Y.Z, or latest to track the newest release." >&2
       exit 1
     fi
