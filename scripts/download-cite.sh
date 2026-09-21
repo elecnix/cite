@@ -29,6 +29,8 @@
 #   GITHUB_PATH         file the install directory is appended to
 #   CURL                curl command to use (default: curl; overridable for
 #                       tests, which stub it rather than reach the network)
+#   CITE_DOWNLOAD_ATTEMPTS, CITE_DOWNLOAD_BACKOFF, CITE_DOWNLOAD_MAX_TIME,
+#                       CITE_DOWNLOAD_CONNECT_TIMEOUT — the retry window below
 
 set -euo pipefail
 
@@ -93,9 +95,38 @@ fi
 cite_bin="$RUNNER_TEMP/cite-bin"
 mkdir -p "$cite_bin"
 
-# The URL is printed before the download so a failed fetch is diagnosable
-# from the log alone: which version, which platform, which URL.
+# The download is retried for minutes, not seconds. Measured on 2026-09-21: the
+# release-asset endpoint answered four fast 504s inside about seven seconds,
+# which is the whole window `--retry 3` covers, then served the same URL
+# normally, so the job died over a blip a longer window would have ridden out
+# (elecnix/gridkeeper run 35618280194). Defaults: six retries fifteen seconds
+# apart, at most three minutes total, ten seconds to connect. Each knob is
+# overridable, because this is wall-clock time every consumer's job pays.
+#
+# `--retry-all-errors` is deliberately absent: it would also retry a 404,
+# which is what a mistyped `version:` input looks like, for the whole window.
+# curl already retries the transient statuses without it: 408, 429, 500, 502,
+# 503, 504.
+attempts="${CITE_DOWNLOAD_ATTEMPTS:-6}"
+backoff="${CITE_DOWNLOAD_BACKOFF:-15}"
+max_time="${CITE_DOWNLOAD_MAX_TIME:-180}"
+connect_timeout="${CITE_DOWNLOAD_CONNECT_TIMEOUT:-10}"
+
+# The version and URL are printed before the download so a failed fetch is
+# diagnosable from the log alone: which version, which platform, which URL.
 echo "cite: downloading $resolved ($url)"
-"$CURL" -fsSL --retry 3 -o "$cite_bin/cite" "$url"
+if ! "$CURL" -fsSL \
+  --retry "$attempts" \
+  --retry-delay "$backoff" \
+  --retry-max-time "$max_time" \
+  --connect-timeout "$connect_timeout" \
+  -o "$cite_bin/cite" "$url"; then
+  echo "cite: download failed for $resolved after ${attempts} retries over up to ${max_time}s: $url" >&2
+  echo "cite: a 404 above means release $resolved has no such asset; a 5xx above means retry the job" >&2
+  # curl -o leaves whatever it wrote before it gave up. Remove it rather than
+  # leave a truncated binary where a later step would run it.
+  rm -f "$cite_bin/cite"
+  exit 1
+fi
 chmod +x "$cite_bin/cite"
 echo "$cite_bin" >> "$GITHUB_PATH"
