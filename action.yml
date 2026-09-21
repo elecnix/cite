@@ -30,11 +30,15 @@ inputs:
     default: 'false'
   version:
     description: >
-      Cite release tag to download, e.g. v0.3.0. Leave empty (the default) to
-      always track the latest published release: the binary is downloaded via
-      the releases/latest redirect, so no API call is needed and new releases
-      are picked up automatically. Set an explicit tag to pin a version for
-      reproducibility.
+      Cite release tag to download, e.g. v0.8.0. Leave empty (the default) to
+      download the release this action belongs to: VERSION is checked out
+      beside the action, so `uses: elecnix/cite@<full-sha>` pins the binary as
+      well as the action, which is the pair docs/release.md asks consumers to
+      pin. Set "latest" to track the newest published release instead, an
+      upgrade policy to choose on purpose. Releases up to v0.8.0 floated to
+      the newest release whenever this input was empty.
+    required: false
+    default: ''
     required: false
     default: ''
   model_base_url:
@@ -96,30 +100,13 @@ runs:
       shell: bash
       env:
         CITE_VERSION: ${{ inputs.version }}
-      run: |
-        set -euo pipefail
-        case "${RUNNER_ARCH}" in
-          X64) arch=amd64 ;;
-          ARM64) arch=arm64 ;;
-          *) echo "unsupported runner arch: ${RUNNER_ARCH}" >&2; exit 1 ;;
-        esac
-        if [ -n "$CITE_VERSION" ]; then
-          url="https://github.com/elecnix/cite/releases/download/${CITE_VERSION}/cite-linux-${arch}"
-        else
-          # No version input: track the latest release via the releases/latest
-          # redirect — no API call, works with the same curl flags.
-          url="https://github.com/elecnix/cite/releases/latest/download/cite-linux-${arch}"
-        fi
-        # Install into a per-run writable directory instead of a system
-        # path: /usr/local/bin is root-owned on self-hosted runners (e.g.
-        # ARC images run the runner as non-root), and installing a CLI
-        # must never require root. Exporting it onto GITHUB_PATH makes it
-        # resolvable as `cite` in every later step, exactly as before.
-        cite_bin="$RUNNER_TEMP/cite-bin"
-        mkdir -p "$cite_bin"
-        curl -fsSL --retry 3 -o "$cite_bin/cite" "$url"
-        chmod +x "$cite_bin/cite"
-        echo "$cite_bin" >> "$GITHUB_PATH"
+      # Which release this is (issue #94): an unset `version` downloads the
+      # release the action itself belongs to, resolved from the VERSION file
+      # that is checked out with the action, so a full-SHA pin on `uses:` pins
+      # the binary too. `latest` is the opt-in float. scripts/download-cite.sh
+      # holds that rule as a testable script; scripts/download-cite_test.sh
+      # holds it to the rule.
+      run: bash "$GITHUB_ACTION_PATH/scripts/download-cite.sh"
 
     - name: Run Cite review
       shell: bash

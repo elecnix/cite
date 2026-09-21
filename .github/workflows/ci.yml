@@ -23,5 +23,9 @@ jobs:
         run: go run ./cmd/cite validate .github/cite.yml || test ! -f .github/cite.yml
       - name: shell tests (fetch-config)
         run: bash scripts/fetch-config_test.sh && bash scripts/fetch-config-retry_test.sh
+      - name: shell tests (version default)
+        run: bash scripts/download-cite_test.sh
+      - name: version pins
+        run: bash scripts/version-check.sh
       - name: action pins
         run: bash scripts/action-pins_test.sh
