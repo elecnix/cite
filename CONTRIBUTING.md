@@ -46,9 +46,12 @@ See [bench/README.md](bench/README.md) for the case format.
 - Build: `go build ./...`
 - Test: `go test ./...`
 - Prose: the `prose` workflow lints the markdown a pull request changed,
-  against `.vale.ini` at the repo root. Locally, run `vale --no-global sync`
-  once after cloning, then `vale --no-global <path>`. Error-level alerts fail
-  the check. Warnings do not.
+  against `.vale.ini` at the repo root, and fails on error-level alerts inside
+  the diff this pull request writes. Alerts elsewhere in those files stay out
+  of the verdict; the comment counts them instead. Editing one line of an
+  already-red file is not a red check. Locally, run `vale
+  --no-global sync` once after cloning, then `vale --no-global <path>` for the
+  whole file. Warnings do not fail the check.
 - The reviewer never calls GitHub. The publisher never calls a model. Both are
   testable offline against fixtures. Keep it that way.
 
