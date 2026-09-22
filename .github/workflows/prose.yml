@@ -5,15 +5,22 @@
 # matches what `vale` prints on a contributor's laptop after `vale sync`.
 #
 # Error-level alerts fail the `vale` check; warnings and suggestions are
-# reported without failing it. On a fork pull request the read-only token
-# cannot post the comment or set the check, and the action falls back to a
-# job summary rather than failing the run.
+# reported without failing it. Only the alerts that fall on the lines the pull
+# request writes count, so a change is never failed over prose it did not
+# write; the alerts left out are counted in the comment and named as left out.
+# On a fork pull request the read-only token cannot post the comment or set the
+# check, and the action falls back to a job summary rather than failing the
+# run.
 #
 # The full-length SHA pin mirrors docs/release.md: a prose gate that floats
 # on a tag can change its verdict between two runs of the same commit.
-# v1.0.0 pins the release; main 86c8bec6 adds the fix for
-# elecnix/vale-action#2: a re-run of a superseded commit no longer repaints
-# the pinned comment or publishes a stale check run for a non-head sha.
+# v1.1.0 pins the release, which narrows the verdict to the lines a change
+# writes (elecnix/vale-action#4). It replaces the fix pinned here before it,
+# for elecnix/vale-action#2: a re-run of a superseded commit no longer
+# repaints the pinned comment or publishes a stale check run for a non-head
+# sha. The `vale-version` input is pinned for the same reason the action is:
+# the linter decides what gets reported, so a floating linter moves the
+# verdict too.
 
 name: prose
 
@@ -37,4 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-      - uses: elecnix/vale-action@86c8bec69c048eaf45887ef4488d3b1e189c6d5b # main: skip decoration on outdated re-runs (vale-action#3)
+      - uses: elecnix/vale-action@28a0603a150e250eb71f32d398c2e0262c6d0294 # v1.1.0: count only the lines a change writes (vale-action#4)
+        with:
+          # The action defaults to this version, pinned here so a change to
+          # that default cannot move this gate's verdict unnoticed.
+          vale-version: '3.20.0'
