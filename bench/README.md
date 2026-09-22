@@ -1,6 +1,6 @@
 # bench
 
-The iteration harness: a versioned corpus of review cases and a runner.
+The iteration harness is a versioned corpus of review cases and a runner.
 
 ```
 ./bench/run.sh bench/cases
@@ -14,7 +14,7 @@ go run ./cmd/cite soak bench/cases
 
 ## What soak is and is not
 
-`soak` is a **pipeline regression harness**, not a quality A/B and not an
+`soak` is a **pipeline regression harness**. It is not a quality A/B or an
 evaluation. It measures:
 
 - schema validity of model output,
@@ -34,7 +34,7 @@ Each case under `cases/` is a directory containing:
 
 | File | Contents |
 | -- | -- |
-| `base/` | the base tree — the repository state before the change |
+| `base/` | the base tree: the repository state before the change |
 | `patch.diff` | the patch applied on top of the base tree |
 | `defects.yml` | the planted-defects manifest |
 
@@ -56,20 +56,20 @@ blocking findings.
 
 The corpus targets, per release:
 
-- **40% positive** — a planted defect the reviewer should catch.
-- **40% clean** — no defect; must produce nothing blocking.
-- **20% near-miss** — code matching a defect pattern that is actually correct.
+- **40% positive**: a planted defect the reviewer should catch.
+- **40% clean**: a case with no planted defect and zero blocking findings.
+- **20% near-miss**: code matching a defect pattern that is actually correct.
 
 The near-miss share is non-negotiable. Without it you measure pattern-matching
 rather than reasoning, and false-positive-heavy models score well.
 
 ## Case construction, in decreasing validity
 
-1. **Mined from real fix commits** — revert the fix.
+1. **Mined from real fix commits**: revert the fix.
 2. **Mutation under a defect grammar.**
 3. **Hand-written**, for the classes that do not mutate.
 
-Every mutant passes a liveness filter: it must change behaviour on some input,
+Each mutant passes a liveness filter: it must change behaviour on some input,
 and it must **not** be caught by the repository's existing tests, linters, or
 type-checker. Skipping that filter benchmarks what CI already catches for free.
 
@@ -86,4 +86,4 @@ A widening gap between public and private splits is the memorisation alarm.
 ## Scores
 
 Scores compare only within a major version. Escaped defects the tool saw and
-missed become cases — that is the flywheel that keeps the corpus honest.
+missed become cases: the corpus grows with each miss.

@@ -2,13 +2,13 @@
 
 Cite reads the instruction files a repository already has. If a team has
 configured an AI reviewer already, Cite works on the next pull request with no
-new files and no migration. It invents none of these paths; it reads all of them
+new files and no migration. It invents none of these paths and reads all of them
 **from the base ref**.
 
 ## What it reads
 
-These paths are written verbatim because they are the compatibility contract —
-a repository already carries them under exactly these names, and a tool that
+These paths are written verbatim because they are the compatibility contract:
+a repository already has them under exactly these names, and a tool that
 reads them has to spell them the way they are on disk.
 
 | Rank | Path | Scope |
@@ -22,13 +22,13 @@ reads them has to spell them the way they are on disk.
 | 7 | `.vscode/settings.json` → `github.copilot.chat.reviewSelection.instructions` | review-specific, `{text}`/`{file}` entries |
 
 Frontmatter honoured on `*.instructions.md`: `applyTo`, `description`, `name`,
-and `excludeAgent: code-review` — which Cite reads as "not for me", because a
+and `excludeAgent: code-review`, which Cite reads as "not for me", because a
 repository that excluded another tool from a file meant it. `chat.instructionsFilesLocations`
 maps a path to a boolean; a `false` disables a location, and Cite honours the
 boolean rather than just reading the keys.
 
 Known dead, deliberately not implemented: repository-settings "coding guidelines"
-configured only in a web UI (no file, no export), and `*.chatmode.md` /
+configured only in a web UI (no file and no export), and `*.chatmode.md` /
 `*.agent.md` rename churn is parsed under both extensions.
 
 Read as signal, not as instruction:
@@ -39,44 +39,44 @@ a rule for the reviewer to follow or report on.
 ## Precedence answers
 
 Some behaviour was never documented by any prior reader of these files. Guessing
-silently would be the wrong move, so Cite specifies its answer here, and
+silently would be the wrong move, so Cite specifies its answer here and
 `cite doctor` prints the resolved result for any file:
 
 - **Ordering between two `*.instructions.md` files whose `applyTo` both match:**
   most specific glob first, then lexical path.
 - **Whether `applyTo` matches the changed files or the whole tree:** the changed
   file.
-- **`.github/AGENTS.md` versus root `AGENTS.md`:** root is repository-wide;
+- **`.github/AGENTS.md` versus root `AGENTS.md`:** root is repository-wide, and
   `.github/AGENTS.md` is the nearest file only for paths under `.github/`.
 
-## The two deliberate divergences
+## Both deliberate divergences
 
 Compatibility is promised for inputs, not behaviour. Where copying an existing
-tool's behaviour would make a merge gate less safe, Cite diverges — in writing,
+tool's behaviour would make a merge gate less safe, Cite diverges in writing,
 with the reason.
 
 ### 1. Instructions come from the base ref, never the pull request head
 
 Reading instruction files from the head branch lets authors iterate without
-merging. For a tool that gates a merge, that convenience is a vulnerability: a
+merging. For a merge gate, that convenience is a vulnerability: a
 pull request that edits `AGENTS.md` rewrites the reviewer's own instructions
 before the reviewer reads them, and on a fork pull request the author is a
-stranger. Everything that controls the review — including your instruction
-files — is read from the base ref; the head diff is data only
+stranger. Everything that controls the review, including your instruction
+files, is read from the base ref; the head diff is data only
 ([security.md](security.md)).
 
 When a pull request modifies an instruction file, the review body says so in one
 line and names the version used.
 
-### 2. Truncation is disclosed, never silent — in either direction
+### 2. Truncation is disclosed, never silent, in either direction
 
 Never silently truncate an instruction file, and never silently un-truncate one.
 If a length cap ever applies, Cite reads the whole file and warns in the
 resolution table that other tools would have seen only the first N characters.
-The point is telling a team their instruction file behaves ambiguously between
-two readers of it, rather than letting each behave differently in silence.
+Cite tells a team their instruction file behaves ambiguously between two readers
+of it instead of letting each behave differently in silence.
 
-## Instructions are evidence, not a basis
+## Instructions are evidence and not a basis
 
 An instruction file is written in the imperative, for an author. A reviewer that
 reads every imperative as a finding template produces nonsense: "Always write
@@ -85,7 +85,7 @@ via the skill" is unverifiable from a diff and gets asserted anyway. The first
 confidently wrong finding a team sees will be sourced from their own instruction
 file, and they will conclude the file is hazardous.
 
-Two mechanisms handle this, both still zero-config:
+Cite handles this with two mechanisms, both still zero-config:
 
 ### Grounding filter
 
@@ -98,11 +98,11 @@ code, not a sentence in a prompt. See [noise.md](noise.md).
 One cheap call, cached by file hash, classifies each section of each instruction
 file as:
 
-- `reviewable` — a checkable property of code; enters the review.
-- `authoring` — workflow, process, tooling guidance; does not enter the review.
+- `reviewable`: a checkable property of code that enters the review.
+- `authoring`: workflow, process, tooling guidance, which never enters the review.
 - `ignore`
 
-Only `reviewable` sections reach the model. The first run reports it in the
+The model receives only `reviewable` sections. The first run reports it in the
 footer:
 
 > Using 6 of 41 sections from `AGENTS.md`. 35 were authoring or workflow
@@ -114,30 +114,30 @@ without a configuration file. `cite doctor` prints the same breakdown on demand.
 ### The `## Review` override
 
 A `## Review` heading inside a file the team already maintains wins wholesale
-and skips triage. A heading beats a new dotfile: it is greppable, it lives beside
-its context, and it adds nothing to the repository root.
+and skips triage. A heading works better than a new dotfile. It is greppable, it
+lives beside its context, and it adds nothing to the repository root.
 
 ## Conformance tiers
 
 Compatibility is pinned, not chased. `compat_profile: "2026-08"` in
 `.github/cite.yml` selects a dated snapshot of behaviour; it defaults to the
 current profile and never auto-updates. A new profile is a new minor release
-shipping a diff of what changed.
+that includes a diff of what changed.
 
-The four tiers live in [CONFORMANCE.md](../CONFORMANCE.md), which carries that
+These four tiers are in [CONFORMANCE.md](../CONFORMANCE.md), which carries that
 date:
 
-1. **Guaranteed** — the file paths, frontmatter keys, and precedence in the
+1. **Guaranteed** covers the file paths, frontmatter keys, and precedence in the
    table above. Each has a test fixture; changing any of them is a breaking
    change.
-2. **Best-effort** — behaviour no prior reader ever documented. Cite picks an
+2. **Best-effort** covers behaviour no prior reader ever documented. Cite picks an
    answer, documents it, and prints it via `cite doctor`.
-3. **Declared divergence** — the two cases above, plus anything future where
-   copying would make the merge gate less safe. Each divergence lives on this
-   page with its reason.
-4. **Out of scope** — settings that exist only in a web UI with no file and no
-   export. They cannot be read, so the promise does not cover them, and this is
-   stated rather than left for you to discover.
+3. **Declared divergence** covers the two cases above, plus anything future where
+   copying would make the merge gate less safe. This page records each divergence
+   with its reason.
+4. **Out of scope** covers settings that exist only in a web UI with no file to
+   read and nothing to export. They cannot be read, so the promise leaves them
+   out, and Cite says so rather than leaving you to discover it.
 
 Conformance is observed quarterly, by hand, against a fixed scenario set, and
 the observation date is written down. Staleness is the signal: `cite doctor`
