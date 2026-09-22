@@ -15,6 +15,10 @@
 #   * Binaries are built with CGO_ENABLED=0, -trimpath and -ldflags '-s -w':
 #     fully static, no host filesystem or toolchain paths embedded, stripped —
 #     the same tag rebuilds bit-for-bit-identical artifacts on any runner.
+#   * The `pins` job runs before anything is built: the tag, VERSION (which the
+#     composite action reads to pick its binary) and cmd/cite/main.go (which
+#     the binary reports) must name the same release, so a release cannot
+#     publish an action that downloads a different version than it runs.
 #
 # Triggered by pushing a tag matching 'v*' (e.g. v0.1.0). See docs/release.md.
 
@@ -31,8 +35,24 @@ permissions:
   id-token: write # OIDC token for keyless attestation signing
 
 jobs:
+  # Before anything is built: the tag, VERSION (which the composite action
+  # reads to pick the binary) and cmd/cite/main.go (which the binary reports)
+  # all have to name the same release. A tag pushed against a tree where they
+  # disagree would publish a release whose action downloads a different one,
+  # and a consumer would only find out from the job log (issue #94).
+  pins:
+    name: verify the version pins agree with the tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Verify the version pins agree with the tag
+        run: bash scripts/version-check.sh "$GITHUB_REF_NAME"
+
   build:
     name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: pins
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

@@ -13,6 +13,13 @@
 #   2. its `# vX.Y.Z` comment names a version the SHA does not belong to;
 #   3. the snippets disagree, so a reader copies two different versions.
 #
+# And one way a pin can be right while what it installs still floats (issue
+# #94): the snippet downloads the binary from `releases/latest`, so the reviewer
+# moves to the newest release while the pinned action stays where it is. The
+# examples are the snippets consumers copy, so they pin the release tag. There
+# is no exemption: a `releases/latest` download in shipped markdown or YAML is
+# reported, always.
+#
 # The collector is deliberately loose: it matches `uses:` anywhere on a line,
 # quoted or not, in .md, .yml and .yaml alike. A pin this script fails to match
 # is not reported as anything — it is simply absent, and the gate goes green
@@ -108,6 +115,19 @@ count="$(printf '%s' "$versions" | wc -w | tr -d ' ')"
 if [ "$count" -gt 1 ]; then
   fail "snippets disagree on the version:$(printf '%s' "$versions")"
 fi
+
+# 4. a snippet that downloads the binary from `releases/latest` floats the
+# reviewer even when its `uses:` pin is a perfect full SHA (issue #94): the
+# action stays where it was pinned and the binary moves to the newest release.
+# Every shipped snippet names a tag. There is no exemption — if a document ever
+# has to teach the floating URL, it says so here first, with a reason.
+floats="$(git grep -nE 'releases/latest/download' -- '*.md' '*.yml' '*.yaml' || true)"
+while IFS= read -r hit; do
+  [ -n "$hit" ] || continue
+  fail "$(printf '%s' "$hit" | cut -d: -f1-2) downloads the binary from releases/latest, which floats the reviewer; pin the release tag"
+done <<EOF
+$floats
+EOF
 
 if [ "$fails" -gt 0 ]; then
   printf '\n%s pin problem(s).\n' "$fails" >&2

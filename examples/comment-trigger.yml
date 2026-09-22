@@ -42,8 +42,12 @@ jobs:
       contains(github.event.comment.body, '@cite review')
     runs-on: ubuntu-latest
     steps:
-      - name: Download latest Cite binary
+      - name: Download Cite binary
         shell: bash
+        env:
+          # The tag, not releases/latest: what runs here is the reviewed
+          # version, and nothing moves it but this line (issue #94).
+          CITE_VERSION: v0.8.0
         run: |
           set -euo pipefail
           case "${RUNNER_ARCH}" in
@@ -51,7 +55,7 @@ jobs:
             ARM64) arch=arm64 ;;
             *) echo "unsupported runner arch: ${RUNNER_ARCH}" >&2; exit 1 ;;
           esac
-          url="https://github.com/elecnix/cite/releases/latest/download/cite-linux-${arch}"
+          url="https://github.com/elecnix/cite/releases/download/${CITE_VERSION}/cite-linux-${arch}"
           curl -fsSL --retry 3 -o /usr/local/bin/cite "$url"
           chmod +x /usr/local/bin/cite
 

@@ -44,9 +44,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download cite binary
+        shell: bash
+        env:
+          # The tag, not releases/latest: this workflow concludes checks, so
+          # which binary does that is a reviewed decision (issue #94).
+          CITE_VERSION: v0.8.0
         run: |
-          curl -fsSL -o cite \
-            https://github.com/elecnix/cite/releases/latest/download/cite-linux-amd64
+          set -euo pipefail
+          url="https://github.com/elecnix/cite/releases/download/${CITE_VERSION}/cite-linux-amd64"
+          curl -fsSL --retry 3 -o cite "$url"
           chmod +x cite
 
       - name: Conclude check as bypassed and append to bypass log
