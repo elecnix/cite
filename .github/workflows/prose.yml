@@ -14,13 +14,17 @@
 #
 # The full-length SHA pin mirrors docs/release.md: a prose gate that floats
 # on a tag can change its verdict between two runs of the same commit.
-# v1.1.0 pins the release, which narrows the verdict to the lines a change
-# writes (elecnix/vale-action#4). It replaces the fix pinned here before it,
-# for elecnix/vale-action#2: a re-run of a superseded commit no longer
-# repaints the pinned comment or publishes a stale check run for a non-head
-# sha. The `vale-version` input is pinned for the same reason the action is:
-# the linter decides what gets reported, so a floating linter moves the
-# verdict too.
+# v1.1.1 pins the release. It reads the added lines from this pull request's
+# own diff rather than from the files API, which drops `patch` for a diff it
+# considers too large — a 1748-line file was enough — and a missing patch used
+# to be read as "no added lines", which counted the whole file
+# (elecnix/vale-action#5). It also counts only the lines a change writes, the
+# narrowing added in v1.1.0 (elecnix/vale-action#4), and carries the fix for
+# elecnix/vale-action#2 that was pinned here before: a re-run of a superseded
+# commit no longer repaints the pinned comment or publishes a stale check run
+# for a non-head sha. The `vale-version` input is pinned for the same reason
+# the action is: the linter decides what gets reported, so a floating linter
+# moves the verdict too.
 
 name: prose
 
@@ -44,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-      - uses: elecnix/vale-action@28a0603a150e250eb71f32d398c2e0262c6d0294 # v1.1.0: count only the lines a change writes (vale-action#4)
+      - uses: elecnix/vale-action@a8c2225c38f990ea957c63c6aabc505dd49e6ab5 # v1.1.1: read the added lines from the pull request's own diff (vale-action#5)
         with:
           # The action defaults to this version, pinned here so a change to
           # that default cannot move this gate's verdict unnoticed.

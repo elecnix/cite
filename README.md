@@ -29,12 +29,13 @@ jobs:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
 ```
 
-No `actions/checkout`. No `with:` block. No configuration file. The provider is
-inferred from which key is present — and with `models: read` permission and no
-key at all, Cite runs on GitHub's models endpoint with the ambient token:
-rate-limited, meant for the first review before you have decided anything
-([examples/zero-secret.yml](examples/zero-secret.yml)). Bring-your-own-key is
-the upgrade.
+Configuration is optional, and the workflow above is the whole of it. Cite
+reads the provider from whichever key is present, so a `with:` block can be
+omitted and `actions/checkout` is unnecessary. With `models: read` permission
+and no key at all, Cite runs on GitHub's models endpoint with the ambient
+token, which is rate-limited and meant for the first review before you have
+decided anything ([examples/zero-secret.yml](examples/zero-secret.yml)).
+Bring-your-own-key is the upgrade.
 
 Already have instruction files (`.github/copilot-instructions.md`,
 `AGENTS.md`, `*.instructions.md`)? Cite reads them from the base ref and tells
@@ -70,17 +71,17 @@ cite signals --pr owner/repo#N                # ingest 👎 reactions into the l
 cite re-review --repo owner/name              # re-review bypassed merges; one issue per finding
 ```
 
-The `--report json|markdown` path runs the reviewer against the real pull request but writes the outcome to stdout or `-o FILE` instead of publishing to GitHub: no check run, no review, no sticky comment. It reviews all manifest files fresh (no incremental carry-forward) so reports stay reproducible. This lets you evaluate Cite on any repository your token can read without deploying the action there.
+The `--report json|markdown` path runs the reviewer against the real pull request and writes the outcome to stdout or `-o FILE`. Nothing on GitHub changes, and the check and comment already published keep their last state. It reviews all manifest files fresh (no incremental carry-forward) so reports stay reproducible. This lets you evaluate Cite on any repository your token can read without deploying the action there.
 
 ## Documentation
 
-- [docs/configuration.md](docs/configuration.md) — every key
-- [docs/instructions.md](docs/instructions.md) — what it reads, precedence, triage, base-ref rule
-- [docs/noise.md](docs/noise.md) — the budget formula and category table
-- [docs/security.md](docs/security.md) — the invariants, fork PRs, what it never has
-- [docs/downstream-contract.md](docs/downstream-contract.md) — what an agent consuming these comments must be told
+- [docs/configuration.md](docs/configuration.md): every key
+- [docs/instructions.md](docs/instructions.md): what it reads, precedence, triage, base-ref rule
+- [docs/noise.md](docs/noise.md): the budget formula and category table
+- [docs/security.md](docs/security.md) covers the invariants, the fork case, and the capabilities Cite works without.
+- [docs/downstream-contract.md](docs/downstream-contract.md): what an agent consuming these comments must be told
 - [docs/troubleshooting.md](docs/troubleshooting.md)
-- [CONFORMANCE.md](CONFORMANCE.md) — the compatibility tiers, dated
+- [CONFORMANCE.md](CONFORMANCE.md): the compatibility tiers, dated
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Comparison with other reviewers

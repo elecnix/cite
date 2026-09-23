@@ -14,9 +14,10 @@ bad review
 ```
 
 **1. The run artifact.** Every review body links the run artifact for its run.
-Per finding it records: the model that produced it, the files the reviewer saw,
-which instruction sections were used, token counts, the evidence-match level,
-and the verdict of the verification pass. This answers "why did you say that".
+Per finding it records the model that produced it, the files that the
+reviewer saw, which instruction sections were used, token counts, the
+evidence-match level, and the verdict of the verification pass. This answers
+"why did you say that".
 
 **2. The drop log.** The same artifact answers "why didn't you say that". Every
 finding killed by the evidence gate, the anchor check, an unverified external
@@ -28,7 +29,7 @@ them.
 **2b. The forensics archive.** When a review FAILS, the GitHub Action uploads a
 `cite-forensics-<run id>-…` artifact (download it from the run's summary page):
 the full step log plus `cite-run-record.json`, which carries the per-attempt
-call log — when each model call started, how long it ran, how it ended
+call log. It records when each model call started, how long it ran, how it ended
 (`ok`, `deadline_exceeded`, `truncated`, …) and what it cost in tokens. This
 answers "why did the run take so long / what did it burn" without the raw log,
 which is truncated and unavailable for in-progress runs. When the failure was a
@@ -48,29 +49,29 @@ it, and the `prefix_bytes` and `prompt_bytes` that `cache_ceiling` comes from.
 When the printed cache-hit rate is below 80% of the ceiling, look there first.
 Several providers in one run mean the calls read several caches.
 
-**3. `cite doctor`.** For anything about instruction files — what was read, what
-was ignored, what was classified as authoring rather than reviewable — run:
+**3. `cite doctor`.** For anything about instruction files (what was read, what
+was ignored, what was classified as authoring rather than reviewable), run:
 
 ```
 cite doctor
 ```
 
-It prints, for a given path, which instruction files matched, in what order,
+It prints, for any path, which instruction files matched, in what order,
 which sections survived triage, and which were classified as authoring. It also
 warns when [CONFORMANCE.md](../CONFORMANCE.md) is over 90 days old.
 
-**4. `cite soak`.** If a behaviour looks like a pipeline regression — schema
+**4. `cite soak`.** If a behaviour looks like a pipeline regression (schema
 violations, anchors landing outside the diff, fingerprint churn, carry-forward
-losses — reproduce it on the benchmark corpus:
+losses), reproduce it on the benchmark corpus:
 
 ```
 cite soak bench/cases
 ```
 
-`soak` is a regression harness, not a quality score: schema validity, anchor
-placement, fingerprint stability across a reformat, incremental carry-forward,
+`soak` is a regression harness. It reports schema validity, anchor placement,
+fingerprint stability across a reformat, incremental carry-forward,
 latency and cost budgets, and a stability number across repeats. A case that
-reproduces your bad review is a benchmark case — see
+reproduces your bad review is a benchmark case. See
 [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Common cases
@@ -81,13 +82,13 @@ Open the run artifact and find the finding in the drop log. The usual reasons,
 in frequency order:
 
 - **The quote did not match the file** at any evidence level. The quote is the
-  grounding check; a paraphrase fails it. This is by design — see
+  grounding check; a paraphrase fails it. This is by design: see
   [noise.md](noise.md).
 - **The quote matched but did not intersect an added or modified line.** The
   reviewer comments on the change, not the file.
-- **An external claim did not verify** — a path or symbol that does not exist,
-  or a claim about version behaviour, which is rejected outright because it
-  cannot be checked without network access.
+- **An external claim did not verify.** A path or symbol that does not exist,
+  or a claim about version behaviour, is rejected outright because it cannot be
+  checked without network access.
 - **The budget.** `N = clamp(3, 3 + floor(changed_lines / 250), 10)`, at most 2
   per file. The assembly call's cut reason is in the drop log.
 - **The category is off.** `convention` and `error-swallow` are off unless
@@ -95,9 +96,9 @@ in frequency order:
 
 ### Why did nothing get posted?
 
-- **Silence is a valid review.** Nothing to say means nothing posted — no
-  comment, no "LGTM". The check run still concludes, with a one-line summary.
-  Check the check run before assuming the workflow did not run.
+- **Silence is a valid review.** Nothing to say means nothing posted. There is
+  no comment and no "LGTM". The check run still concludes, with a one-line
+  summary. Check the check run before assuming the workflow did not run.
 - **Everything was skipped.** Generated files, lockfiles, vendored trees,
   minified output, and binaries are skipped with a named reason; `paths_ignore`
   adds to the list. Every skip appears on the check summary.
@@ -122,7 +123,7 @@ summary names the cause:
   invites a matching quote for the same wrong claim.
 - **`output truncated at token cap (finish_reason=length)`.** The review of that
   file did not fit in the output budget. This is deterministic, so it is not
-  retried — it would truncate identically. Raise
+  retried: it would truncate identically. Raise
   `roles.review.max_output_tokens`, or declare the model's real `max_tokens`
   under its provider entry; see
   [the output cap](configuration.md#the-output-cap). A truncated review is
@@ -137,19 +138,19 @@ summary names the cause:
 - **Zero in-scope files.** A pull request that changed files but resolved to an
   empty in-scope set is treated as a possible path-filter bypass, never as a
   pass.
-- **An unexpected skip.** A file skipped without one of the named reasons fails
+- **An unexpected skip.** A file skipped without a listed reason fails
   the gate. "Skipped" must never collapse into "clean".
 
-A red coverage failure is recoverable by design. An absent check is not — the
-gate job creates the check run first thing and always concludes it, even when
-the review job dies.
+A red coverage failure is recoverable by design, while an absent check is not:
+the gate job creates the check run first thing and always concludes it, even
+when the review job fails.
 
 ### My tool failures block the merge and I want them not to
 
 By default a `COULD_NOT_EVALUATE` check run concludes `failure`, so a
 repository that requires the check blocks the merge until the tool failure is
 resolved. Some repositories prefer to block only on real findings: a
-transient provider outage should not hold every pull request hostage. Set the
+transient provider outage should not block every pull request. Set the
 action input `tool_failure_blocks: false` in the workflow's `with:` block:
 
 ```yaml
@@ -159,21 +160,22 @@ with:
 ```
 
 With that set, a tool failure still publishes `COULD_NOT_EVALUATE` on the
-check run — the title and summary say exactly what failed — but the check-run
+check run (the title and summary say exactly what failed), but the check-run
 conclusion is `neutral`, which GitHub counts as a satisfied required check,
 so the pull request is not blocked. A real finding (`FOUND`) always concludes
 `failure` and blocks, whether or not the repository opted out: the opt-out
 covers "the tool could not read its own output", never "the tool found
-something". The default remains `true` — red — so repositories that do
+something". The default remains `true` (red), so repositories that do
 nothing keep fail-closed behaviour.
 
 ### Rate limits
 
-- **Model provider 429s.** Default concurrency is 6–8, capped at 16; lower the
-  per-role `concurrency` in `.github/cite.yml`. A run-global retry token bucket
-  absorbs transient acceleration limits; deterministic failures are not retried.
+- **Model provider 429s.** Default concurrency is 6 to 8, capped at 16; lower
+  the per-role `concurrency` in `.github/cite.yml`. A run-global retry token
+  bucket absorbs transient acceleration limits. Deterministic failures are not
+  retried.
 - **GitHub API limits.** Findings are posted as one review with a comments
-  array — one content-generating request regardless of finding count — so the
+  array (one content-generating request regardless of finding count), so the
   per-hour budget is rarely the constraint. If you share the token with other
   workflows on the same repository, the shared 1,000 requests/hour ceiling is;
   stagger them.
@@ -187,13 +189,13 @@ missing. Causes, in order of likelihood:
   per cache key, one provider's cache silently stops hitting; a naive high
   concurrency defeats its own caching.
 - **Below the minimum prefix length.** A cached prefix below the provider's
-  minimum (512–6,144 tokens depending on model) is skipped with no error.
-- **Volatile content in the cached prefix.** Nothing run-specific — timestamps,
-  run ids, nonces — belongs in the shared prefix; if it appears there, every run
+  minimum (512 to 6,144 tokens depending on model) is skipped with no error.
+- **Volatile content in the cached prefix.** Nothing run-specific (timestamps,
+  run ids, nonces) belongs in the shared prefix; if it appears there, every run
   cold-misses.
 
-The run artifact records cache counters; compare them between a cheap run and an
-expensive one. Caching failures are silent by nature, which is why the counters,
+The run artifact includes cache counters; compare them between a cheap run and
+an expensive one. Caching failures are silent by nature, so the counters,
 not the bill, are the diagnostic.
 
 ### The bypass label
@@ -203,8 +205,8 @@ or the provider is down. It is self-service, loud, and enumerable:
 
 - The check concludes `success` with `BYPASSED — <state> — @author — <run url>`
   appended to a bypass log.
-- The bypass buys time, not amnesty: a scheduled job re-reviews bypassed merge
-  commits on the default branch afterwards and files an issue per finding.
+- The bypass unblocks the current merge, and a scheduled job re-reviews bypassed
+  merge commits on the default branch afterwards and files an issue per finding.
 - "Every pull request merged unreviewed on this date" is a one-line query over
   the log.
 
