@@ -39,8 +39,6 @@ inputs:
       the newest release whenever this input was empty.
     required: false
     default: ''
-    required: false
-    default: ''
   model_base_url:
     description: 'Provider base URL, e.g. https://openrouter.ai/api/v1. Empty means the OpenAI default.'
     required: false
