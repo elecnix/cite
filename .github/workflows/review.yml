@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Review this pull request with Cite
-        uses: elecnix/cite@eaebbe70378689d61158f43515471544e43c6038  # v0.8.0
+        uses: elecnix/cite@4e0710122e3d66c2ca961308384b108097851d4c  # v0.9.1
         with:
           tool_failure_blocks: false
           model_id: deepseek/deepseek-v4-flash-0731
@@ -75,9 +75,10 @@ jobs:
           # truthfully as COULD_NOT_EVALUATE), the check run concludes
           # "neutral" instead of "failure", so silence from a broken judge
           # does not veto the merge. A real finding (FOUND) always concludes
-          # failure and blocks, unchanged. The pin above is v0.8.0, the first
-          # release carrying the tool_failure_blocks input (issue #59 landed
-          # on main after v0.6.0), so the input takes effect as written.
+          # failure and blocks, unchanged. The pin above is v0.9.1. The first
+          # release carrying the tool_failure_blocks input was v0.8.0 (issue
+          # #59 landed on main after v0.6.0), so the input takes effect as
+          # written.
 
   # The "after" reviewer: the binary built from THIS pull request's head,
   # reviewing the same pull request under its own "cite-head" identity

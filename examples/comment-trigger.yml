@@ -47,7 +47,7 @@ jobs:
         env:
           # The tag, not releases/latest: what runs here is the reviewed
           # version, and nothing moves it but this line (issue #94).
-          CITE_VERSION: v0.8.0
+          CITE_VERSION: v0.9.1
         run: |
           set -euo pipefail
           case "${RUNNER_ARCH}" in

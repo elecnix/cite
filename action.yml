@@ -30,7 +30,7 @@ inputs:
     default: 'false'
   version:
     description: >
-      Cite release tag to download, e.g. v0.8.0. Leave empty (the default) to
+      Cite release tag to download, e.g. v0.9.1. Leave empty (the default) to
       download the release this action belongs to: VERSION is checked out
       beside the action, so `uses: elecnix/cite@<full-sha>` pins the binary as
       well as the action, which is the pair docs/release.md asks consumers to
