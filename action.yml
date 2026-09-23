@@ -56,6 +56,15 @@ inputs:
       downloadable from the run's summary page once the job completes.
     required: false
     default: 'true'
+  archive_run_record:
+    description: >
+      Set to "true" (the default) to upload the run record JSON when the
+      review succeeds, kept for 14 days. Each entry in its calls array has
+      the call's timing, tokens, cache reads and writes, and the upstream
+      provider, which is where a cache hit rate below its ceiling is
+      diagnosed. Set to "false" to skip the upload.
+    required: false
+    default: 'true'
   tool_failure_blocks:
     description: >
       Set to "true" (the default) to keep a tool failure — Cite could not
@@ -72,6 +81,16 @@ inputs:
 runs:
   using: 'composite'
   steps:
+    # upload-artifact refuses a name the run already has, so a workflow that
+    # runs Cite in two jobs of one run (a matrix, say) needs a name per job.
+    # The run id and job id are shared across a matrix, so a random part
+    # completes the suffix. This is the first step, so every later failure
+    # still has a suffix to name its archive with.
+    - name: Name the archives
+      id: archive
+      shell: bash
+      run: echo "suffix=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')" >> "$GITHUB_OUTPUT"
+
     # The config file named by config_path is read from the LOCAL
     # filesystem by `cite review`, but the documented install path has no
     # actions/checkout, so it is usually absent from the runner. Fetch it
@@ -155,11 +174,24 @@ runs:
         export CITE_TRUNCATED_OUT="$CITE_TRUNCATED"
         cite review $ARGS 2>&1 | tee "$CITE_LOG"
 
+    # The run record alone, on every successful run: its calls[] carry the
+    # per-call cache counters and upstream provider, which is how a cache
+    # hit rate below its ceiling gets diagnosed. One small JSON file; a
+    # failed run gets the full forensics archive below instead.
+    - name: Archive the run record
+      if: success() && inputs.archive_run_record == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: cite-run-record-${{ steps.archive.outputs.suffix }}
+        path: ${{ runner.temp }}/cite-run-record.json
+        if-no-files-found: ignore
+        retention-days: 14
+
     - name: Archive forensics on failure
       if: failure() && inputs.archive_on_failure == 'true'
       uses: actions/upload-artifact@v4
       with:
-        name: cite-forensics-${{ github.run_id }}
+        name: cite-forensics-${{ steps.archive.outputs.suffix }}
         path: |
           ${{ runner.temp }}/cite-output.log
           ${{ runner.temp }}/cite-run-record.json

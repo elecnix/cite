@@ -31,3 +31,5 @@ jobs:
         run: bash scripts/action-pins_test.sh
       - name: action.yml duplicate keys
         run: bash scripts/yaml-duplicate-keys_test.sh
+      - name: action.yml archive names
+        run: bash scripts/action-archive_test.sh
