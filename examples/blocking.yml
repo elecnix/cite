@@ -22,7 +22,7 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: elecnix/cite@4e0710122e3d66c2ca961308384b108097851d4c  # v0.9.1
+      - uses: elecnix/cite@7bbe8f051e9df569744c18e0fa8285f4129c1c79  # v0.10.0
         env:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
 
