@@ -90,6 +90,11 @@ type Reviewer struct {
 
 	usageMu sync.Mutex
 	usage   model.Usage // run-total of every completion response's counters (§15)
+	// usageCalls and costCalls count the responses folded into usage and
+	// the ones among them that reported a cost. The run total is
+	// provider-reported only when the two match (issue #103).
+	usageCalls int
+	costCalls  int
 
 	callMu   sync.Mutex
 	runStart time.Time
@@ -157,7 +162,13 @@ func (r *Reviewer) accumulateUsage(u model.Usage) {
 	r.usage.CacheReadTokens += u.CacheReadTokens
 	r.usage.CacheWriteTokens += u.CacheWriteTokens
 	r.usage.CostUSD += u.CostUSD
-	r.usage.CostReported = r.usage.CostReported || u.CostReported
+	r.usageCalls++
+	if u.CostReported {
+		r.costCalls++
+	}
+	// Roles may use different providers: a total that mixes billed calls
+	// with unbilled ones is partial, so it is not provider-reported.
+	r.usage.CostReported = r.costCalls == r.usageCalls
 }
 
 // totalUsage returns the accumulated run-total.

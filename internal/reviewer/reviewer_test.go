@@ -1140,6 +1140,33 @@ func TestProviderCostAccumulatesIntoRunAndCallLog(t *testing.T) {
 	}
 }
 
+// Roles may use different providers. When only some calls report a cost, the
+// run total is partial, so the run must not present it as provider-reported.
+func TestPartialProviderCostIsNotReported(t *testing.T) {
+	c := &fakeClient{fn: func(i int, req model.CompletionRequest) (string, error) {
+		if isTriageCall(req) {
+			return triageJSON("a.go"), nil
+		}
+		return reviewJSON(requestPath(req), "reviewed", nil), nil
+	}}
+	client := &usageClient{inner: c, usageFor: func(i int) model.Usage {
+		if i == 0 {
+			return model.Usage{InputTokens: 100, OutputTokens: 5}
+		}
+		return model.Usage{InputTokens: 100, OutputTokens: 5, CostUSD: 0.002, CostReported: true}
+	}}
+	rec, err := runOnce(t, baseInputs(), baseOptions(client))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.calls) < 2 {
+		t.Fatalf("want at least 2 calls, got %d", len(c.calls))
+	}
+	if rec.Usage.CostReported {
+		t.Fatalf("run usage %+v claims a provider-reported cost, but call 0 reported none", rec.Usage)
+	}
+}
+
 // usageClient decorates a fakeClient's responses with per-call usage counters.
 type usageClient struct {
 	inner    *fakeClient
