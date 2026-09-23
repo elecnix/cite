@@ -419,7 +419,9 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		return nil, &typedError{Code: code, Body: msg}
 	}
 	var out struct {
-		Provider string `json:"provider"`
+		// Provider stays raw: it is a diagnostic label, and a field of
+		// an unexpected type must not fail a call whose review is fine.
+		Provider json.RawMessage `json:"provider"`
 		Choices  []struct {
 			Message struct {
 				Content string `json:"content"`
@@ -474,6 +476,16 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		Usage:        out.Usage.toUsage(),
 		FinishReason: ch.FinishReason,
 		Model:        c.Model,
-		Provider:     out.Provider,
+		Provider:     upstreamProvider(out.Provider),
 	}, nil
+}
+
+// upstreamProvider reads a router's upstream provider label, which
+// OpenRouter sends as a string. Any other type, or none, gives "".
+func upstreamProvider(raw json.RawMessage) string {
+	var name string
+	if len(raw) == 0 || json.Unmarshal(raw, &name) != nil {
+		return ""
+	}
+	return name
 }

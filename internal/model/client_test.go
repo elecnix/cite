@@ -463,6 +463,29 @@ func TestChatCompletionsDecodesUpstreamProvider(t *testing.T) {
 	}
 }
 
+// The upstream provider is a diagnostic. A provider field of another type,
+// an object or a number, must leave it empty and never fail the call: the
+// review is worth more than the label.
+func TestChatCompletionsToleratesNonStringProvider(t *testing.T) {
+	for _, provider := range []string{`{"name":"Wafer"}`, `42`, `null`} {
+		body := `{"provider":` + provider + `,"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":3}}`
+		srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(body))
+		})
+		ts := newTestServer(srv)
+		c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+		resp, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 64})
+		ts.Close()
+		if err != nil {
+			t.Fatalf("provider %s: %v", provider, err)
+		}
+		if resp.Provider != "" || resp.Text != "ok" {
+			t.Fatalf("provider %s: got provider %q text %q, want empty provider and the text", provider, resp.Provider, resp.Text)
+		}
+	}
+}
+
 // A run's session identifier travels as the x-session-id header, which
 // OpenRouter uses as its sticky-routing key. It never becomes a body field:
 // OpenAI's API rejects unknown request arguments with a 400, and an unknown
