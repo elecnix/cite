@@ -22,6 +22,7 @@ fail() {
 }
 
 action="action.yml"
+# shellcheck disable=SC2016 # the literal GitHub expression, not a shell expansion
 suffix='${{ steps.archive.outputs.suffix }}'
 
 # Line of the first `- name:` step, and of the step that writes the suffix.
