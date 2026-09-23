@@ -171,8 +171,10 @@ func TestCacheCeilingFromPrefixGroups(t *testing.T) {
 func TestCacheCeilingOrdersByStartTime(t *testing.T) {
 	calls := []CallEntry{
 		{StartS: 5, InputTokens: 1000, PrefixID: "r", PrefixBytes: 500, PromptBytes: 1000},
-		{StartS: 1, InputTokens: 4000, PrefixID: "r", PrefixBytes: 500, PromptBytes: 4000},
+		{StartS: 1, InputTokens: 4000, PrefixID: "r", PrefixBytes: 500, PromptBytes: 1000},
 	}
+	// Started first, the 4000-token call pays the write and the later one
+	// reads half of 1000. In log order the answer would be 2000/5000.
 	want := 500.0 / 5000
 	if got := CacheCeiling(calls); got < want-1e-9 || got > want+1e-9 {
 		t.Fatalf("CacheCeiling = %v, want %v", got, want)
