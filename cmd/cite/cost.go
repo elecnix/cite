@@ -17,7 +17,7 @@ func applyCost(rec *model.RunRecord, cfg *config.Config) {
 	if rec == nil {
 		return
 	}
-	if rec.Usage.CostUSD > 0 {
+	if rec.Usage.CostReported {
 		rec.CostUSD = rec.Usage.CostUSD
 		return
 	}

@@ -157,6 +157,7 @@ func (r *Reviewer) accumulateUsage(u model.Usage) {
 	r.usage.CacheReadTokens += u.CacheReadTokens
 	r.usage.CacheWriteTokens += u.CacheWriteTokens
 	r.usage.CostUSD += u.CostUSD
+	r.usage.CostReported = r.usage.CostReported || u.CostReported
 }
 
 // totalUsage returns the accumulated run-total.

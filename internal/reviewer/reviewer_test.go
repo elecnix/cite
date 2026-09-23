@@ -1107,7 +1107,7 @@ func TestProviderCostAccumulatesIntoRunAndCallLog(t *testing.T) {
 		return reviewJSON(requestPath(req), "reviewed", nil), nil
 	}}
 	client := &usageClient{inner: c, usageFor: func(i int) model.Usage {
-		return model.Usage{InputTokens: 100, OutputTokens: 5, CostUSD: 0.002}
+		return model.Usage{InputTokens: 100, OutputTokens: 5, CostUSD: 0.002, CostReported: true}
 	}}
 
 	rec, err := runOnce(t, baseInputs(), baseOptions(client))
@@ -1134,6 +1134,9 @@ func TestProviderCostAccumulatesIntoRunAndCallLog(t *testing.T) {
 	}
 	if ok == 0 {
 		t.Fatal("no successful call entries recorded")
+	}
+	if !rec.Usage.CostReported {
+		t.Fatal("run usage lost the provider-reported flag")
 	}
 }
 

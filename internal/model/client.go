@@ -151,14 +151,16 @@ type CompletionRequest struct {
 
 // Usage records token counters, including cache behaviour, which CI asserts on
 // because caching failure is silent (§7). CostUSD is what the provider billed
-// for the call, when the provider reports it (OpenRouter's usage.cost); it is
-// 0 when the provider reports no cost.
+// for the call, when the provider reports it (OpenRouter's usage.cost).
+// CostReported tells a billed $0, such as a free model, apart from a provider
+// that reports no cost at all.
 type Usage struct {
 	InputTokens      int     `json:"input_tokens"`
 	OutputTokens     int     `json:"output_tokens"`
 	CacheReadTokens  int     `json:"cache_read_tokens,omitempty"`
 	CacheWriteTokens int     `json:"cache_write_tokens,omitempty"`
 	CostUSD          float64 `json:"cost_usd,omitempty"`
+	CostReported     bool    `json:"cost_reported,omitempty"`
 }
 
 // chatCompletionsUsage is the usage object of a /chat/completions response.
@@ -172,7 +174,7 @@ type chatCompletionsUsage struct {
 		CachedTokens     int `json:"cached_tokens"`
 		CacheWriteTokens int `json:"cache_write_tokens"`
 	} `json:"prompt_tokens_details"`
-	Cost float64 `json:"cost"`
+	Cost *float64 `json:"cost"`
 }
 
 // toUsage maps the chat-completions key names onto the provider-neutral
@@ -181,7 +183,10 @@ func (w chatCompletionsUsage) toUsage() Usage {
 	u := Usage{
 		InputTokens:  w.PromptTokens,
 		OutputTokens: w.CompletionTokens,
-		CostUSD:      w.Cost,
+	}
+	if w.Cost != nil {
+		u.CostUSD = *w.Cost
+		u.CostReported = true
 	}
 	if d := w.PromptTokensDetails; d != nil {
 		u.CacheReadTokens = d.CachedTokens

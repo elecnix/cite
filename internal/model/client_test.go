@@ -399,7 +399,7 @@ func TestChatCompletionsUsageKeysAndProviderCost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Usage{InputTokens: 1200, OutputTokens: 80, CacheReadTokens: 900, CacheWriteTokens: 100, CostUSD: 0.00042}
+	want := Usage{InputTokens: 1200, OutputTokens: 80, CacheReadTokens: 900, CacheWriteTokens: 100, CostUSD: 0.00042, CostReported: true}
 	if resp.Usage != want {
 		t.Fatalf("usage = %+v, want %+v", resp.Usage, want)
 	}
@@ -421,5 +421,24 @@ func TestChatCompletionsUsageWithoutProviderCost(t *testing.T) {
 	}
 	if resp.Usage != (Usage{InputTokens: 7, OutputTokens: 3}) {
 		t.Fatalf("usage = %+v", resp.Usage)
+	}
+}
+
+// A free model on OpenRouter reports "cost": 0. The client must record that
+// the provider reported a cost, so a declared rate never replaces a billed $0.
+func TestChatCompletionsReportedZeroCostIsKept(t *testing.T) {
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":3,"cost":0}}`))
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+	resp, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Usage.CostReported || resp.Usage.CostUSD != 0 {
+		t.Fatalf("usage = %+v, want a reported cost of 0", resp.Usage)
 	}
 }
