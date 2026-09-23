@@ -17,6 +17,9 @@
 #                     and creates the check run explicitly on the PULL REQUEST
 #                     HEAD SHA, because `workflow_run` attaches checks to the
 #                     default branch by default.
+#
+# This file contains both as two YAML documents separated by `---`. Save each
+# document as its own file, at the path its heading gives.
 
 # ---------------------------------------------------------------------------
 # Workflow 1 of 2: .github/workflows/cite-diff.yml
@@ -34,6 +37,7 @@ jobs:
         # it exists so the trusted side has a triggering run and so fork PRs
         # are not silently skipped.
 
+---
 # ---------------------------------------------------------------------------
 # Workflow 2 of 2: .github/workflows/cite-review.yml
 # ---------------------------------------------------------------------------
