@@ -96,8 +96,16 @@ if ! bash "$check" "$root/action.yml"; then
   fail "action.yml has a duplicate key, so GitHub refuses to load the action"
 fi
 
+# The examples are the workflows users copy, so each one must load as written.
+# A file that holds two workflows separates them with `---`.
+for example in "$root"/examples/*.yml; do
+  if ! bash "$check" "$example"; then
+    fail "${example#"$root/"} has a duplicate key, so a copy of it would not load"
+  fi
+done
+
 if [ "$fails" -gt 0 ]; then
   printf '\n%d duplicate-key problem(s).\n' "$fails" >&2
   exit 1
 fi
-echo "ok — the duplicate-key check and this repository's action.yml"
+echo "ok — the duplicate-key check, this repository's action.yml and its examples"
