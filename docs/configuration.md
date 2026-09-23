@@ -165,8 +165,9 @@ When a call does hit its deadline, the run does NOT retry it: the first
 attempt already burned its full wall-clock budget and the provider's tokens,
 and a re-issue pays twice for the same wait. The failure message states the two
 adjustments instead: raise `roles.<role>.timeout`, or lower the output cap
-that drives the derived review deadline. The failed run's record (per-call
-timings, token usage) is archived by the GitHub Action for forensics.
+that drives the derived review deadline. The GitHub Action archives the run
+record (per-call timings, token usage, cache counters) on every run, and the
+full forensics archive on a failed one.
 
 ### The output cap
 

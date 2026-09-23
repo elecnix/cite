@@ -442,3 +442,56 @@ func TestChatCompletionsReportedZeroCostIsKept(t *testing.T) {
 		t.Fatalf("usage = %+v, want a reported cost of 0", resp.Usage)
 	}
 }
+
+// OpenRouter names the upstream provider that served the call in a
+// top-level "provider" field. Each upstream keeps its own prompt cache, so
+// the name is what tells a cold miss from a routing change.
+func TestChatCompletionsDecodesUpstreamProvider(t *testing.T) {
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"provider":"Wafer","choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":3}}`))
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+	resp, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Provider != "Wafer" {
+		t.Fatalf("provider = %q, want Wafer", resp.Provider)
+	}
+}
+
+// A run's session identifier travels as the x-session-id header, which
+// OpenRouter uses as its sticky-routing key. It never becomes a body field:
+// OpenAI's API rejects unknown request arguments with a 400, and an unknown
+// header is ignored by every endpoint.
+func TestSessionIDSentAsHeaderNeverAsBodyField(t *testing.T) {
+	var gotHeader string
+	var gotBody map[string]any
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("X-Session-Id")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}`))
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+	if _, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 64, SessionID: "cite-0123abcd"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotHeader != "cite-0123abcd" {
+		t.Fatalf("x-session-id = %q, want cite-0123abcd", gotHeader)
+	}
+	if _, ok := gotBody["session_id"]; ok {
+		t.Fatalf("session_id leaked into the request body: %v", gotBody)
+	}
+	if _, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 64}); err != nil {
+		t.Fatal(err)
+	}
+	if gotHeader != "" {
+		t.Fatalf("x-session-id = %q without a session, want none", gotHeader)
+	}
+}

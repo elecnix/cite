@@ -138,25 +138,65 @@ func TestCacheHitRate(t *testing.T) {
 			t.Errorf("%s: CacheHitRate = %v, want %v", c.name, got, c.want)
 		}
 	}
-	if 21000 != 0 {
-		_ = MinCacheHitRate
+}
+
+// The ceiling is the best hit rate a run's own prompt shape allows: the
+// first call with a given cacheable prefix pays the write, every later call
+// with that prefix can read it, and the per-call payload after the prefix is
+// never cacheable. Token counts are split in proportion to the recorded
+// byte lengths, because a response reports one prompt-token total per call.
+func TestCacheCeilingFromPrefixGroups(t *testing.T) {
+	calls := []CallEntry{
+		// triage: its own prefix, seen once, so nothing is readable
+		{Unit: "triage", StartS: 0, Outcome: CallOK, InputTokens: 2000, PrefixID: "t", PrefixBytes: 4000, PromptBytes: 8000},
+		// first review: pays the write for prefix "r"
+		{Unit: "review", StartS: 1, Outcome: CallOK, InputTokens: 4000, PrefixID: "r", PrefixBytes: 6000, PromptBytes: 16000},
+		// later reviews: 6000/12000 and 6000/24000 of their tokens readable
+		{Unit: "review", StartS: 3, Outcome: CallOK, InputTokens: 3000, PrefixID: "r", PrefixBytes: 6000, PromptBytes: 12000},
+		{Unit: "review", StartS: 2, Outcome: CallOK, InputTokens: 6000, PrefixID: "r", PrefixBytes: 6000, PromptBytes: 24000},
+		// a failed call reports no tokens and changes nothing
+		{Unit: "review", StartS: 4, Outcome: CallError, PrefixID: "r", PrefixBytes: 6000, PromptBytes: 9000},
+	}
+	want := (1500.0 + 1500.0) / (2000 + 4000 + 3000 + 6000)
+	if got := CacheCeiling(calls); got < want-1e-9 || got > want+1e-9 {
+		t.Fatalf("CacheCeiling = %v, want %v", got, want)
+	}
+	if got := CacheCeiling(nil); got != 0 {
+		t.Fatalf("CacheCeiling(nil) = %v, want 0", got)
 	}
 }
 
-func TestMinCacheHitRateFloor(t *testing.T) {
-	// The plan's floor: a healthy two-breakpoint run keeps ≥60% of prompt
-	// tokens on cache reads after the first call. Guard against someone
-	// silently lowering the bar.
-	if MinCacheHitRate < 0.6 {
-		t.Fatalf("MinCacheHitRate = %v; the §7 floor is 0.6", MinCacheHitRate)
+// The first call of a prefix group is decided by start time, not by the order
+// the call log happened to record completions in.
+func TestCacheCeilingOrdersByStartTime(t *testing.T) {
+	calls := []CallEntry{
+		{StartS: 5, InputTokens: 1000, PrefixID: "r", PrefixBytes: 500, PromptBytes: 1000},
+		{StartS: 1, InputTokens: 4000, PrefixID: "r", PrefixBytes: 500, PromptBytes: 4000},
 	}
-	below := Usage{InputTokens: 1000, CacheReadTokens: 599}
-	if below.CacheHitRate() >= MinCacheHitRate {
-		t.Fatal("59.9% must sit below the floor")
+	want := 500.0 / 5000
+	if got := CacheCeiling(calls); got < want-1e-9 || got > want+1e-9 {
+		t.Fatalf("CacheCeiling = %v, want %v", got, want)
 	}
-	at := Usage{InputTokens: 1000, CacheReadTokens: 600}
-	if at.CacheHitRate() < MinCacheHitRate {
-		t.Fatal("60% must meet the floor")
+}
+
+// The advisory compares the measured rate against the ceiling, not against a
+// flat number: 38% is healthy when the ceiling is 40%, and 50% is a cold-miss
+// regression when the ceiling is 90%.
+func TestCacheShortfallIsRelativeToTheCeiling(t *testing.T) {
+	cases := []struct {
+		name          string
+		rate, ceiling float64
+		want          bool
+	}{
+		{"near a low ceiling", 0.38, 0.40, false},
+		{"far below a high ceiling", 0.50, 0.90, true},
+		{"exactly at the fraction", MinCeilingFraction * 0.5, 0.5, false},
+		{"no ceiling measured", 0, 0, false},
+	}
+	for _, c := range cases {
+		if got := CacheShortfall(c.rate, c.ceiling); got != c.want {
+			t.Errorf("%s: CacheShortfall(%v, %v) = %v, want %v", c.name, c.rate, c.ceiling, got, c.want)
+		}
 	}
 }
 

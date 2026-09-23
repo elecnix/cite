@@ -155,6 +155,19 @@ runs:
         export CITE_TRUNCATED_OUT="$CITE_TRUNCATED"
         cite review $ARGS 2>&1 | tee "$CITE_LOG"
 
+    # The run record alone, on every successful run: its calls[] carry the
+    # per-call cache counters and upstream provider, which is how a cache
+    # hit rate below its ceiling gets diagnosed. One small JSON file; a
+    # failed run gets the full forensics archive below instead.
+    - name: Archive the run record
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: cite-run-record-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/cite-run-record.json
+        if-no-files-found: ignore
+        retention-days: 14
+
     - name: Archive forensics on failure
       if: failure() && inputs.archive_on_failure == 'true'
       uses: actions/upload-artifact@v4

@@ -164,6 +164,17 @@ jobs:
           fi
           ./cite-head review --pr "$GITHUB_REPOSITORY#$PR_NUM" --config .github/cite.yml 2>&1 | tee "$CITE_LOG"
 
+      # The run record on every successful run too: calls[] carries the
+      # per-call cache counters and upstream provider.
+      - name: Archive the run record
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cite-head-run-record-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cite-head-run-record.json
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Archive forensics on failure
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

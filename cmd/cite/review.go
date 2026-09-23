@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/elecnix/cite/internal/config"
@@ -169,8 +170,8 @@ func printRecord(rec *model.RunRecord) {
 	fmt.Printf("coverage: %d/%d api files complete=%t\n", rec.Coverage.Reviewed+rec.Coverage.ApprovedSkip, rec.Coverage.APIFiles, rec.Coverage.Complete)
 	fmt.Printf("cost: $%.4f (in %s out %s)\n", rec.CostUSD, humanTokens(rec.Usage.InputTokens), humanTokens(rec.Usage.OutputTokens))
 	if rec.Usage.InputTokens > 0 {
-		fmt.Printf("cache: %.0f%% of prompt tokens on reads (§7 floor %.0f%%)\n",
-			100*rec.Usage.CacheHitRate(), 100*model.MinCacheHitRate)
+		fmt.Printf("cache: %s (share of prompt tokens read from cache, against the best this run's prompts allowed)%s\n",
+			model.CacheSummary(rec.Usage.CacheHitRate(), rec.CacheCeiling), upstreamSuffix(rec.Calls))
 	}
 	for _, f := range rec.Files {
 		line := fmt.Sprintf("  %-3s %s", f.Status, f.Path)
@@ -190,6 +191,31 @@ func printRecord(rec *model.RunRecord) {
 			fmt.Printf("  drop [%s] reason=%s %s\n", d.Category, d.Reason, d.Title)
 		}
 	}
+}
+
+// upstreamSuffix names the upstream providers that served the run's calls,
+// with a call count each. Each upstream keeps its own prompt cache, so a run
+// spread over several of them cannot reach its ceiling.
+func upstreamSuffix(calls []model.CallEntry) string {
+	counts := map[string]int{}
+	for _, c := range calls {
+		if c.Provider != "" {
+			counts[c.Provider]++
+		}
+	}
+	if len(counts) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(counts))
+	for n := range counts {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	for _, n := range names {
+		parts = append(parts, fmt.Sprintf("%s×%d", n, counts[n]))
+	}
+	return "; upstream: " + strings.Join(parts, ", ")
 }
 
 func verifierSuffix(v string) string {

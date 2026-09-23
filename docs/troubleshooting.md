@@ -39,6 +39,13 @@ than parsed, so this capture is the only place that content is kept. Set
 `archive_on_failure: false` to disable. Note that a run killed mid-flight
 still archives its partial record.
 
+A successful run uploads `cite-run-record-<run id>-<attempt>` instead: the run
+record JSON alone. Each entry in its `calls` array has the call's
+`cache_read_tokens`, `cache_write_tokens`, the upstream `provider` that served
+it, and the `prefix_bytes` and `prompt_bytes` that `cache_ceiling` comes from.
+When the printed cache-hit rate is below 80% of the ceiling, look there first.
+Several providers in one run mean the calls read several caches.
+
 **3. `cite doctor`.** For anything about instruction files — what was read, what
 was ignored, what was classified as authoring rather than reviewable — run:
 

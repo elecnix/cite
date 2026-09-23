@@ -17,6 +17,7 @@ package reviewer
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -95,6 +96,11 @@ type Reviewer struct {
 	// provider-reported only when the two match (issue #103).
 	usageCalls int
 	costCalls  int
+
+	// sessionID is sent with every call of the run (issue: cache hit
+	// rate): OpenRouter routes calls sharing it to one upstream provider,
+	// and so to one prompt cache.
+	sessionID string
 
 	callMu   sync.Mutex
 	runStart time.Time
@@ -219,14 +225,18 @@ func (r *Reviewer) noteEchoCorrection() {
 // answers the forensics question the raw CI log cannot: which calls ran, when,
 // how long each took, and what each cost. A run killed mid-flight still
 // carries the entries recorded so far — Run attaches the log to the record it
-// returns, and the GitHub Action archives that record on failure.
-func (r *Reviewer) recordCall(unit string, attempt int, start time.Time, dur time.Duration, resp *model.CompletionResponse, err error) {
+// returns, and the GitHub Action archives that record on every run.
+func (r *Reviewer) recordCall(unit string, attempt int, start time.Time, dur time.Duration, req model.CompletionRequest, resp *model.CompletionResponse, err error) {
+	prefixID, prefixBytes := cachePrefix(req)
 	e := model.CallEntry{
-		Unit:      unit,
-		Attempt:   attempt + 1,
-		StartS:    start.Sub(r.runStart).Seconds(),
-		DurationS: dur.Seconds(),
-		Outcome:   model.CallOK,
+		Unit:        unit,
+		Attempt:     attempt + 1,
+		StartS:      start.Sub(r.runStart).Seconds(),
+		DurationS:   dur.Seconds(),
+		Outcome:     model.CallOK,
+		PrefixID:    prefixID,
+		PrefixBytes: prefixBytes,
+		PromptBytes: len(req.System) + len(req.User),
 	}
 	switch {
 	case err != nil && errors.Is(err, model.ErrDeadline):
@@ -246,6 +256,9 @@ func (r *Reviewer) recordCall(unit string, attempt int, start time.Time, dur tim
 		e.InputTokens = resp.Usage.InputTokens
 		e.OutputTokens = resp.Usage.OutputTokens
 		e.CostUSD = resp.Usage.CostUSD
+		e.CacheReadTokens = resp.Usage.CacheReadTokens
+		e.CacheWriteTokens = resp.Usage.CacheWriteTokens
+		e.Provider = resp.Provider
 		if resp.FinishReason == "length" {
 			e.Outcome = model.CallTruncated
 		}
@@ -253,6 +266,28 @@ func (r *Reviewer) recordCall(unit string, attempt int, start time.Time, dur tim
 	r.callMu.Lock()
 	defer r.callMu.Unlock()
 	r.callLog = append(r.callLog, e)
+}
+
+// cachePrefix names a request's cacheable prefix and measures it: the system
+// prompt, plus the user message up to and including the cache breakpoint when
+// it carries one. Calls with the same id can share one provider cache entry;
+// model.CacheCeiling groups on it.
+func cachePrefix(req model.CompletionRequest) (id string, bytes int) {
+	prefix := req.System
+	if i := strings.Index(req.User, cacheBreakpoint); i >= 0 {
+		prefix += req.User[:i+len(cacheBreakpoint)]
+	}
+	sum := sha256.Sum256([]byte(prefix))
+	return hex.EncodeToString(sum[:6]), len(prefix)
+}
+
+// newSessionID returns a fresh per-run identifier. It is derived from nothing
+// in the run (not the nonce, which guards the untrusted blocks), so sending
+// it to a router reveals nothing about the prompt.
+func newSessionID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return "cite-" + hex.EncodeToString(b)
 }
 
 // requireParameters reads the require_parameters knob off the loaded
@@ -335,13 +370,16 @@ func (r *Reviewer) roleSettings(role model.Role, defTimeout time.Duration, defCo
 // comes from the role config, set at this call site — never inherited from an
 // SDK.
 func (r *Reviewer) completeWithRetry(ctx context.Context, unit string, req model.CompletionRequest, timeout time.Duration) (*model.CompletionResponse, error) {
+	if req.SessionID == "" {
+		req.SessionID = r.sessionID
+	}
 	for attempt := 0; ; attempt++ {
 		cctx, cancel := context.WithTimeout(ctx, timeout)
 		callStart := time.Now()
 		resp, err := r.o.Client.Complete(cctx, req)
 		callDur := time.Since(callStart)
 		cancel()
-		r.recordCall(unit, attempt, callStart, callDur, resp, err)
+		r.recordCall(unit, attempt, callStart, callDur, req, resp, err)
 		if err == nil {
 			r.accumulateUsage(resp.Usage)
 			return resp, nil
@@ -402,6 +440,7 @@ func (r *Reviewer) Run(ctx context.Context, in Inputs) (*model.RunRecord, error)
 	}
 	r.runCtx = ctx
 	r.runStart = time.Now()
+	r.sessionID = newSessionID()
 
 	rec := &model.RunRecord{
 		SchemaVersion: model.SchemaVersion,
@@ -574,6 +613,7 @@ func (r *Reviewer) Run(ctx context.Context, in Inputs) (*model.RunRecord, error)
 	r.callMu.Lock()
 	rec.Calls = r.callLog
 	r.callMu.Unlock()
+	rec.CacheCeiling = model.CacheCeiling(rec.Calls)
 	sort.SliceStable(rec.Files, func(i, j int) bool { return rec.Files[i].Path < rec.Files[j].Path })
 	return rec, runErr
 }
