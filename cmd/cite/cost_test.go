@@ -118,3 +118,42 @@ func TestHumanTokens(t *testing.T) {
 		}
 	}
 }
+
+// Issue #103: a provider that bills per call (OpenRouter's usage.cost) is the
+// source of truth for the dollar figure. A model with no declared rates still
+// reports what the provider billed.
+func TestApplyCostUsesProviderReportedCost(t *testing.T) {
+	rec := &model.RunRecord{Model: "openrouter/vendor/undeclared",
+		Usage: model.Usage{InputTokens: 12_000, OutputTokens: 900, CostUSD: 0.0123, CostReported: true}}
+	applyCost(rec, testCostConfig())
+	if rec.CostUSD != 0.0123 {
+		t.Errorf("CostUSD = %v, want the provider-reported 0.0123", rec.CostUSD)
+	}
+	bare := &model.RunRecord{Model: "x/y",
+		Usage: model.Usage{InputTokens: 1, CostUSD: 0.5, CostReported: true}}
+	applyCost(bare, nil)
+	if bare.CostUSD != 0.5 {
+		t.Errorf("CostUSD = %v, want the provider-reported 0.5 with no config", bare.CostUSD)
+	}
+}
+
+// What the provider billed wins over an estimate from declared rates.
+func TestApplyCostProviderReportedWinsOverDeclaredRates(t *testing.T) {
+	rec := &model.RunRecord{Model: "gateway/vendor/model-x",
+		Usage: model.Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000, CostUSD: 0.25, CostReported: true}}
+	applyCost(rec, testCostConfig())
+	if rec.CostUSD != 0.25 {
+		t.Errorf("CostUSD = %v, want the provider-reported 0.25", rec.CostUSD)
+	}
+}
+
+// A provider-reported $0 (a free model) stays $0 even when the config
+// declares rates for the model.
+func TestApplyCostReportedZeroIsNotReplacedByDeclaredRates(t *testing.T) {
+	rec := &model.RunRecord{Model: "gateway/vendor/model-x",
+		Usage: model.Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000, CostReported: true}}
+	applyCost(rec, testCostConfig())
+	if rec.CostUSD != 0 {
+		t.Errorf("CostUSD = %v, want the provider-reported 0", rec.CostUSD)
+	}
+}

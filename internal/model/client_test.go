@@ -256,7 +256,7 @@ func TestRequestCarriesStructuredOutputAndSeed(t *testing.T) {
 	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&gotBody)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"input_tokens":10,"output_tokens":2}}`))
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2}}`))
 	})
 	ts := newTestServer(srv)
 	defer ts.Close()
@@ -290,7 +290,7 @@ func TestRequestCarriesProviderRequireParameters(t *testing.T) {
 		srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			json.NewDecoder(r.Body).Decode(&gotBody)
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+			w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
 		})
 		ts := newTestServer(srv)
 		t.Cleanup(ts.Close)
@@ -378,5 +378,143 @@ func TestNewClientErrorsWithoutAnyKey(t *testing.T) {
 	c, err := NewOpenAICompatClient()
 	if err == nil || c != nil {
 		t.Fatalf("want error with no key at all, got %v %v", c, err)
+	}
+}
+
+// Issue #103: a /chat/completions response reports usage under the
+// chat-completions key names, and OpenRouter adds the call's billed cost in
+// USD. Every counter, and the cost, must reach model.Usage.
+func TestChatCompletionsUsageKeysAndProviderCost(t *testing.T) {
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],` +
+			`"usage":{"prompt_tokens":1200,"completion_tokens":80,"total_tokens":1280,` +
+			`"prompt_tokens_details":{"cached_tokens":900,"cache_write_tokens":100},` +
+			`"cost":0.00042}}`))
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+	resp, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Usage{InputTokens: 1200, OutputTokens: 80, CacheReadTokens: 900, CacheWriteTokens: 100, CostUSD: 0.00042, CostReported: true}
+	if resp.Usage != want {
+		t.Fatalf("usage = %+v, want %+v", resp.Usage, want)
+	}
+}
+
+// A provider that does not bill per call (no usage.cost) leaves CostUSD at 0
+// rather than a guessed number.
+func TestChatCompletionsUsageWithoutProviderCost(t *testing.T) {
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":3}}`))
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+	resp, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Usage != (Usage{InputTokens: 7, OutputTokens: 3}) {
+		t.Fatalf("usage = %+v", resp.Usage)
+	}
+}
+
+// A free model on OpenRouter reports "cost": 0. The client must record that
+// the provider reported a cost, so a declared rate never replaces a billed $0.
+func TestChatCompletionsReportedZeroCostIsKept(t *testing.T) {
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":3,"cost":0}}`))
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+	resp, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Usage.CostReported || resp.Usage.CostUSD != 0 {
+		t.Fatalf("usage = %+v, want a reported cost of 0", resp.Usage)
+	}
+}
+
+// OpenRouter names the upstream provider that served the call in a
+// top-level "provider" field. Each upstream keeps its own prompt cache, so
+// the name is what tells a cold miss from a routing change.
+func TestChatCompletionsDecodesUpstreamProvider(t *testing.T) {
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"provider":"Wafer","choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":3}}`))
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+	resp, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Provider != "Wafer" {
+		t.Fatalf("provider = %q, want Wafer", resp.Provider)
+	}
+}
+
+// The upstream provider is a diagnostic. A provider field of another type,
+// an object or a number, must leave it empty and never fail the call: the
+// review is worth more than the label.
+func TestChatCompletionsToleratesNonStringProvider(t *testing.T) {
+	for _, provider := range []string{`{"name":"Wafer"}`, `42`, `null`} {
+		body := `{"provider":` + provider + `,"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":3}}`
+		srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(body))
+		})
+		ts := newTestServer(srv)
+		c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+		resp, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 64})
+		ts.Close()
+		if err != nil {
+			t.Fatalf("provider %s: %v", provider, err)
+		}
+		if resp.Provider != "" || resp.Text != "ok" {
+			t.Fatalf("provider %s: got provider %q text %q, want empty provider and the text", provider, resp.Provider, resp.Text)
+		}
+	}
+}
+
+// A run's session identifier travels as the x-session-id header, which
+// OpenRouter uses as its sticky-routing key. It never becomes a body field:
+// OpenAI's API rejects unknown request arguments with a 400, and an unknown
+// header is ignored by every endpoint.
+func TestSessionIDSentAsHeaderNeverAsBodyField(t *testing.T) {
+	var gotHeader string
+	var gotBody map[string]any
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("X-Session-Id")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}`))
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+	if _, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 64, SessionID: "cite-0123abcd"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotHeader != "cite-0123abcd" {
+		t.Fatalf("x-session-id = %q, want cite-0123abcd", gotHeader)
+	}
+	if _, ok := gotBody["session_id"]; ok {
+		t.Fatalf("session_id leaked into the request body: %v", gotBody)
+	}
+	if _, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 64}); err != nil {
+		t.Fatal(err)
+	}
+	if gotHeader != "" {
+		t.Fatalf("x-session-id = %q without a session, want none", gotHeader)
 	}
 }

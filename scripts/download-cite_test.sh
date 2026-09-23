@@ -242,18 +242,22 @@ fixture() {
   printf '%s' "$dir"
 }
 
-out="$(bash "$version_check" v0.8.0 "$root" 2>&1)"; status=$?
+# The repository's own pins name whatever release VERSION holds, so a
+# version bump doesn't have to edit this test.
+repo_version="$(tr -d '[:space:]' < "$root/VERSION")"
+
+out="$(bash "$version_check" "v$repo_version" "$root" 2>&1)"; status=$?
 assert_eq "this repository's pins agree" 0 "$status"
-assert_contains "the agreement is reported" "all name 0.8.0" "$out"
+assert_contains "the agreement is reported" "all name $repo_version" "$out"
 
 out="$(bash "$version_check" "" "$root" 2>&1)"; status=$?
 assert_eq "no expected tag is not an error" 0 "$status"
 
-out="$(bash "$version_check" v0.7.0 "$root" 2>&1)"; status=$?
+out="$(bash "$version_check" v0.0.1 "$root" 2>&1)"; status=$?
 if [ "$status" -eq 0 ]; then
   fail "a tag disagreeing with VERSION was accepted"
 fi
-assert_contains "a disagreeing tag names both values" "does not match VERSION v0.8.0" "$out"
+assert_contains "a disagreeing tag names both values" "does not match VERSION v$repo_version" "$out"
 
 out="$(bash "$version_check" v0.8.0 "$(fixture 0.9.0 0.9.0)" 2>&1)"; status=$?
 if [ "$status" -eq 0 ]; then

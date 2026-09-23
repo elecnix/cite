@@ -354,9 +354,33 @@ func TestCheckRunPayloadReportsCostAndCacheHit(t *testing.T) {
 	if !strings.Contains(summary, "deepseek/deepseek-v4-flash-0731") {
 		t.Errorf("summary missing model id:\n%s", summary)
 	}
-	// 9800/16000 = 61.25% — above the floor and worth showing.
+	// 9800/16000 = 61.25%. No calls logged, so no ceiling: the rate alone.
 	if !strings.Contains(summary, "61% cache-hit") {
 		t.Errorf("summary missing cache-hit percentage:\n%s", summary)
+	}
+}
+
+// The cache-hit percentage is read against the run's own ceiling (§7): the
+// per-file payload is never cacheable, so the same percentage is healthy on
+// one pull request and a cold-miss regression on another.
+func TestCheckRunPayloadReportsCacheHitAgainstCeiling(t *testing.T) {
+	rec := baseRecord()
+	rec.CostUSD = 0.01
+	rec.Usage = model.Usage{InputTokens: 10000, OutputTokens: 900, CacheReadTokens: 3800}
+	rec.CacheCeiling = 0.40
+	_, summary := CheckRunPayload(rec, model.VerdictPass, "all clear")
+	if !strings.Contains(summary, "38% cache-hit of a 40% ceiling") {
+		t.Errorf("summary missing the ceiling:\n%s", summary)
+	}
+	if strings.Contains(summary, "below") {
+		t.Errorf("38%% of a 40%% ceiling is healthy, not a shortfall:\n%s", summary)
+	}
+
+	rec.Usage.CacheReadTokens = 2000
+	rec.CacheCeiling = 0.60
+	_, summary = CheckRunPayload(rec, model.VerdictPass, "all clear")
+	if !strings.Contains(summary, "20% cache-hit of a 60% ceiling (below 80% of the ceiling, advisory)") {
+		t.Errorf("summary missing the advisory shortfall:\n%s", summary)
 	}
 }
 

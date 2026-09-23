@@ -6,7 +6,7 @@ import (
 	"sort"
 )
 
-const version = "0.8.0"
+const version = "0.9.1"
 
 // commandRegistry lets each subcommand live in its own file, registering
 // itself via init(), so stacked feature branches never collide on a central

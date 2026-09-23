@@ -1024,75 +1024,74 @@ func TestDeletedFileReviewedWithoutModelCall(t *testing.T) {
 	}
 }
 
-// §7: "assert on the cache counters in CI, since caching failure is silent."
-// The two-breakpoint structure has its own structural tests (segment B
-// identity, nonce placement); this one keeps the *accounting* honest: the
-// run record's usage must accumulate every response's cache counters, and a
-// cache-shaped call sequence must land at or above the §7 floor. A change
-// that stops propagating Usage — or that reorders calls so the prefix
-// cold-misses — fails here instead of on an invoice.
-func TestCacheCountersAccumulateAndHoldFloor(t *testing.T) {
-	in := baseInputs()
-	// Three changed files so the run makes one triage + three review calls.
-	const nFiles = 3
-	for _, p := range []string{"b.go", "c.go"} {
-		diffText := fmt.Sprintf(`diff --git a/%s b/%s
---- a/%s
-+++ b/%s
-@@ -1,2 +1,3 @@
- context line one
-+added line alpha here
- context line two
-`, p, p, p, p)
-		df, err := scope.ParseUnifiedDiff(diffText)
-		if err != nil {
-			t.Fatal(err)
-		}
-		in.Manifest = append(in.Manifest, scope.ManifestEntry{Status: "M", Path: p, Adds: 1})
-		in.Diffs[p] = df.Files[0]
-		in.PostImage[p] = []byte("context line one\nadded line alpha here\ncontext line two\n")
-	}
-
-	// Responses carry no findings, and each review response is schema-valid
-	// naming the file under review (issue #59: schema garbage is re-asked
-	// from the run-global bucket now, so a garbage fixture here would
-	// silently consume retry budget and shift the counters).
-	// Usage is scripted per call shape: triage (cold), first review
-	// (serialized, pays the cache write), later reviews (read the cached
-	// prefix).
+// Issue #103: the provider-reported cost of every call sums into the run
+// record, and each call-log entry carries its own tokens and cost, so a run
+// through a billing gateway reports what it was billed.
+func TestProviderCostAccumulatesIntoRunAndCallLog(t *testing.T) {
 	c := &fakeClient{fn: func(i int, req model.CompletionRequest) (string, error) {
 		if isTriageCall(req) {
-			return triageJSON("a.go", "b.go", "c.go"), nil
+			return triageJSON("a.go"), nil
 		}
 		return reviewJSON(requestPath(req), "reviewed", nil), nil
 	}}
 	client := &usageClient{inner: c, usageFor: func(i int) model.Usage {
-		switch {
-		case i == 0:
-			return model.Usage{InputTokens: 1000, OutputTokens: 10, CacheWriteTokens: 1000}
-		case i == 1:
-			return model.Usage{InputTokens: 5000, OutputTokens: 10, CacheWriteTokens: 4500}
-		default:
-			return model.Usage{InputTokens: 5000, OutputTokens: 10, CacheReadTokens: 4900, CacheWriteTokens: 100}
-		}
+		return model.Usage{InputTokens: 100, OutputTokens: 5, CostUSD: 0.002, CostReported: true}
 	}}
 
-	rec, err := runOnce(t, in, baseOptions(client))
+	rec, err := runOnce(t, baseInputs(), baseOptions(client))
 	if err != nil {
 		t.Fatal(err)
 	}
+	n := len(c.calls)
+	if n == 0 {
+		t.Fatal("no model calls made")
+	}
+	want := 0.002 * float64(n)
+	if d := rec.Usage.CostUSD - want; d > 1e-12 || d < -1e-12 {
+		t.Fatalf("run cost = %v, want %v over %d calls", rec.Usage.CostUSD, want, n)
+	}
+	ok := 0
+	for _, e := range rec.Calls {
+		if e.Outcome != model.CallOK {
+			continue
+		}
+		ok++
+		if e.CostUSD != 0.002 || e.InputTokens != 100 || e.OutputTokens != 5 {
+			t.Errorf("call entry %+v, want 100 in, 5 out, $0.002", e)
+		}
+	}
+	if ok == 0 {
+		t.Fatal("no successful call entries recorded")
+	}
+	if !rec.Usage.CostReported {
+		t.Fatal("run usage lost the provider-reported flag")
+	}
+}
 
-	wantInput := 1000 + 3*5000
-	if rec.Usage.InputTokens != wantInput {
-		t.Fatalf("input tokens = %d, want %d", rec.Usage.InputTokens, wantInput)
+// Roles may use different providers. When only some calls report a cost, the
+// run total is partial, so the run must not present it as provider-reported.
+func TestPartialProviderCostIsNotReported(t *testing.T) {
+	c := &fakeClient{fn: func(i int, req model.CompletionRequest) (string, error) {
+		if isTriageCall(req) {
+			return triageJSON("a.go"), nil
+		}
+		return reviewJSON(requestPath(req), "reviewed", nil), nil
+	}}
+	client := &usageClient{inner: c, usageFor: func(i int) model.Usage {
+		if i == 0 {
+			return model.Usage{InputTokens: 100, OutputTokens: 5}
+		}
+		return model.Usage{InputTokens: 100, OutputTokens: 5, CostUSD: 0.002, CostReported: true}
+	}}
+	rec, err := runOnce(t, baseInputs(), baseOptions(client))
+	if err != nil {
+		t.Fatal(err)
 	}
-	wantRead := 2 * 4900
-	if rec.Usage.CacheReadTokens != wantRead {
-		t.Fatalf("cache-read tokens = %d, want %d", rec.Usage.CacheReadTokens, wantRead)
+	if len(c.calls) < 2 {
+		t.Fatalf("want at least 2 calls, got %d", len(c.calls))
 	}
-	rate := rec.Usage.CacheHitRate()
-	if rate < model.MinCacheHitRate {
-		t.Fatalf("cache hit rate %.3f fell below the §7 floor %.2f", rate, model.MinCacheHitRate)
+	if rec.Usage.CostReported {
+		t.Fatalf("run usage %+v claims a provider-reported cost, but call 0 reported none", rec.Usage)
 	}
 }
 

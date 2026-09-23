@@ -147,23 +147,58 @@ type CompletionRequest struct {
 	// instead of the endpoint silently dropping response_format and returning
 	// an empty body.
 	RequireParameters bool
+
+	// SessionID, when set, is sent as the x-session-id header. OpenRouter
+	// uses it as the sticky-routing key, so every call of one run reaches
+	// the same upstream provider and reads the same prompt cache.
+	SessionID string
 }
 
 // Usage records token counters, including cache behaviour, which CI asserts on
-// because caching failure is silent (§7).
+// because caching failure is silent (§7). CostUSD is what the provider billed
+// for the call, when the provider reports it (OpenRouter's usage.cost).
+// CostReported tells a billed $0, such as a free model, apart from a provider
+// that reports no cost at all.
 type Usage struct {
-	InputTokens      int `json:"input_tokens"`
-	OutputTokens     int `json:"output_tokens"`
-	CacheReadTokens  int `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
+	InputTokens      int     `json:"input_tokens"`
+	OutputTokens     int     `json:"output_tokens"`
+	CacheReadTokens  int     `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int     `json:"cache_write_tokens,omitempty"`
+	CostUSD          float64 `json:"cost_usd,omitempty"`
+	CostReported     bool    `json:"cost_reported,omitempty"`
 }
 
-// MinCacheHitRate is the floor CI asserts on (§7: "a test that fails when
-// the hit rate drops below 60% is the only thing that keeps these rules true
-// in six months"). A healthy two-breakpoint run keeps most prompt tokens on
-// cache reads once past the serialized first call; a cold-miss regression
-// shows up here before it shows up on an invoice.
-const MinCacheHitRate = 0.6
+// chatCompletionsUsage is the usage object of a /chat/completions response.
+// Its key names differ from Usage's: decoding the wire object straight into
+// Usage silently read 0 tokens on every call (issue #103). Cost is the USD
+// amount a billing gateway such as OpenRouter charged for the call.
+type chatCompletionsUsage struct {
+	PromptTokens        int `json:"prompt_tokens"`
+	CompletionTokens    int `json:"completion_tokens"`
+	PromptTokensDetails *struct {
+		CachedTokens     int `json:"cached_tokens"`
+		CacheWriteTokens int `json:"cache_write_tokens"`
+	} `json:"prompt_tokens_details"`
+	Cost *float64 `json:"cost"`
+}
+
+// toUsage maps the chat-completions key names onto the provider-neutral
+// counters.
+func (w chatCompletionsUsage) toUsage() Usage {
+	u := Usage{
+		InputTokens:  w.PromptTokens,
+		OutputTokens: w.CompletionTokens,
+	}
+	if w.Cost != nil {
+		u.CostUSD = *w.Cost
+		u.CostReported = true
+	}
+	if d := w.PromptTokensDetails; d != nil {
+		u.CacheReadTokens = d.CachedTokens
+		u.CacheWriteTokens = d.CacheWriteTokens
+	}
+	return u
+}
 
 // CacheHitRate is the fraction of prompt tokens served from provider cache.
 // Cached tokens are reported as part of prompt tokens, so the denominator is
@@ -182,6 +217,9 @@ type CompletionResponse struct {
 	Usage        Usage
 	FinishReason string
 	Model        string
+	// Provider is the upstream provider a router reported serving the call
+	// (OpenRouter's top-level "provider" field); empty when not reported.
+	Provider string
 }
 
 // Client sends one provider-neutral completion. Implementations must map
@@ -324,6 +362,12 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 	for k, v := range c.ExtraHeaders {
 		httpRequest.Header.Set(k, v)
 	}
+	if req.SessionID != "" {
+		// A header, not the top-level session_id body field OpenRouter also
+		// accepts: OpenAI's API rejects unknown request arguments with a 400,
+		// while every endpoint ignores a header it does not know.
+		httpRequest.Header.Set("X-Session-Id", req.SessionID)
+	}
 	resp, err := httpClient.Do(httpRequest)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
@@ -375,13 +419,16 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		return nil, &typedError{Code: code, Body: msg}
 	}
 	var out struct {
-		Choices []struct {
+		// Provider stays raw: it is a diagnostic label, and a field of
+		// an unexpected type must not fail a call whose review is fine.
+		Provider json.RawMessage `json:"provider"`
+		Choices  []struct {
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
-		Usage Usage `json:"usage"`
+		Usage chatCompletionsUsage `json:"usage"`
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {
@@ -426,8 +473,19 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 	}
 	return &CompletionResponse{
 		Text:         ch.Message.Content,
-		Usage:        out.Usage,
+		Usage:        out.Usage.toUsage(),
 		FinishReason: ch.FinishReason,
 		Model:        c.Model,
+		Provider:     upstreamProvider(out.Provider),
 	}, nil
+}
+
+// upstreamProvider reads a router's upstream provider label, which
+// OpenRouter sends as a string. Any other type, or none, gives "".
+func upstreamProvider(raw json.RawMessage) string {
+	var name string
+	if len(raw) == 0 || json.Unmarshal(raw, &name) != nil {
+		return ""
+	}
+	return name
 }

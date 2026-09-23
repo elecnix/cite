@@ -412,11 +412,17 @@ type RunRecord struct {
 	Samples int `json:"samples"`
 
 	// Usage is the run-total of every completion response's token counters,
-	// accumulated in the reviewer where responses arrive. CostUSD is derived
-	// from the declared per-million rates (§6); it is 0 when no rates are
-	// declared for the model, never guessed.
+	// accumulated in the reviewer where responses arrive. CostUSD is the
+	// provider-reported cost when the provider bills per call (issue #103);
+	// otherwise it is derived from the declared per-million rates (§6), and
+	// it is 0 when neither exists, never guessed.
 	Usage   Usage   `json:"usage"`
 	CostUSD float64 `json:"cost_usd"`
+
+	// CacheCeiling is the best cache hit rate this run's prompts allowed
+	// (CacheCeiling over Calls). The measured rate is Usage.CacheHitRate;
+	// the two together say whether the cache served what it could (§7).
+	CacheCeiling float64 `json:"cache_ceiling,omitempty"`
 
 	// Calls is the per-attempt call log: one entry for every model call the
 	// run made, in order. It answers "why did this run take so long and what
@@ -461,6 +467,23 @@ type CallEntry struct {
 	Error        string  `json:"error,omitempty"`
 	InputTokens  int     `json:"input_tokens,omitempty"`
 	OutputTokens int     `json:"output_tokens,omitempty"`
+	// CostUSD is what the provider billed for this call, when it reports a
+	// cost (issue #103).
+	CostUSD float64 `json:"cost_usd,omitempty"`
+	// CacheReadTokens and CacheWriteTokens are this call's prompt-cache
+	// counters, and Provider the upstream provider a router reported
+	// serving it. Each upstream keeps its own cache.
+	CacheReadTokens  int    `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int    `json:"cache_write_tokens,omitempty"`
+	Provider         string `json:"provider,omitempty"`
+	// PrefixID names the call's cacheable prefix (a short hash of the
+	// system prompt plus the user message up to the cache breakpoint), and
+	// PrefixBytes and PromptBytes are that prefix's length and the whole
+	// prompt's. CacheCeiling derives the run's best possible hit rate from
+	// them.
+	PrefixID    string `json:"prefix_id,omitempty"`
+	PrefixBytes int    `json:"prefix_bytes,omitempty"`
+	PromptBytes int    `json:"prompt_bytes,omitempty"`
 }
 
 // InstructionUsage records which instruction sections survived triage.

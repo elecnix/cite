@@ -27,7 +27,7 @@ it" are different failures with different fixes, and the drop log distinguishes
 them.
 
 **2b. The forensics archive.** When a review FAILS, the GitHub Action uploads a
-`cite-forensics-<run id>` artifact (download it from the run's summary page):
+`cite-forensics-<run id>-…` artifact (download it from the run's summary page):
 the full step log plus `cite-run-record.json`, which carries the per-attempt
 call log. It records when each model call started, how long it ran, how it ended
 (`ok`, `deadline_exceeded`, `truncated`, …) and what it cost in tokens. This
@@ -39,6 +39,15 @@ when it hit the cap. The review of that file is recorded as errored rather
 than parsed, so this capture is the only place that content is kept. Set
 `archive_on_failure: false` to disable. Note that a run killed mid-flight
 still archives its partial record.
+
+A successful run uploads `cite-run-record-<run id>-…` instead, kept for 14
+days: the run record JSON alone. Set `archive_run_record: false` to skip it.
+Both names end in the attempt, the job id and a random part, so two jobs of
+one run never collide. Each entry in its `calls` array has the call's
+`cache_read_tokens`, `cache_write_tokens`, the upstream `provider` that served
+it, and the `prefix_bytes` and `prompt_bytes` that `cache_ceiling` comes from.
+When the printed cache-hit rate is below 80% of the ceiling, look there first.
+Several providers in one run mean the calls read several caches.
 
 **3. `cite doctor`.** For anything about instruction files (what was read, what
 was ignored, what was classified as authoring rather than reviewable), run:

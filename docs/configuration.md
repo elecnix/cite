@@ -101,8 +101,11 @@ Each entry has exactly **one required field, `id`**. Everything else defaults:
 - `cost`: per-million-token rates: `input`, `output`, `cache_read`,
   `cache_write`
 
-Cost as first-class configuration means cost reporting works for a model Cite
-has never heard of.
+When the provider reports a cost for each call, as OpenRouter does in
+`usage.cost`, Cite reports that sum and ignores the declared rates. You don't
+need a `cost` block for a model you reach through OpenRouter. Declared rates
+give a cost for a provider that reports only token counts, including a model
+Cite has never heard of. With neither, the run reports $0.
 
 ## Roles
 
@@ -162,8 +165,9 @@ When a call does hit its deadline, the run does NOT retry it: the first
 attempt already burned its full wall-clock budget and the provider's tokens,
 and a re-issue pays twice for the same wait. The failure message states the two
 adjustments instead: raise `roles.<role>.timeout`, or lower the output cap
-that drives the derived review deadline. The failed run's record (per-call
-timings, token usage) is archived by the GitHub Action for forensics.
+that drives the derived review deadline. The GitHub Action archives the run
+record (per-call timings, token usage, cache counters) on every run, and the
+full forensics archive on a failed one.
 
 ### The output cap
 

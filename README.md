@@ -24,7 +24,7 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: elecnix/cite@eaebbe70378689d61158f43515471544e43c6038  # v0.8.0
+      - uses: elecnix/cite@4e0710122e3d66c2ca961308384b108097851d4c  # v0.9.1
         env:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
 ```
@@ -49,8 +49,9 @@ you what it did with them.
 - Nothing to say means nothing posted. It never posts "LGTM".
 - Every comment quotes the exact line it is about. If the quote does not match
   your file, the comment is dropped before you see it.
-- Cost you can see: every run reports its token usage and USD cost from your
-  provider's declared rates.
+- Cost you can see: every run reports its token usage and USD cost. The cost
+  is what your provider billed, when it reports one (OpenRouter does), or
+  else a figure from the rates you declare.
 
 ## Local evaluation path
 
@@ -82,6 +83,22 @@ The `--report json|markdown` path runs the reviewer against the real pull reques
 - [docs/troubleshooting.md](docs/troubleshooting.md)
 - [CONFORMANCE.md](CONFORMANCE.md): the compatibility tiers, dated
 - [CONTRIBUTING.md](CONTRIBUTING.md)
+
+## Comparison with other reviewers
+
+[Gito](https://github.com/Nayjest/Gito) is another open-source AI code
+reviewer. The table compares the two, with Gito as of commit
+[`f48498d`](https://github.com/Nayjest/Gito/tree/f48498d192ede9aa81808c2579c69cc5d7919e20).
+
+| | Cite | Gito |
+|---|---|---|
+| Runs as | A GitHub Action and a Go CLI | A Python package (`gito.bot`) with a CLI and CI workflows for GitHub and GitLab |
+| Finding fields | Category, and confidence `certain`, `likely` or `question`, without severity | Title, details, severity 1 to 5, confidence 1 to 4, tags, and line ranges with an optional fix |
+| Categories | A closed list. Cite rejects a response with any other category. | The prompt suggests tags, and Gito accepts any string |
+| Filtering | Each finding quotes its lines, and Cite drops it if the quote doesn't match the file. At most 10 per review and 2 per file. | A Python `post_process` snippet in the config. The default keeps confidence 1 with severity 3 or lower. |
+| Output | A pull request review with inline comments, and a check run that can block the merge | One summary comment on GitHub. On GitLab, `--inline` posts a comment per issue and puts the rest in the overview. |
+| Project settings | Reads `AGENTS.md`, `CLAUDE.md`, `REVIEW.md`, Copilot instructions and more from the base ref | `.gito/config.toml`, with prose requirements, `exclude_files` and `aux_files` |
+| Models and tools | OpenAI and Anthropic APIs, OpenAI-compatible endpoints, and GitHub Models | OpenAI-compatible, Anthropic and Google APIs, local and embedded models, coding agent CLIs, and Jira and Linear issue lookup |
 
 ## License
 

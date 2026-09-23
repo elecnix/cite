@@ -31,7 +31,7 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: elecnix/cite@eaebbe70378689d61158f43515471544e43c6038  # v0.8.0
+      - uses: elecnix/cite@4e0710122e3d66c2ca961308384b108097851d4c  # v0.9.1
         env:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
 ```
@@ -530,8 +530,20 @@ cacheable block.
 Both of these are cheap. Serialize tool and output schemas with a key-sorting marshaller, because
 schema key order is part of the rendered prefix; and **assert on the cache counters in CI**, since
 caching failure is silent: a prefix below the provider's minimum is skipped with no error, and
-that minimum ranges from 512 to 6,144 tokens across current models. A test that fails when the hit
-rate drops below 60% is the only thing that keeps these rules true in six months.
+that minimum ranges from 512 to 6,144 tokens across current models. The check compares each run
+against its own ceiling, not a flat floor. The per-file payload after the second breakpoint is never
+cacheable, so a pull request of large files has a low ceiling: measured runs on OpenRouter reached
+38% on 9 files and 54 to 60% on 14 files, at their ceilings. Cite records each call's prefix length,
+prompt length, cache counters and upstream provider in the run record. The ceiling assumes the first
+call with each prefix pays the write and every later call reads that prefix. Cite prints the
+measured rate against the ceiling and flags a run below 80% of it. The flag is advisory. The CI
+assertion is a test that derives the counters from the real prompt segment sizes and fails when a
+volatile byte enters a shared segment.
+
+Each upstream behind a router keeps its own cache. OpenRouter routes calls that share a session id
+to one upstream, so Cite sends a per-run id in the `x-session-id` header. A header, not the
+`session_id` body field, because OpenAI's API rejects unknown body fields and every endpoint
+ignores an unknown header. Cite does not set `provider.order`, which turns sticky routing off.
 
 Cross-run reuse depends entirely on the retention window, and the defaults are hostile: a
 five-minute TTL is useless below roughly twelve pull requests an hour, which is nearly every
