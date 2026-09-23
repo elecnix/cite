@@ -29,3 +29,5 @@ jobs:
         run: bash scripts/version-check.sh
       - name: action pins
         run: bash scripts/action-pins_test.sh
+      - name: action.yml duplicate keys
+        run: bash scripts/yaml-duplicate-keys_test.sh
