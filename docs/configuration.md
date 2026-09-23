@@ -101,8 +101,11 @@ Each entry has exactly **one required field, `id`**. Everything else defaults:
 - `cost`: per-million-token rates: `input`, `output`, `cache_read`,
   `cache_write`
 
-Cost as first-class configuration means cost reporting works for a model Cite
-has never heard of.
+When the provider reports a cost for each call, as OpenRouter does in
+`usage.cost`, Cite reports that sum and ignores the declared rates. You don't
+need a `cost` block for a model you reach through OpenRouter. Declared rates
+give a cost for a provider that reports only token counts, including a model
+Cite has never heard of. With neither, the run reports $0.
 
 ## Roles
 

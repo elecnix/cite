@@ -150,12 +150,44 @@ type CompletionRequest struct {
 }
 
 // Usage records token counters, including cache behaviour, which CI asserts on
-// because caching failure is silent (§7).
+// because caching failure is silent (§7). CostUSD is what the provider billed
+// for the call, when the provider reports it (OpenRouter's usage.cost); it is
+// 0 when the provider reports no cost.
 type Usage struct {
-	InputTokens      int `json:"input_tokens"`
-	OutputTokens     int `json:"output_tokens"`
-	CacheReadTokens  int `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
+	InputTokens      int     `json:"input_tokens"`
+	OutputTokens     int     `json:"output_tokens"`
+	CacheReadTokens  int     `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int     `json:"cache_write_tokens,omitempty"`
+	CostUSD          float64 `json:"cost_usd,omitempty"`
+}
+
+// chatCompletionsUsage is the usage object of a /chat/completions response.
+// Its key names differ from Usage's: decoding the wire object straight into
+// Usage silently read 0 tokens on every call (issue #103). Cost is the USD
+// amount a billing gateway such as OpenRouter charged for the call.
+type chatCompletionsUsage struct {
+	PromptTokens        int `json:"prompt_tokens"`
+	CompletionTokens    int `json:"completion_tokens"`
+	PromptTokensDetails *struct {
+		CachedTokens     int `json:"cached_tokens"`
+		CacheWriteTokens int `json:"cache_write_tokens"`
+	} `json:"prompt_tokens_details"`
+	Cost float64 `json:"cost"`
+}
+
+// toUsage maps the chat-completions key names onto the provider-neutral
+// counters.
+func (w chatCompletionsUsage) toUsage() Usage {
+	u := Usage{
+		InputTokens:  w.PromptTokens,
+		OutputTokens: w.CompletionTokens,
+		CostUSD:      w.Cost,
+	}
+	if d := w.PromptTokensDetails; d != nil {
+		u.CacheReadTokens = d.CachedTokens
+		u.CacheWriteTokens = d.CacheWriteTokens
+	}
+	return u
 }
 
 // MinCacheHitRate is the floor CI asserts on (§7: "a test that fails when
@@ -381,7 +413,7 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
-		Usage Usage `json:"usage"`
+		Usage chatCompletionsUsage `json:"usage"`
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {
@@ -426,7 +458,7 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 	}
 	return &CompletionResponse{
 		Text:         ch.Message.Content,
-		Usage:        out.Usage,
+		Usage:        out.Usage.toUsage(),
 		FinishReason: ch.FinishReason,
 		Model:        c.Model,
 	}, nil

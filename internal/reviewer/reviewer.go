@@ -156,6 +156,7 @@ func (r *Reviewer) accumulateUsage(u model.Usage) {
 	r.usage.OutputTokens += u.OutputTokens
 	r.usage.CacheReadTokens += u.CacheReadTokens
 	r.usage.CacheWriteTokens += u.CacheWriteTokens
+	r.usage.CostUSD += u.CostUSD
 }
 
 // totalUsage returns the accumulated run-total.
@@ -232,6 +233,7 @@ func (r *Reviewer) recordCall(unit string, attempt int, start time.Time, dur tim
 	case resp != nil:
 		e.InputTokens = resp.Usage.InputTokens
 		e.OutputTokens = resp.Usage.OutputTokens
+		e.CostUSD = resp.Usage.CostUSD
 		if resp.FinishReason == "length" {
 			e.Outcome = model.CallTruncated
 		}

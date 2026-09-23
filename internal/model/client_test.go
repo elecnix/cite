@@ -256,7 +256,7 @@ func TestRequestCarriesStructuredOutputAndSeed(t *testing.T) {
 	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&gotBody)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"input_tokens":10,"output_tokens":2}}`))
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2}}`))
 	})
 	ts := newTestServer(srv)
 	defer ts.Close()
@@ -290,7 +290,7 @@ func TestRequestCarriesProviderRequireParameters(t *testing.T) {
 		srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			json.NewDecoder(r.Body).Decode(&gotBody)
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+			w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
 		})
 		ts := newTestServer(srv)
 		t.Cleanup(ts.Close)
@@ -378,5 +378,48 @@ func TestNewClientErrorsWithoutAnyKey(t *testing.T) {
 	c, err := NewOpenAICompatClient()
 	if err == nil || c != nil {
 		t.Fatalf("want error with no key at all, got %v %v", c, err)
+	}
+}
+
+// Issue #103: a /chat/completions response reports usage under the
+// chat-completions key names, and OpenRouter adds the call's billed cost in
+// USD. Every counter, and the cost, must reach model.Usage.
+func TestChatCompletionsUsageKeysAndProviderCost(t *testing.T) {
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],` +
+			`"usage":{"prompt_tokens":1200,"completion_tokens":80,"total_tokens":1280,` +
+			`"prompt_tokens_details":{"cached_tokens":900,"cache_write_tokens":100},` +
+			`"cost":0.00042}}`))
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+	resp, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Usage{InputTokens: 1200, OutputTokens: 80, CacheReadTokens: 900, CacheWriteTokens: 100, CostUSD: 0.00042}
+	if resp.Usage != want {
+		t.Fatalf("usage = %+v, want %+v", resp.Usage, want)
+	}
+}
+
+// A provider that does not bill per call (no usage.cost) leaves CostUSD at 0
+// rather than a guessed number.
+func TestChatCompletionsUsageWithoutProviderCost(t *testing.T) {
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":3}}`))
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+	resp, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Usage != (Usage{InputTokens: 7, OutputTokens: 3}) {
+		t.Fatalf("usage = %+v", resp.Usage)
 	}
 }
