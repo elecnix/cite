@@ -48,8 +48,9 @@ you what it did with them.
 - Nothing to say means nothing posted. It never posts "LGTM".
 - Every comment quotes the exact line it is about. If the quote does not match
   your file, the comment is dropped before you see it.
-- Cost you can see: every run reports its token usage and USD cost from your
-  provider's declared rates.
+- Cost you can see: every run reports its token usage and USD cost. The cost
+  is what your provider billed, when it reports one (OpenRouter does), or
+  else a figure from the rates you declare.
 
 ## Local evaluation path
 

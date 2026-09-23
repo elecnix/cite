@@ -412,9 +412,10 @@ type RunRecord struct {
 	Samples int `json:"samples"`
 
 	// Usage is the run-total of every completion response's token counters,
-	// accumulated in the reviewer where responses arrive. CostUSD is derived
-	// from the declared per-million rates (§6); it is 0 when no rates are
-	// declared for the model, never guessed.
+	// accumulated in the reviewer where responses arrive. CostUSD is the
+	// provider-reported cost when the provider bills per call (issue #103);
+	// otherwise it is derived from the declared per-million rates (§6), and
+	// it is 0 when neither exists, never guessed.
 	Usage   Usage   `json:"usage"`
 	CostUSD float64 `json:"cost_usd"`
 
@@ -461,6 +462,9 @@ type CallEntry struct {
 	Error        string  `json:"error,omitempty"`
 	InputTokens  int     `json:"input_tokens,omitempty"`
 	OutputTokens int     `json:"output_tokens,omitempty"`
+	// CostUSD is what the provider billed for this call, when it reports a
+	// cost (issue #103).
+	CostUSD float64 `json:"cost_usd,omitempty"`
 }
 
 // InstructionUsage records which instruction sections survived triage.

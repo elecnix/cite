@@ -8,12 +8,17 @@ import (
 	"github.com/elecnix/cite/internal/model"
 )
 
-// applyCost computes the run's USD cost from the declared per-million rates
-// (§6) and stores it on the record. Cost as first-class configuration means
-// cost reporting works for a model Cite has never heard of — and that a model
-// with no declared rates costs 0, never a guessed number (§15).
+// applyCost stores the run's USD cost on the record. A provider that bills
+// per call (OpenRouter's usage.cost) reports what it charged, and that sum is
+// the cost (issue #103). Otherwise the cost comes from the declared
+// per-million rates (§6), so cost reporting works for a model Cite has never
+// heard of. A model with neither costs 0, never a guessed number (§15).
 func applyCost(rec *model.RunRecord, cfg *config.Config) {
 	if rec == nil {
+		return
+	}
+	if rec.Usage.CostReported {
+		rec.CostUSD = rec.Usage.CostUSD
 		return
 	}
 	rate := costRatesFor(rec.Model, cfg)

@@ -1096,6 +1096,77 @@ func TestCacheCountersAccumulateAndHoldFloor(t *testing.T) {
 	}
 }
 
+// Issue #103: the provider-reported cost of every call sums into the run
+// record, and each call-log entry carries its own tokens and cost, so a run
+// through a billing gateway reports what it was billed.
+func TestProviderCostAccumulatesIntoRunAndCallLog(t *testing.T) {
+	c := &fakeClient{fn: func(i int, req model.CompletionRequest) (string, error) {
+		if isTriageCall(req) {
+			return triageJSON("a.go"), nil
+		}
+		return reviewJSON(requestPath(req), "reviewed", nil), nil
+	}}
+	client := &usageClient{inner: c, usageFor: func(i int) model.Usage {
+		return model.Usage{InputTokens: 100, OutputTokens: 5, CostUSD: 0.002, CostReported: true}
+	}}
+
+	rec, err := runOnce(t, baseInputs(), baseOptions(client))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := len(c.calls)
+	if n == 0 {
+		t.Fatal("no model calls made")
+	}
+	want := 0.002 * float64(n)
+	if d := rec.Usage.CostUSD - want; d > 1e-12 || d < -1e-12 {
+		t.Fatalf("run cost = %v, want %v over %d calls", rec.Usage.CostUSD, want, n)
+	}
+	ok := 0
+	for _, e := range rec.Calls {
+		if e.Outcome != model.CallOK {
+			continue
+		}
+		ok++
+		if e.CostUSD != 0.002 || e.InputTokens != 100 || e.OutputTokens != 5 {
+			t.Errorf("call entry %+v, want 100 in, 5 out, $0.002", e)
+		}
+	}
+	if ok == 0 {
+		t.Fatal("no successful call entries recorded")
+	}
+	if !rec.Usage.CostReported {
+		t.Fatal("run usage lost the provider-reported flag")
+	}
+}
+
+// Roles may use different providers. When only some calls report a cost, the
+// run total is partial, so the run must not present it as provider-reported.
+func TestPartialProviderCostIsNotReported(t *testing.T) {
+	c := &fakeClient{fn: func(i int, req model.CompletionRequest) (string, error) {
+		if isTriageCall(req) {
+			return triageJSON("a.go"), nil
+		}
+		return reviewJSON(requestPath(req), "reviewed", nil), nil
+	}}
+	client := &usageClient{inner: c, usageFor: func(i int) model.Usage {
+		if i == 0 {
+			return model.Usage{InputTokens: 100, OutputTokens: 5}
+		}
+		return model.Usage{InputTokens: 100, OutputTokens: 5, CostUSD: 0.002, CostReported: true}
+	}}
+	rec, err := runOnce(t, baseInputs(), baseOptions(client))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.calls) < 2 {
+		t.Fatalf("want at least 2 calls, got %d", len(c.calls))
+	}
+	if rec.Usage.CostReported {
+		t.Fatalf("run usage %+v claims a provider-reported cost, but call 0 reported none", rec.Usage)
+	}
+}
+
 // usageClient decorates a fakeClient's responses with per-call usage counters.
 type usageClient struct {
 	inner    *fakeClient
