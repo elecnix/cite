@@ -83,6 +83,22 @@ The `--report json|markdown` path runs the reviewer against the real pull reques
 - [CONFORMANCE.md](CONFORMANCE.md) — the compatibility tiers, dated
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 
+## Comparison with other reviewers
+
+[Gito](https://github.com/Nayjest/Gito) is another open-source AI code
+reviewer. The table compares the two, with Gito as of commit
+[`f48498d`](https://github.com/Nayjest/Gito/tree/f48498d192ede9aa81808c2579c69cc5d7919e20).
+
+| | Cite | Gito |
+|---|---|---|
+| Runs as | A GitHub Action and a Go CLI | A Python package (`gito.bot`) with a CLI and CI workflows for GitHub and GitLab |
+| Finding fields | Category, and confidence `certain`, `likely` or `question`, without severity | Title, details, severity 1 to 5, confidence 1 to 4, tags, and line ranges with an optional fix |
+| Categories | A closed list. Cite rejects a response with any other category. | The prompt suggests tags, and Gito accepts any string |
+| Filtering | Each finding quotes its lines, and Cite drops it if the quote doesn't match the file. At most 10 per review and 2 per file. | A Python `post_process` snippet in the config. The default keeps confidence 1 with severity 3 or lower. |
+| Output | A pull request review with inline comments, and a check run that can block the merge | One summary comment on GitHub. On GitLab, `--inline` posts a comment per issue and puts the rest in the overview. |
+| Project settings | Reads `AGENTS.md`, `CLAUDE.md`, `REVIEW.md`, Copilot instructions and more from the base ref | `.gito/config.toml`, with prose requirements, `exclude_files` and `aux_files` |
+| Models and tools | OpenAI and Anthropic APIs, OpenAI-compatible endpoints, and GitHub Models | OpenAI-compatible, Anthropic and Google APIs, local and embedded models, coding agent CLIs, and Jira and Linear issue lookup |
+
 ## License
 
 Apache-2.0.
