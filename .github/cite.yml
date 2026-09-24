@@ -1,64 +1,7 @@
-# Cite's own configuration. Optional by contract (§6) — everything here
-# exists because dogfooding on this repository showed a need, not as an
-# example.
-
-model: deepseek/deepseek-v4-flash-0731
-
-# Scope: THIS REPOSITORY'S CHOICE ONLY, not a recommendation to consumers.
-# A consumer reading this file should not infer that unsetting the gate is
-# advised; our situation is unusual — the reviewer under test is our own
-# product, and this repository is where its worst failure mode was first
-# felt.
+# Identical in every repository that uses Cite.
 #
-# What changed and why it matters: three review attempts in a row on PR #71
-# (a docs-only fix for the never-published @v1 pin the operator reported)
-# ended COULD_NOT_EVALUATE with zero findings about the diff — a corrupted
-# model reply each time, the failure set moving between attempts (two files,
-# then four, then one). A diff property does not move between runs; a flaky
-# judge does. Meanwhile the gate is fail-closed, so "the judge was broken"
-# vetoed a verified-sound change for hours, publicly, on the PR that fixes
-# what the operator reported.
-#
-# What this does NOT give up: a real finding (FOUND) still concludes failure
-# and blocks, unchanged. The verdict still publishes truthfully as
-# COULD_NOT_EVALUATE with its reason in the sticky state and run log; only
-# the GitHub check-run conclusion changes — "neutral" instead of "failure" —
-# so we decline to treat "no verdict" as a verdict. Every
-# COULD_NOT_EVALUATE is still diagnosed and reported rather than passed
-# quietly; that compensating pressure is the point of keeping the verdict
-# legible. Retry mechanics for the parse failures remain open work (issue
-# tracking it is filed alongside this change).
-#
-# Wiring note: the gate option is an ACTION INPUT (tool_failure_blocks), not
-# a config-file setting — the flag is wired input → CLI flag → gate option,
-# so it is set in .github/workflows/review.yml's `with:` block. v0.8.0 is
-# the first release carrying that input (issue #59 landed on main after
-# v0.6.0), and the workflow pins v0.11.1 and sets the input, so the choice
-# takes effect: this file documents the scope, the workflow input does the
-# work.
-
-# Dogfooding on PR #40 showed deepseek-v4-flash routed through OpenRouter
-# intermittently returning free text instead of schema-constrained JSON
-# (fenced blocks, single-quoted keys, stray bytes) — an endpoint dropping
-# response_format. require_parameters makes the router refuse such endpoints;
-# a clean routing error costs nothing, degraded output fails the file.
+# Cite's defaults cover everything else. require_parameters keeps an
+# OpenRouter-style router from choosing an endpoint that drops
+# response_format when CITE_PROVIDER selects the OpenRouter leg; Ollama
+# ignores the field.
 require_parameters: true
-
-roles:
-  review:
-    # Dogfooding on PR #41: reviewing a large diff (cmd/cite/review.go) hit
-    # finish_reason=length at the then-built-in 32768-token cap. Raise it so
-    # big diffs get complete reviews. (The built-in default has since been
-    # raised to 131072; this explicit pin is kept as the operator-set value
-    # and wins over the default either way.)
-    max_output_tokens: 65536
-  # Timeouts are deliberately NOT pinned here any more. The explicit
-  # review: 600s / triage: 120s pins predate the 15-minute defaults and
-  # terminal (never-retried) deadlines: once a deadline became terminal the
-  # pins stopped costing retries and started costing whole files — a
-  # deepseek-v4-flash call that needed more than the pin died with no second
-  # chance (dogfooding on the parallel-head-review PR lost three files at
-  # 600s). The defaults now sit at 15 minutes for every role, generous
-  # because a hung call is rare while a slow-but-correct one is common, and
-  # an explicit roles.<role>.timeout still wins whenever this repository
-  # needs one again.
