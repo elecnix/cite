@@ -27,4 +27,4 @@ jobs:
   pr-body-format:
     runs-on: ubuntu-latest
     steps:
-      - uses: elecnix/gh-pr-body-action@16953182e3b991b7d081d844b395754fdfb91880 # v1.1.0
+      - uses: elecnix/gh-pr-body-action@08c74dc0736abe295e90d6363abd55cf7ea63ef3 # v1.2.1
