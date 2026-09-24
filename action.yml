@@ -163,8 +163,10 @@ runs:
           exit 0
         fi
         ARGS="--pr $GITHUB_REPOSITORY#$PR_NUM --config $CITE_CONFIG_PATH"
-        # Structured-output mechanism: "response_format" (default) or "tools".
-        ARGS="$ARGS --structured-output ${CITE_STRUCTURED_OUTPUT:-response_format}"
+        # structured_output travels as the CITE_STRUCTURED_OUTPUT environment
+        # variable above, never as a shell argument: an input interpolated
+        # into a command line is a shell-injection path, and the CLI already
+        # reads the variable as this flag's default.
         if [ "$CITE_DRY_RUN" = "true" ]; then
           ARGS="$ARGS --dry-run"
         fi
