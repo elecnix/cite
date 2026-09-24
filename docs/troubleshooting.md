@@ -171,6 +171,12 @@ like any other unusable answer. `response_format` stays the default. Both modes
 share one schema and one validation pipeline, so findings do not change with
 the mode.
 
+Ollama also counts reasoning tokens against `max_tokens`, so a heavy reasoner
+can spend the whole output budget thinking and never call the tool; Cite then
+reports `output truncated at token cap`. The `reasoning_effort` input defaults
+to `none` for that reason. An empty value omits the field, and `low`, `medium`
+or `high` pass through to a provider that accepts them.
+
 ### My tool failures block the merge and I want them not to
 
 By default a `COULD_NOT_EVALUATE` check run concludes `failure`, so a

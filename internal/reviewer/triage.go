@@ -138,6 +138,7 @@ func (r *Reviewer) runTriage(ctx context.Context, in *Inputs) (flagged map[strin
 		MaxOutputTokens:   maxTokens,
 		Temperature:       pinnedTemperature,
 		RequireParameters: requireParameters(r.o.Cfg),
+		ReasoningEffort:   r.o.ReasoningEffort,
 	}
 	r.applyStructuredOutput(&req, triageResponseSchema(), toolNameTriage, toolTriageDescription)
 	var tr triageResult

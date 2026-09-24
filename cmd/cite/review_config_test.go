@@ -122,7 +122,7 @@ func TestInvalidConfigFailsClosed(t *testing.T) {
 `)
 
 	var report bytes.Buffer
-	err := reviewLocal(diffPath, cfgPath, model.StructuredOutputResponseFormat, publisher.JSONReportSink(&report))
+	err := reviewLocal(diffPath, cfgPath, model.StructuredOutputResponseFormat, "", publisher.JSONReportSink(&report))
 	t.Logf("reviewLocal error: %v (model called=%v)", err, called)
 	if called {
 		t.Fatalf("invalid config must fail the run BEFORE any model call, but the reviewer ran against the fake provider (deadline would be the derived default, not the configured one)")

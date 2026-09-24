@@ -90,6 +90,16 @@ inputs:
       tool properly.
     required: false
     default: 'response_format'
+  reasoning_effort:
+    description: >
+      Value sent as the request's reasoning_effort field on every model call.
+      Defaults to "none": Ollama counts reasoning tokens against max_tokens,
+      so a heavy reasoner can spend the entire output budget thinking and
+      never answer, which Cite reports as a deterministic failure. Set it to
+      an empty string to omit the field, or to "low", "medium" or "high" for
+      a provider that accepts those.
+    required: false
+    default: 'none'
 
 runs:
   using: 'composite'
@@ -149,6 +159,7 @@ runs:
         CITE_DRY_RUN: ${{ inputs.dry_run }}
         CITE_TOOL_FAILURE_BLOCKS: ${{ inputs.tool_failure_blocks }}
         CITE_STRUCTURED_OUTPUT: ${{ inputs.structured_output }}
+        CITE_REASONING_EFFORT: ${{ inputs.reasoning_effort }}
       run: |
         set -euo pipefail
         # PR_NUMBER is not a default runner variable; pull_request events put

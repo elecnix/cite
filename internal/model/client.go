@@ -220,6 +220,13 @@ type CompletionRequest struct {
 	// asking for a proper call) instead of repeating the prompt blind.
 	History []Message
 
+	// ReasoningEffort, when non-empty, is sent as the request's
+	// reasoning_effort field. Ollama counts reasoning tokens against
+	// max_tokens, so a heavy reasoner can spend the entire output budget
+	// thinking and never answer; "none" suppresses that. Providers that do
+	// not know the field see it only when an operator sets it.
+	ReasoningEffort string
+
 	// RequireParameters adds a top-level "provider": {"require_parameters":
 	// true} to the chat completion request. Routers such as OpenRouter then
 	// only pick endpoints that support every request parameter (structured
@@ -439,6 +446,9 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		if req.ToolChoice != nil {
 			httpReq["tool_choice"] = req.ToolChoice
 		}
+	}
+	if req.ReasoningEffort != "" {
+		httpReq["reasoning_effort"] = req.ReasoningEffort
 	}
 	if req.RequireParameters {
 		httpReq["provider"] = map[string]any{"require_parameters": true}

@@ -66,6 +66,11 @@ type Options struct {
 	// response_format (empty/default) or a forced function tool. It is wired
 	// from the GitHub Action's structured_output input.
 	StructuredOutput model.StructuredOutputMode
+	// ReasoningEffort, when non-empty, is sent as reasoning_effort on every
+	// call. Ollama counts reasoning tokens against max_tokens, so "none"
+	// keeps a heavy reasoner from spending the whole output budget thinking.
+	// It is wired from the GitHub Action's reasoning_effort input.
+	ReasoningEffort string
 }
 
 // Inputs are the run inputs. Removed lines come from Diffs (they have no
@@ -807,6 +812,7 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 		MaxOutputTokens:   maxTokens, // bounded by an output-token cap, never an inactivity timeout (§7)
 		Temperature:       pinnedTemperature,
 		RequireParameters: requireParameters(r.o.Cfg),
+		ReasoningEffort:   r.o.ReasoningEffort,
 	}
 	r.applyStructuredOutput(&req, reviewResponseSchema(), toolNameFindings, toolFindingsDescription)
 	var fr *model.FileReview

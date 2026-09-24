@@ -195,6 +195,25 @@ func (c *triageFailClient) triageCallCount() int {
 	return c.calls
 }
 
+func TestReasoningEffortReachesTheReviewerRequest(t *testing.T) {
+	// The reviewer must pass its Options value into every call it makes, or
+	// the action input would be silently dropped in review mode.
+	c := &scriptClient{resps: []*model.CompletionResponse{
+		{Text: triageJSON("a.go")},
+		{Text: reviewJSON("a.go", "reviewed", nil)},
+	}}
+	if _, err := runOnce(t, baseInputs(), Options{
+		Cfg: config.Default(), Client: c, ReasoningEffort: "none",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := range c.reqs {
+		if req := c.requestAt(i); req.ReasoningEffort != "none" {
+			t.Fatalf("call %d lost the reasoning effort: %q", i, req.ReasoningEffort)
+		}
+	}
+}
+
 func TestResponseFormatModeIsUnchanged(t *testing.T) {
 	// The default mode must keep sending the schema the old way and never
 	// offer a tool, so existing installs are byte-for-byte unchanged.

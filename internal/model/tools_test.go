@@ -108,6 +108,38 @@ func TestToolsModeUsesContentWhenNoToolCall(t *testing.T) {
 	}
 }
 
+func TestReasoningEffortSentOnlyWhenSet(t *testing.T) {
+	capture := func(t *testing.T, effort string) map[string]any {
+		t.Helper()
+		var gotBody map[string]any
+		srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewDecoder(r.Body).Decode(&gotBody)
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"choices":[{"message":{"content":"{}"},"finish_reason":"stop"}]}`))
+		})
+		ts := newTestServer(srv)
+		t.Cleanup(ts.Close)
+		c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+		if _, err := c.Complete(context.Background(), CompletionRequest{
+			Temperature: 0, MaxOutputTokens: 8, ReasoningEffort: effort,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return gotBody
+	}
+
+	body := capture(t, "none")
+	if body["reasoning_effort"] != "none" {
+		t.Fatalf("reasoning_effort = %v, want none", body["reasoning_effort"])
+	}
+	// An empty value must omit the field entirely: a provider that does not
+	// know it must never see it.
+	plain := capture(t, "")
+	if _, ok := plain["reasoning_effort"]; ok {
+		t.Fatalf("reasoning_effort present when unset: %v", plain["reasoning_effort"])
+	}
+}
+
 func TestHistoryAppendedToMessages(t *testing.T) {
 	var msgs []map[string]any
 	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
