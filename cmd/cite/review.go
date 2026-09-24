@@ -45,8 +45,16 @@ func runReview(args []string) error {
 	reportFmt := fs.String("report", "", "write a full report instead of publishing to GitHub: json or markdown")
 	outPath := fs.String("out", "", "report destination file (default stdout; requires --report)")
 	recordOut := fs.String("record-out", os.Getenv("CITE_RECORD_OUT"), "write the raw run record JSON to this path, even when the run fails (forensics; defaults to $CITE_RECORD_OUT)")
+	structuredOutput := fs.String("structured-output", os.Getenv("CITE_STRUCTURED_OUTPUT"),
+		"how the model returns schema-shaped JSON: response_format (default) or tools")
+	reasoningEffort := fs.String("reasoning-effort", os.Getenv("CITE_REASONING_EFFORT"),
+		"reasoning_effort sent to the provider; empty omits the field")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	mode, err := model.ParseStructuredOutputMode(*structuredOutput)
+	if err != nil {
+		return fmt.Errorf("review: %w", err)
 	}
 	var sink publisher.Sink
 	switch *reportFmt {
@@ -79,13 +87,13 @@ func runReview(args []string) error {
 	case *diffPath != "" && *prSpec != "":
 		return fmt.Errorf("use --diff or --pr, not both")
 	case *diffPath != "":
-		return reviewLocal(*diffPath, *cfgPath, sink)
+		return reviewLocal(*diffPath, *cfgPath, mode, *reasoningEffort, sink)
 	case *prSpec != "":
 		reviewerID, err := resolveReviewerID()
 		if err != nil {
 			return fmt.Errorf("review: %w", err)
 		}
-		return reviewPR(*prSpec, *cfgPath, *dryRun, *disabled, *toolFailureBlocks, sink, *recordOut, reviewerID)
+		return reviewPR(*prSpec, *cfgPath, *dryRun, *disabled, *toolFailureBlocks, mode, *reasoningEffort, sink, *recordOut, reviewerID)
 	default:
 		fs.Usage()
 		return fmt.Errorf("review: one of --diff or --pr is required")
@@ -227,7 +235,7 @@ func verifierSuffix(v string) string {
 
 // --- local mode -----------------------------------------------------------
 
-func reviewLocal(diffPath, cfgPath string, sink publisher.Sink) error {
+func reviewLocal(diffPath, cfgPath string, structuredOutput model.StructuredOutputMode, reasoningEffort string, sink publisher.Sink) error {
 	raw, err := os.ReadFile(diffPath)
 	if err != nil {
 		return err
@@ -272,11 +280,13 @@ func reviewLocal(diffPath, cfgPath string, sink publisher.Sink) error {
 		return err
 	}
 	r := reviewer.New(reviewer.Options{
-		Cfg:      cfg,
-		Client:   modelClient,
-		Instr:    instr,
-		Verifier: &gitVerifier{dir: "."},
-		Logger:   logToStderr,
+		Cfg:              cfg,
+		Client:           modelClient,
+		Instr:            instr,
+		Verifier:         &gitVerifier{dir: "."},
+		Logger:           logToStderr,
+		StructuredOutput: structuredOutput,
+		ReasoningEffort:  reasoningEffort,
 	})
 	rec, err := r.Run(context.Background(), reviewer.Inputs{
 		Manifest:      manifest,
@@ -333,7 +343,7 @@ type threadFinding struct {
 	Evidence    []model.Evidence `json:"evidence"`
 }
 
-func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, sink publisher.Sink, recordOut, reviewerID string) error {
+func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, structuredOutput model.StructuredOutputMode, reasoningEffort string, sink publisher.Sink, recordOut, reviewerID string) error {
 	// Issue #59: the repository's opt-out reaches every conclusion site below
 	// as one gate option. Zero value (unset) keeps the fail-closed default.
 	gateOpts := gate.Options{NeutralToolFailure: !toolFailureBlocks}
@@ -459,11 +469,13 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, si
 	}
 	verifier := &apiVerifier{c: c, owner: owner, repo: repo, ref: pr.BaseRef, tree: baseTree}
 	r := reviewer.New(reviewer.Options{
-		Cfg:      cfg,
-		Client:   modelClient,
-		Instr:    instr,
-		Verifier: verifier,
-		Logger:   logToStderr,
+		Cfg:              cfg,
+		Client:           modelClient,
+		Instr:            instr,
+		Verifier:         verifier,
+		Logger:           logToStderr,
+		StructuredOutput: structuredOutput,
+		ReasoningEffort:  reasoningEffort,
 	})
 
 	rec, err := r.Run(ctx, reviewer.Inputs{

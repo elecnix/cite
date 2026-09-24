@@ -145,6 +145,38 @@ A red coverage failure is recoverable by design, while an absent check is not:
 the gate job creates the check run first thing and always concludes it, even
 when the review job fails.
 
+### The provider ignores response_format
+
+Some providers accept `response_format: {type: json_schema}` and then answer in
+prose anyway. Ollama Cloud does exactly that, and it fails silently. The API
+returns a successful response. The schema does not reach the model. The symptom
+is `parse_failure` on every file, from a provider whose models otherwise look
+capable. Set the action's `structured_output` input to `tools`:
+
+```yaml
+      - uses: elecnix/cite@<full-sha>
+        with:
+          structured_output: tools
+          model_api_key: ${{ secrets.OLLAMA_API_KEY }}
+          model_base_url: https://ollama.com/v1
+          model_id: deepseek-v4.1-flash
+```
+
+In `tools` mode, Cite hands the model one function whose parameters are the
+finding schema itself, and the model must call it. Cite reads the answer from
+the call's argument. A rejection gets one follow-up turn. That turn contains the
+rejected call and the validation error, and the next user message asks for a
+proper call. When the model still refuses, the file ends as `parse_failure`,
+like any other unusable answer. `response_format` stays the default. Both modes
+share one schema and one validation pipeline, so findings do not change with
+the mode.
+
+Ollama also counts reasoning tokens against `max_tokens`, so a heavy reasoner
+can spend the whole output budget thinking and never call the tool; Cite then
+reports `output truncated at token cap`. The `reasoning_effort` input defaults
+to `none` for that reason. An empty value omits the field, and `low`, `medium`
+or `high` pass through to a provider that accepts them.
+
 ### My tool failures block the merge and I want them not to
 
 By default a `COULD_NOT_EVALUATE` check run concludes `failure`, so a

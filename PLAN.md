@@ -1494,7 +1494,7 @@ Exactly one exception: an added line makes an EXISTING line wrong (a new return
 value that existing callers do not handle, a removed guard that leaves an
 existing operation unprotected). Then anchor on the "+" line that caused it,
 quote the existing line as evidence, and set
-`introduced_by.reason = "existing_line_made_wrong"`.
+`introduced_by = "existing_line_made_wrong"`.
 A defect that was equally present before this change is NOT a finding, however
 real it is. It is not what you were asked.
 
@@ -1724,7 +1724,7 @@ One JSON object, without a fence or commentary:
       "impact": "",
       "evidence": [ { "line": 0, "quote": "" } ],
       "external_claims": [ { "type": "", "subject": "" } ],
-      "introduced_by": { "reason": "added_line" | "existing_line_made_wrong" },
+      "introduced_by": "added_line" | "existing_line_made_wrong",
       "confidence": "<certain|likely|question>",
       "fix": null
     }

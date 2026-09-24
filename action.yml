@@ -77,6 +77,29 @@ inputs:
       could not read its own output", never "the tool found something".
     required: false
     default: 'true'
+  structured_output:
+    description: >
+      How Cite asks the model for schema-shaped JSON. "response_format"
+      (the default) sends the OpenAI-compatible response_format:
+      {type: json_schema} field, which the provider must enforce. "tools"
+      offers a function tool whose parameters are that same schema and
+      forces the model to call it, then reads the answer from the call's
+      argument — use it for providers that ignore response_format (Ollama
+      Cloud does so silently). A rejected or missing tool call is retried
+      once with the call, the validation error and a request to call the
+      tool properly.
+    required: false
+    default: 'response_format'
+  reasoning_effort:
+    description: >
+      Value sent as the request's reasoning_effort field on every model call.
+      Defaults to "none": Ollama counts reasoning tokens against max_tokens,
+      so a heavy reasoner can spend the entire output budget thinking and
+      never answer, which Cite reports as a deterministic failure. Set it to
+      an empty string to omit the field, or to "low", "medium" or "high" for
+      a provider that accepts those.
+    required: false
+    default: 'none'
 
 runs:
   using: 'composite'
@@ -135,6 +158,8 @@ runs:
         CITE_CONFIG_PATH: ${{ inputs.config_path }}
         CITE_DRY_RUN: ${{ inputs.dry_run }}
         CITE_TOOL_FAILURE_BLOCKS: ${{ inputs.tool_failure_blocks }}
+        CITE_STRUCTURED_OUTPUT: ${{ inputs.structured_output }}
+        CITE_REASONING_EFFORT: ${{ inputs.reasoning_effort }}
       run: |
         set -euo pipefail
         # PR_NUMBER is not a default runner variable; pull_request events put
@@ -149,6 +174,10 @@ runs:
           exit 0
         fi
         ARGS="--pr $GITHUB_REPOSITORY#$PR_NUM --config $CITE_CONFIG_PATH"
+        # structured_output travels as the CITE_STRUCTURED_OUTPUT environment
+        # variable above, never as a shell argument: an input interpolated
+        # into a command line is a shell-injection path, and the CLI already
+        # reads the variable as this flag's default.
         if [ "$CITE_DRY_RUN" = "true" ]; then
           ARGS="$ARGS --dry-run"
         fi
