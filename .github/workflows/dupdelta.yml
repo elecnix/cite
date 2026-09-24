@@ -28,10 +28,10 @@ jobs:
       # No fork guard: dupdelta writes nothing through the API. Its findings
       # are workflow-command annotations and a job summary, both of which a
       # read-only token on a fork pull request can still emit.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           # The merge-base has to be reachable. A shallow clone has no common
           # ancestor to compare against, and the action fails loudly rather
           # than reporting every pre-existing duplicate as new.
           fetch-depth: 0
-      - uses: elecnix/dupdelta@v0.2.0
+      - uses: elecnix/dupdelta@658504a2c2fc19ced01337e2e84c79aa4699a7a7 # v0.2.0
