@@ -159,7 +159,7 @@ capable. Set the action's `structured_output` input to `tools`:
           structured_output: tools
           model_api_key: ${{ secrets.OLLAMA_API_KEY }}
           model_base_url: https://ollama.com/v1
-          model_id: qwen3.5:397b
+          model_id: deepseek-v4.1-flash
 ```
 
 In `tools` mode, Cite hands the model one function whose parameters are the
