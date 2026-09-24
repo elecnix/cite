@@ -142,6 +142,10 @@ func (r *Reviewer) runTriage(ctx context.Context, in *Inputs) (flagged map[strin
 	r.applyStructuredOutput(&req, triageResponseSchema(), toolNameTriage, toolTriageDescription)
 	var tr triageResult
 	toolsMode := r.structuredOutputMode() == model.StructuredOutputTools
+	// A rejected tool call gets one follow-up, then the batched fallback:
+	// triage is the cheap pass, and a model that misses the tool twice will
+	// not find it on a third ask.
+	toolFollowUps := 1
 	var history []model.Message
 	for {
 		req.History = history
@@ -162,11 +166,12 @@ func (r *Reviewer) runTriage(ctx context.Context, in *Inputs) (flagged map[strin
 		// exactly what the provider can replay.
 		retryable := strings.TrimSpace(resp.Text) == ""
 		if toolsMode {
-			retryable = true
+			retryable = toolFollowUps > 0
 		}
 		if retryable && r.tryRetry(unitTriage) {
 			if toolsMode {
-				r.logf("triage call rejected (%v); following up on the tool call", uerr)
+				toolFollowUps--
+				r.logf("triage call rejected (%v); following up on the tool call, %d follow-up(s) left", uerr, toolFollowUps)
 				history = append(history, toolFollowUp(resp, uerr, "violated the triage schema")...)
 			} else {
 				r.logf("triage response was empty (%v); retrying from run-global bucket", uerr)

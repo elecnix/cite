@@ -152,6 +152,49 @@ func TestToolsModeFollowsUpWhenNoToolCallWasMade(t *testing.T) {
 	}
 }
 
+func TestToolsModeTriageFollowsUpOnceThenFallsBack(t *testing.T) {
+	// A rejected triage call is answerable exactly once; triage is the cheap
+	// pass, and a model that misses the tool twice must not keep the run
+	// waiting while the batched fallback could already be reviewing.
+	c := &triageFailClient{}
+	rec, err := runOnce(t, baseInputs(), Options{
+		Cfg: config.Default(), Client: c,
+		StructuredOutput: model.StructuredOutputTools,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.triageCallCount(); got != 2 {
+		t.Fatalf("want 1 initial + 1 follow-up triage call, got %d", got)
+	}
+	if rec.Coverage.Reviewed != 1 || !rec.Coverage.Complete {
+		t.Fatalf("batched fallback must still review every file, got %+v", rec.Coverage)
+	}
+}
+
+type triageFailClient struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *triageFailClient) Complete(_ context.Context, req model.CompletionRequest) (*model.CompletionResponse, error) {
+	if len(req.Tools) > 0 && req.Tools[0].Function.Name == toolNameTriage {
+		c.mu.Lock()
+		c.calls++
+		c.mu.Unlock()
+		return toolCallResponse(toolNameTriage, `not-json`), nil
+	}
+	return &model.CompletionResponse{Text: reviewJSON(requestPath(req), "reviewed", nil)}, nil
+}
+
+func (c *triageFailClient) ModelID() string { return "triage-fail" }
+
+func (c *triageFailClient) triageCallCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
 func TestResponseFormatModeIsUnchanged(t *testing.T) {
 	// The default mode must keep sending the schema the old way and never
 	// offer a tool, so existing installs are byte-for-byte unchanged.
