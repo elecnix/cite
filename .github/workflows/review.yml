@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Review this pull request with Cite
-        uses: elecnix/cite@7bbe8f051e9df569744c18e0fa8285f4129c1c79  # v0.10.0
+        uses: elecnix/cite@877bebbfac01ab435055253ac45e5e2feab1b519  # main after #116: v0.11.0 binary, SHA-pinned upload-artifact; repin to v0.11.1 once released
         with:
           tool_failure_blocks: false
           model_id: deepseek/deepseek-v4-flash-0731
