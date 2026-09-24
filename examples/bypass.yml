@@ -48,7 +48,7 @@ jobs:
         env:
           # The tag, not releases/latest: this workflow concludes checks, so
           # which binary does that is a reviewed decision (issue #94).
-          CITE_VERSION: v0.10.0
+          CITE_VERSION: v0.11.1
         run: |
           set -euo pipefail
           url="https://github.com/elecnix/cite/releases/download/${CITE_VERSION}/cite-linux-amd64"
