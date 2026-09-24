@@ -245,7 +245,7 @@ type OpenAICompatClient struct {
 // explicit provider is configured: the provider is inferred from which key is
 // present (§1).
 //
-// GitHub Models zero-secret path (§1, "A first run with no key at all"): when
+// GitHub Models zero-secret path (§1, "A first run without a key"): when
 // MODEL_API_KEY is unset but the ambient GITHUB_TOKEN is present, inference
 // runs on https://models.github.ai/inference with the job's own token and the
 // default model id openai/gpt-4o-mini. That path needs the `models: read`

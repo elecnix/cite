@@ -257,9 +257,9 @@ type PRState struct {
 
 // NeedsReaper returns the open PRs whose head SHA has had no terminal Cite
 // check for at least staleThreshold minutes (§11: twenty). A stuck required
-// check renders as "Expected — waiting for status to be reported" forever;
-// the reaper writes a terminal failure ("run never reported") so the block
-// self-heals into something a human can act on.
+// check renders as "Expected", with GitHub waiting for a status report that
+// never arrives. The reaper writes a terminal failure ("run never reported") so
+// the block self-heals into something a human can act on.
 func NeedsReaper(openPRs []PRState, staleThreshold int) []PRState {
 	var out []PRState
 	for _, pr := range openPRs {
