@@ -66,7 +66,7 @@ const (
 )
 
 // ClaimType enumerates the external claims a finding may declare. Each type
-// has a mechanical disposition (§8, "Verifying the claims the model cannot
+// has a mechanical disposition (§8, "Verifying claims the model cannot
 // check"). version_behavior is banned outright and rejected at parse time.
 type ClaimType string
 
