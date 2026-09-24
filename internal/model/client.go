@@ -128,6 +128,74 @@ type RoleConfig struct {
 	Concurrency     int           `json:"concurrency,omitempty"`
 }
 
+// StructuredOutputMode selects how Cite asks a provider for schema-shaped
+// JSON. It is wired from the GitHub Action's `structured_output` input.
+type StructuredOutputMode string
+
+const (
+	// StructuredOutputResponseFormat is the default: the OpenAI-compatible
+	// response_format: {type: json_schema} field, which the provider must
+	// enforce. OpenAI and OpenRouter honour it.
+	StructuredOutputResponseFormat StructuredOutputMode = "response_format"
+	// StructuredOutputTools offers one function tool whose parameters are the
+	// response schema and forces the model to call it. Providers that ignore
+	// response_format — Ollama Cloud does so silently — still return the
+	// arguments as a tool call, which Cite decodes as the response.
+	StructuredOutputTools StructuredOutputMode = "tools"
+)
+
+// ParseStructuredOutputMode validates a configured mode. Empty means the
+// default, so an unset action input keeps the historical behaviour.
+func ParseStructuredOutputMode(s string) (StructuredOutputMode, error) {
+	switch s {
+	case "", string(StructuredOutputResponseFormat):
+		return StructuredOutputResponseFormat, nil
+	case string(StructuredOutputTools):
+		return StructuredOutputTools, nil
+	default:
+		return "", fmt.Errorf("structured output mode %q: want %q or %q",
+			s, StructuredOutputResponseFormat, StructuredOutputTools)
+	}
+}
+
+// ToolCall is one function call a model made.
+type ToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type,omitempty"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+// Message is one turn of a follow-up conversation the caller supplies after a
+// failed structured-output attempt. Role is "assistant", "tool" or "user".
+type Message struct {
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+}
+
+// ToolDef is one function tool offered to the model.
+type ToolDef struct {
+	Type     string `json:"type"`
+	Function struct {
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		Parameters  json.RawMessage `json:"parameters"`
+	} `json:"function"`
+}
+
+// NewToolDef builds a function tool whose parameters are the response schema.
+func NewToolDef(name, description string, schema json.RawMessage) ToolDef {
+	t := ToolDef{Type: "function"}
+	t.Function.Name = name
+	t.Function.Description = description
+	t.Function.Parameters = schema
+	return t
+}
+
 // CompletionRequest is the provider-neutral call. Temperature is pinned; a
 // seed is passed where the provider honours one (§8: a green is one sample).
 type CompletionRequest struct {
@@ -139,6 +207,18 @@ type CompletionRequest struct {
 	// ResponseSchema, when set, requests provider-enforced structured output
 	// rather than JSON-in-prose plus a validator.
 	ResponseSchema json.RawMessage
+
+	// Tools, when set, offers function tools, and ToolChoice forces one of
+	// them. The tools mode uses these instead of ResponseSchema; a provider
+	// that ignores response_format still returns the arguments as a tool call.
+	Tools      []ToolDef
+	ToolChoice any
+
+	// History, when set, appends turns after the user message. The reviewer
+	// uses it to follow up a rejected tool call with the conversation so far
+	// (the assistant's call, a tool result naming the error, and a user turn
+	// asking for a proper call) instead of repeating the prompt blind.
+	History []Message
 
 	// RequireParameters adds a top-level "provider": {"require_parameters":
 	// true} to the chat completion request. Routers such as OpenRouter then
@@ -217,6 +297,11 @@ type CompletionResponse struct {
 	Usage        Usage
 	FinishReason string
 	Model        string
+	// ToolCalls are the function calls the model made, when it made any. In
+	// tools mode Text carries the arguments of the matching call, so callers
+	// that only decode Text need no change; the raw calls let a caller quote
+	// the rejected one back in a follow-up.
+	ToolCalls []ToolCall
 	// Provider is the upstream provider a router reported serving the call
 	// (OpenRouter's top-level "provider" field); empty when not reported.
 	Provider string
@@ -312,14 +397,29 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		}
 		return dl.Sub(start).Round(time.Millisecond).String()
 	}
+	// messages is []any rather than []map[string]string: a follow-up turn
+	// carries tool_calls (an array) and tool_call_id, which a string map
+	// cannot express.
+	messages := make([]any, 0, 2+len(req.History))
+	messages = append(messages,
+		map[string]any{"role": "system", "content": req.System},
+		map[string]any{"role": "user", "content": req.User},
+	)
+	for _, m := range req.History {
+		msg := map[string]any{"role": m.Role, "content": m.Content}
+		if len(m.ToolCalls) > 0 {
+			msg["tool_calls"] = m.ToolCalls
+		}
+		if m.ToolCallID != "" {
+			msg["tool_call_id"] = m.ToolCallID
+		}
+		messages = append(messages, msg)
+	}
 	httpReq := map[string]any{
 		"model":       c.Model,
 		"temperature": req.Temperature,
 		"max_tokens":  req.MaxOutputTokens,
-		"messages": []map[string]string{
-			{"role": "system", "content": req.System},
-			{"role": "user", "content": req.User},
-		},
+		"messages":    messages,
 	}
 	if req.Seed != nil {
 		httpReq["seed"] = *req.Seed
@@ -332,6 +432,12 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 				"strict": true,
 				"schema": json.RawMessage(req.ResponseSchema),
 			},
+		}
+	}
+	if len(req.Tools) > 0 {
+		httpReq["tools"] = req.Tools
+		if req.ToolChoice != nil {
+			httpReq["tool_choice"] = req.ToolChoice
 		}
 	}
 	if req.RequireParameters {
@@ -424,7 +530,8 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		Provider json.RawMessage `json:"provider"`
 		Choices  []struct {
 			Message struct {
-				Content string `json:"content"`
+				Content   string     `json:"content"`
+				ToolCalls []ToolCall `json:"tool_calls"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -454,6 +561,15 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		return nil, fmt.Errorf("%w: no choices in response", ErrDeterministic)
 	}
 	ch := out.Choices[0]
+	// In tools mode the answer is the forced call's argument. A call to a
+	// function Cite did not offer is not that answer, so Text then stays the
+	// content and the caller rejects it and follows up.
+	text := ch.Message.Content
+	if len(req.Tools) > 0 {
+		if args, ok := toolArguments(ch.Message.ToolCalls, req.Tools[0].Function.Name); ok {
+			text = args
+		}
+	}
 	if ch.FinishReason == "length" {
 		// A truncated response truncates identically on retry. Terminal.
 		// Always capture the partial content to a file first: the error
@@ -468,16 +584,32 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		// The partial content is what the operator needs to see, so it
 		// always goes to stderr: a CI run that captures stderr keeps it in
 		// the job log, where it can be downloaded later.
-		fmt.Fprintf(os.Stderr, "cite: partial output before the token cap captured to %s (%d bytes):\n%s\n", capturePath, len(raw), ch.Message.Content)
+		fmt.Fprintf(os.Stderr, "cite: partial output before the token cap captured to %s (%d bytes):\n%s\n", capturePath, len(raw), text)
 		return nil, fmt.Errorf("%w: output truncated at token cap (finish_reason=length)", ErrDeterministic)
 	}
 	return &CompletionResponse{
-		Text:         ch.Message.Content,
+		Text:         text,
+		ToolCalls:    ch.Message.ToolCalls,
 		Usage:        out.Usage.toUsage(),
 		FinishReason: ch.FinishReason,
 		Model:        c.Model,
 		Provider:     upstreamProvider(out.Provider),
 	}, nil
+}
+
+// toolArguments returns the arguments of the first tool call naming want. A
+// call to another function is ignored, and empty arguments are not an answer.
+func toolArguments(calls []ToolCall, want string) (string, bool) {
+	for _, c := range calls {
+		if want != "" && c.Function.Name != want {
+			continue
+		}
+		if strings.TrimSpace(c.Function.Arguments) == "" {
+			return "", false
+		}
+		return c.Function.Arguments, true
+	}
+	return "", false
 }
 
 // upstreamProvider reads a router's upstream provider label, which

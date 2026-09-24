@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -61,6 +62,10 @@ type Options struct {
 	Verifier     Verifier
 	DiscVerifier DiscriminativeVerifier
 	Logger       func(format string, args ...any)
+	// StructuredOutput selects how the model is asked for schema-shaped JSON:
+	// response_format (empty/default) or a forced function tool. It is wired
+	// from the GitHub Action's structured_output input.
+	StructuredOutput model.StructuredOutputMode
 }
 
 // Inputs are the run inputs. Removed lines come from Diffs (they have no
@@ -156,6 +161,83 @@ const (
 	defaultPerFileParseRetries    = 2
 	defaultPerFileDeadlineRetries = 1
 )
+
+// Tool-calling structured output. A provider that ignores response_format
+// (Ollama Cloud does, silently) still honours a forced function call, so Cite
+// can ask the model to deliver the schema-shaped answer as the tool's
+// argument instead. One function per schema, so a run can never mistake a
+// triage answer for a finding answer.
+const (
+	toolNameFindings = "report_findings"
+	toolNameTriage   = "report_triage"
+
+	toolFindingsDescription = "Report the review of one file. The argument must match this function's parameter schema exactly."
+	toolTriageDescription   = "Report which changed files deserve a close review. The argument must match this function's parameter schema exactly."
+
+	// toolDirective is appended to the system prompt in tools mode: a tool
+	// left unused is a schema left unenforced.
+	toolDirective = "\n\nDELIVERY: you MUST call the provided function and place your answer in its argument. " +
+		"An answer written as prose or as a bare JSON object is discarded."
+
+	// toolReaskPrompt is the user turn appended after a rejected tool attempt.
+	toolReaskPrompt = "Please call the tool properly."
+)
+
+// structuredOutputMode resolves the configured mode, defaulting to the
+// historical response_format path.
+func (r *Reviewer) structuredOutputMode() model.StructuredOutputMode {
+	if r.o.StructuredOutput == "" {
+		return model.StructuredOutputResponseFormat
+	}
+	return r.o.StructuredOutput
+}
+
+// applyStructuredOutput wires the configured structured-output mode onto a
+// request: a provider-enforced response_format, or a forced function tool
+// whose parameters are the same schema.
+func (r *Reviewer) applyStructuredOutput(req *model.CompletionRequest, schema json.RawMessage, toolName, toolDesc string) {
+	if r.structuredOutputMode() == model.StructuredOutputTools {
+		req.Tools = []model.ToolDef{model.NewToolDef(toolName, toolDesc, schema)}
+		req.ToolChoice = map[string]any{
+			"type":     "function",
+			"function": map[string]string{"name": toolName},
+		}
+		req.System += toolDirective
+		return
+	}
+	req.ResponseSchema = schema
+}
+
+// toolFollowUp builds the turns that tell a model its structured-output
+// attempt was rejected. When the model called the tool, the conversation
+// carries that call and a tool result naming the error — the shape every
+// OpenAI-compatible endpoint expects — followed by the user turn that asks
+// for a proper call. A prose answer with no call gets the assistant turn and
+// the same ask.
+func toolFollowUp(resp *model.CompletionResponse, perr error, kind string) []model.Message {
+	detail := kind
+	if perr != nil {
+		detail = perr.Error()
+	}
+	var msgs []model.Message
+	if resp != nil && len(resp.ToolCalls) > 0 {
+		msgs = append(msgs,
+			model.Message{Role: "assistant", ToolCalls: resp.ToolCalls},
+			model.Message{Role: "tool", ToolCallID: resp.ToolCalls[0].ID, Content: "rejected: " + detail},
+		)
+	} else {
+		text := ""
+		if resp != nil {
+			text = resp.Text
+		}
+		msgs = append(msgs, model.Message{Role: "assistant", Content: text})
+	}
+	ask := toolReaskPrompt
+	if detail != "" {
+		ask += "\n\nThe previous answer was rejected: " + detail
+	}
+	return append(msgs, model.Message{Role: "user", Content: ask})
+}
 
 // accumulateUsage folds one response's token counters into the run total.
 // Calls arrive concurrently from the review worker pool, so the total is
@@ -724,9 +806,9 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 		User:              r.segB + cacheBreakpoint + payload,
 		MaxOutputTokens:   maxTokens, // bounded by an output-token cap, never an inactivity timeout (§7)
 		Temperature:       pinnedTemperature,
-		ResponseSchema:    reviewResponseSchema(),
 		RequireParameters: requireParameters(r.o.Cfg),
 	}
+	r.applyStructuredOutput(&req, reviewResponseSchema(), toolNameFindings, toolFindingsDescription)
 	var fr *model.FileReview
 	var perr error
 	// Issue #73: per-file budgets, separate from the run-global transient
@@ -738,7 +820,13 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 	parseRetries := defaultPerFileParseRetries
 	deadlineRetries := defaultPerFileDeadlineRetries
 	spent := 0
+	// toolsMode carries a follow-up conversation: a rejected tool call is
+	// answered with the call, the error and a request to call it properly.
+	// response_format mode keeps its historical same-request re-ask.
+	toolsMode := r.structuredOutputMode() == model.StructuredOutputTools
+	var history []model.Message
 	for {
+		req.History = history
 		resp, err := r.completeWithRetry(ctx, unitReview, req, timeout)
 		if err != nil {
 			if errors.Is(err, model.ErrDeadline) && deadlineRetries > 0 {
@@ -839,6 +927,9 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 			}
 		}
 		r.logf("review of %s response %s (%v); re-asking from the per-file budget, %d left (issue #73)", e.Path, kind, perr, parseRetries)
+		if toolsMode {
+			history = append(history, toolFollowUp(resp, perr, kind)...)
+		}
 	}
 
 	if perr != nil {

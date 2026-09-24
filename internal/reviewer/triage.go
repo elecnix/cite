@@ -137,11 +137,14 @@ func (r *Reviewer) runTriage(ctx context.Context, in *Inputs) (flagged map[strin
 		User:              b.String(),
 		MaxOutputTokens:   maxTokens,
 		Temperature:       pinnedTemperature,
-		ResponseSchema:    triageResponseSchema(),
 		RequireParameters: requireParameters(r.o.Cfg),
 	}
+	r.applyStructuredOutput(&req, triageResponseSchema(), toolNameTriage, toolTriageDescription)
 	var tr triageResult
+	toolsMode := r.structuredOutputMode() == model.StructuredOutputTools
+	var history []model.Message
 	for {
+		req.History = history
 		resp, err := r.completeWithRetry(ctx, unitTriage, req, timeout)
 		if err != nil {
 			r.logf("triage call failed (%v); falling back to reviewing all files batched", err)
@@ -154,8 +157,20 @@ func (r *Reviewer) runTriage(ctx context.Context, in *Inputs) (flagged map[strin
 		// Same blank-body rule as reviewFile: an empty body is transient
 		// provider garbage with no claim to invite back, so it draws from
 		// the same run-global bucket before the batched fallback kicks in.
-		if strings.TrimSpace(resp.Text) == "" && r.tryRetry(unitTriage) {
-			r.logf("triage response was empty (%v); retrying from run-global bucket", uerr)
+		// In tools mode any rejection is answerable — the call, the error
+		// and a request to call the tool properly — because a tool call is
+		// exactly what the provider can replay.
+		retryable := strings.TrimSpace(resp.Text) == ""
+		if toolsMode {
+			retryable = true
+		}
+		if retryable && r.tryRetry(unitTriage) {
+			if toolsMode {
+				r.logf("triage call rejected (%v); following up on the tool call", uerr)
+				history = append(history, toolFollowUp(resp, uerr, "violated the triage schema")...)
+			} else {
+				r.logf("triage response was empty (%v); retrying from run-global bucket", uerr)
+			}
 			continue
 		}
 		r.logf("triage output unparsable (%v); falling back to reviewing all files batched", uerr)

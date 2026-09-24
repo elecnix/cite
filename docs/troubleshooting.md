@@ -145,6 +145,32 @@ A red coverage failure is recoverable by design, while an absent check is not:
 the gate job creates the check run first thing and always concludes it, even
 when the review job fails.
 
+### The provider ignores response_format
+
+Some providers accept `response_format: {type: json_schema}` and then answer in
+prose anyway — Ollama Cloud does so silently, with no error at the API layer.
+The symptom is `parse_failure` on every file with no model error, on a provider
+whose models otherwise look capable. Set the action's `structured_output` input
+to `tools`:
+
+```yaml
+      - uses: elecnix/cite@<full-sha>
+        with:
+          structured_output: tools
+          model_api_key: ${{ secrets.OLLAMA_API_KEY }}
+          model_base_url: https://ollama.com/v1
+          model_id: qwen3.5:397b
+```
+
+In `tools` mode Cite offers one function whose parameters are exactly the
+finding schema, forces the model to call it, and reads the answer from the
+call's argument. A rejected or missing call is retried once with the call, the
+validation error and a request to call the tool properly; a model that still
+will not call the tool ends the file as `parse_failure` like any other unusable
+answer. `response_format` stays the default, and both modes share the same
+schema and the same validation pipeline, so the findings are identical either
+way.
+
 ### My tool failures block the merge and I want them not to
 
 By default a `COULD_NOT_EVALUATE` check run concludes `failure`, so a
