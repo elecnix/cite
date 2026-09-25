@@ -214,6 +214,41 @@ func TestReasoningEffortReachesTheReviewerRequest(t *testing.T) {
 	}
 }
 
+func TestRequireParametersOptionReachesRequests(t *testing.T) {
+	// The action's require_parameters input must reach every call, and must OR
+	// with the config key rather than replacing it, so an installation that
+	// sets either one keeps the field.
+	c := &scriptClient{resps: []*model.CompletionResponse{
+		{Text: triageJSON("a.go")},
+		{Text: reviewJSON("a.go", "reviewed", nil)},
+	}}
+	if _, err := runOnce(t, baseInputs(), Options{
+		Cfg: config.Default(), Client: c, RequireParameters: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := range c.reqs {
+		if req := c.requestAt(i); !req.RequireParameters {
+			t.Fatalf("call %d lost require_parameters", i)
+		}
+	}
+
+	// Neither source set: the field stays off for a direct provider that
+	// rejects unknown request arguments.
+	plain := &scriptClient{resps: []*model.CompletionResponse{
+		{Text: triageJSON("a.go")},
+		{Text: reviewJSON("a.go", "reviewed", nil)},
+	}}
+	if _, err := runOnce(t, baseInputs(), Options{Cfg: config.Default(), Client: plain}); err != nil {
+		t.Fatal(err)
+	}
+	for i := range plain.reqs {
+		if req := plain.requestAt(i); req.RequireParameters {
+			t.Fatalf("call %d sent require_parameters with neither source set", i)
+		}
+	}
+}
+
 func TestResponseFormatModeIsUnchanged(t *testing.T) {
 	// The default mode must keep sending the schema the old way and never
 	// offer a tool, so existing installs are byte-for-byte unchanged.
