@@ -100,6 +100,15 @@ inputs:
       a provider that accepts those.
     required: false
     default: 'none'
+  require_parameters:
+    description: >
+      Set to "true" to send the router-only provider.require_parameters field
+      on every call, so a router such as OpenRouter refuses an endpoint that
+      drops a request parameter instead of silently returning a degraded
+      response. Leave it unset for a direct provider: OpenAI and others reject
+      unknown request arguments with a 400. Ollama ignores the field.
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -160,6 +169,7 @@ runs:
         CITE_TOOL_FAILURE_BLOCKS: ${{ inputs.tool_failure_blocks }}
         CITE_STRUCTURED_OUTPUT: ${{ inputs.structured_output }}
         CITE_REASONING_EFFORT: ${{ inputs.reasoning_effort }}
+        CITE_REQUIRE_PARAMETERS: ${{ inputs.require_parameters }}
       run: |
         set -euo pipefail
         # PR_NUMBER is not a default runner variable; pull_request events put

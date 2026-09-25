@@ -49,6 +49,8 @@ func runReview(args []string) error {
 		"how the model returns schema-shaped JSON: response_format (default) or tools")
 	reasoningEffort := fs.String("reasoning-effort", os.Getenv("CITE_REASONING_EFFORT"),
 		"reasoning_effort sent to the provider; empty omits the field")
+	requireParameters := fs.Bool("require-parameters", envBool("CITE_REQUIRE_PARAMETERS"),
+		"send the router-only provider.require_parameters field, so a router refuses endpoints that drop the request parameters")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -87,13 +89,13 @@ func runReview(args []string) error {
 	case *diffPath != "" && *prSpec != "":
 		return fmt.Errorf("use --diff or --pr, not both")
 	case *diffPath != "":
-		return reviewLocal(*diffPath, *cfgPath, mode, *reasoningEffort, sink)
+		return reviewLocal(*diffPath, *cfgPath, mode, *reasoningEffort, *requireParameters, sink)
 	case *prSpec != "":
 		reviewerID, err := resolveReviewerID()
 		if err != nil {
 			return fmt.Errorf("review: %w", err)
 		}
-		return reviewPR(*prSpec, *cfgPath, *dryRun, *disabled, *toolFailureBlocks, mode, *reasoningEffort, sink, *recordOut, reviewerID)
+		return reviewPR(*prSpec, *cfgPath, *dryRun, *disabled, *toolFailureBlocks, mode, *reasoningEffort, *requireParameters, sink, *recordOut, reviewerID)
 	default:
 		fs.Usage()
 		return fmt.Errorf("review: one of --diff or --pr is required")
@@ -111,6 +113,17 @@ func reportWriter(path string) (io.Writer, func(), error) {
 		return nil, nil, fmt.Errorf("creating report file: %w", err)
 	}
 	return f, func() { _ = f.Close() }, nil
+}
+
+// envBool reads a boolean from an environment variable. Only the true
+// spellings are true; an unset or misspelled value stays off rather than
+// failing the run, so a typo cannot turn a setting on by accident.
+func envBool(name string) bool {
+	switch os.Getenv(name) {
+	case "1", "true", "TRUE", "True":
+		return true
+	}
+	return false
 }
 
 // writeRecordOut dumps the run record to recordOut for forensics, best-effort:
@@ -235,7 +248,7 @@ func verifierSuffix(v string) string {
 
 // --- local mode -----------------------------------------------------------
 
-func reviewLocal(diffPath, cfgPath string, structuredOutput model.StructuredOutputMode, reasoningEffort string, sink publisher.Sink) error {
+func reviewLocal(diffPath, cfgPath string, structuredOutput model.StructuredOutputMode, reasoningEffort string, requireParameters bool, sink publisher.Sink) error {
 	raw, err := os.ReadFile(diffPath)
 	if err != nil {
 		return err
@@ -280,13 +293,14 @@ func reviewLocal(diffPath, cfgPath string, structuredOutput model.StructuredOutp
 		return err
 	}
 	r := reviewer.New(reviewer.Options{
-		Cfg:              cfg,
-		Client:           modelClient,
-		Instr:            instr,
-		Verifier:         &gitVerifier{dir: "."},
-		Logger:           logToStderr,
-		StructuredOutput: structuredOutput,
-		ReasoningEffort:  reasoningEffort,
+		Cfg:               cfg,
+		Client:            modelClient,
+		Instr:             instr,
+		Verifier:          &gitVerifier{dir: "."},
+		Logger:            logToStderr,
+		StructuredOutput:  structuredOutput,
+		ReasoningEffort:   reasoningEffort,
+		RequireParameters: requireParameters,
 	})
 	rec, err := r.Run(context.Background(), reviewer.Inputs{
 		Manifest:      manifest,
@@ -343,7 +357,7 @@ type threadFinding struct {
 	Evidence    []model.Evidence `json:"evidence"`
 }
 
-func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, structuredOutput model.StructuredOutputMode, reasoningEffort string, sink publisher.Sink, recordOut, reviewerID string) error {
+func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, structuredOutput model.StructuredOutputMode, reasoningEffort string, requireParameters bool, sink publisher.Sink, recordOut, reviewerID string) error {
 	// Issue #59: the repository's opt-out reaches every conclusion site below
 	// as one gate option. Zero value (unset) keeps the fail-closed default.
 	gateOpts := gate.Options{NeutralToolFailure: !toolFailureBlocks}
@@ -469,13 +483,14 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 	}
 	verifier := &apiVerifier{c: c, owner: owner, repo: repo, ref: pr.BaseRef, tree: baseTree}
 	r := reviewer.New(reviewer.Options{
-		Cfg:              cfg,
-		Client:           modelClient,
-		Instr:            instr,
-		Verifier:         verifier,
-		Logger:           logToStderr,
-		StructuredOutput: structuredOutput,
-		ReasoningEffort:  reasoningEffort,
+		Cfg:               cfg,
+		Client:            modelClient,
+		Instr:             instr,
+		Verifier:          verifier,
+		Logger:            logToStderr,
+		StructuredOutput:  structuredOutput,
+		ReasoningEffort:   reasoningEffort,
+		RequireParameters: requireParameters,
 	})
 
 	rec, err := r.Run(ctx, reviewer.Inputs{

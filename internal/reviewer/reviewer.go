@@ -71,6 +71,12 @@ type Options struct {
 	// keeps a heavy reasoner from spending the whole output budget thinking.
 	// It is wired from the GitHub Action's reasoning_effort input.
 	ReasoningEffort string
+	// RequireParameters adds the router-only provider.require_parameters
+	// field to every call. It is ORed with the config key of the same name,
+	// so the GitHub Action's require_parameters input can carry the setting
+	// without a .github/cite.yml. OpenAI and other providers reject unknown
+	// request arguments, so this stays opt-in.
+	RequireParameters bool
 }
 
 // Inputs are the run inputs. Removed lines come from Diffs (they have no
@@ -811,7 +817,7 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 		User:              r.segB + cacheBreakpoint + payload,
 		MaxOutputTokens:   maxTokens, // bounded by an output-token cap, never an inactivity timeout (§7)
 		Temperature:       pinnedTemperature,
-		RequireParameters: requireParameters(r.o.Cfg),
+		RequireParameters: requireParameters(r.o.Cfg) || r.o.RequireParameters,
 		ReasoningEffort:   r.o.ReasoningEffort,
 	}
 	r.applyStructuredOutput(&req, reviewResponseSchema(), toolNameFindings, toolFindingsDescription)
