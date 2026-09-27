@@ -28,11 +28,17 @@ opened from a long-lived branch cannot keep running a stale copy of the
 reviewer's own configuration.
 
 The default install skips the review job on a fork pull request: the job sets
-`if: github.event.pull_request.head.repo.fork == false`, and GitHub assigns a
-runner only once that condition passes. A fork pull request does not reach the
-model, so the model key goes unspent. Reviewing forks is opt-in: delete the
-guard on a same-repository-only setup, or use the two-workflow structure below
-when the model key must coexist with fork pull requests.
+`if: github.event.pull_request.head.repo.full_name == github.repository`, and
+GitHub assigns a runner only once that condition passes. A fork pull request
+does not reach the model, so the model key goes unspent. Reviewing forks is
+opt-in: delete the guard on a same-repository-only setup, or use the
+two-workflow structure below when the model key must coexist with fork pull
+requests.
+
+Compare the head repository by name rather than testing `head.repo.fork`:
+in a repository that is itself a fork, `head.repo.fork` is true for every pull
+request, so that guard skips the review job even for same-repository branches
+and the reviewer silently never runs.
 
 For fork pull requests, the safe structure is two workflows: see
 [fork-safe.yml](../examples/fork-safe.yml) below.
