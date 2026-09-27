@@ -20,7 +20,7 @@ jobs:
     if: github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     steps:
-      - uses: elecnix/cite@9c2964b0298b7ae110a2d4111fd84d7aa5b5b739  # v0.11.1
+      - uses: elecnix/cite@dd49586e9858a8af211a1535909b95ea5e79b7f5  # v0.11.4
         env:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
 
