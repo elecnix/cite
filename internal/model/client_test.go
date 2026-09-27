@@ -519,134 +519,6 @@ func TestSessionIDSentAsHeaderNeverAsBodyField(t *testing.T) {
 	}
 }
 
-func TestNewClientKeepsConfiguredEndpointWithoutKey(t *testing.T) {
-	// A workflow pointed at another endpoint whose key is missing must not be
-	// redirected to GitHub Models. The ambient GITHUB_TOKEN authenticates
-	// GitHub Models and nothing else, and asking GitHub Models for a model id
-	// it does not serve failed at review time as "malformed provider
-	// response" — a symptom that named neither the endpoint nor the cause.
-	t.Setenv("MODEL_API_KEY", "")
-	t.Setenv("MODEL_BASE_URL", "https://ollama.com/v1")
-	t.Setenv("MODEL_ID", "deepseek-v4.1-flash")
-	t.Setenv("GITHUB_TOKEN", "gh-ambient")
-	c, err := NewOpenAICompatClient()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.BaseURL != "https://ollama.com/v1" {
-		t.Fatalf("endpoint redirected to %q", c.BaseURL)
-	}
-	if c.APIKey != "" {
-		t.Fatalf("ambient token sent to a third-party endpoint: %q", c.APIKey)
-	}
-	if c.Model != "deepseek-v4.1-flash" {
-		t.Fatalf("model: %q", c.Model)
-	}
-}
-
-func TestNewClientLocalEndpointNeedsNoKey(t *testing.T) {
-	// A local server is the case that forbids "no key is an error": it is
-	// legitimate to run with no credential at all, and the configured
-	// endpoint must still be the one used.
-	t.Setenv("MODEL_API_KEY", "")
-	t.Setenv("MODEL_BASE_URL", "http://localhost:11434/v1/")
-	t.Setenv("MODEL_ID", "qwen3")
-	t.Setenv("GITHUB_TOKEN", "")
-	c, err := NewOpenAICompatClient()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.BaseURL != "http://localhost:11434/v1" {
-		t.Fatalf("base URL: %q", c.BaseURL)
-	}
-	if c.APIKey != "" || c.Model != "qwen3" {
-		t.Fatalf("local endpoint changed: %+v", c)
-	}
-}
-
-func TestNewClientZeroSecretKeepsAmbientTokenForGitHubModels(t *testing.T) {
-	// Naming the GitHub Models endpoint explicitly still gets the ambient
-	// token: that is the one host the token authenticates.
-	t.Setenv("MODEL_API_KEY", "")
-	t.Setenv("MODEL_BASE_URL", "https://models.github.ai/inference")
-	t.Setenv("MODEL_ID", "")
-	t.Setenv("GITHUB_TOKEN", "gh-ambient")
-	c, err := NewOpenAICompatClient()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.BaseURL != "https://models.github.ai/inference" || c.APIKey != "gh-ambient" {
-		t.Fatalf("ambient token not used: %+v", c)
-	}
-	if c.Model != "openai/gpt-4o-mini" {
-		t.Fatalf("default model: %q", c.Model)
-	}
-}
-
-func TestCompleteMalformedResponseNamesEndpointAndBody(t *testing.T) {
-	// The bare "malformed provider response" error named nothing. The
-	// endpoint, the status and a body preview are what distinguish a gateway
-	// interstitial from an endpoint serving an unexpected protocol.
-	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte("<html>\n<body>upstream timeout</body>\n</html>"))
-	})
-	ts := newTestServer(srv)
-	defer ts.Close()
-	c := &OpenAICompatClient{BaseURL: ts.URL, APIKey: "k", Model: "m"}
-	_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 8})
-	if !errors.Is(err, ErrDeterministic) {
-		t.Fatalf("want ErrDeterministic, got %v", err)
-	}
-	for _, want := range []string{ts.URL, "HTTP 200", "upstream timeout"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error %q must name %q", err.Error(), want)
-		}
-	}
-	if strings.Contains(err.Error(), "\n") {
-		t.Fatalf("error must stay single-line, got %q", err.Error())
-	}
-}
-
-func TestNewClientGitHubModelsEndpointWithoutAnyToken(t *testing.T) {
-	// Naming the GitHub Models endpoint explicitly is still a configured
-	// endpoint. Building the client for it, rather than replacing it with the
-	// zero-secret inference error, means the operator faces the endpoint they
-	// asked for and its 401 instead of "no model key found" for an endpoint
-	// they did configure.
-	t.Setenv("MODEL_API_KEY", "")
-	t.Setenv("MODEL_BASE_URL", "https://models.github.ai/inference")
-	t.Setenv("MODEL_ID", "")
-	t.Setenv("GITHUB_TOKEN", "")
-	c, err := NewOpenAICompatClient()
-	if err != nil {
-		t.Fatalf("an explicitly configured endpoint must not fail construction: %v", err)
-	}
-	if c.BaseURL != githubModelsBase || c.APIKey != "" {
-		t.Fatalf("configured endpoint discarded: %+v", c)
-	}
-	if c.Model != "openai/gpt-4o-mini" {
-		t.Fatalf("default model for GitHub Models: %q", c.Model)
-	}
-}
-
-func TestAuthHintNamesTheFixThatApplies(t *testing.T) {
-	// A 401 has two causes that need opposite fixes, and a message that names
-	// the wrong one sends the operator somewhere useless.
-	if got := authHint(&OpenAICompatClient{BaseURL: "https://ollama.com/v1", APIKey: ""}); !strings.Contains(got, "Dependabot secret store") {
-		t.Fatalf("no-key client must be told where the key has to live, got %q", got)
-	}
-	if got := authHint(&OpenAICompatClient{BaseURL: githubModelsBase, APIKey: "gh-ambient"}); !strings.Contains(got, "models: read") {
-		t.Fatalf("ambient-token client must be told about the permission, got %q", got)
-	}
-	if got := authHint(&OpenAICompatClient{BaseURL: githubModelsBase, APIKey: ""}); !strings.Contains(got, "Dependabot secret store") {
-		t.Fatalf("an empty key is the missing-secret case on any endpoint, got %q", got)
-	}
-	if got := authHint(&OpenAICompatClient{BaseURL: "https://ollama.com/v1", APIKey: "k"}); got != "" {
-		t.Fatalf("a keyed third-party client has no configuration advice to give, got %q", got)
-	}
-}
-
 func TestCompleteAuthErrorHintsAtMissingKey(t *testing.T) {
 	// A 401 with no key configured is the Dependabot case: the run cannot
 	// read Actions secrets, so the hint has to say where the key has to live.
@@ -667,31 +539,88 @@ func TestCompleteAuthErrorHintsAtMissingKey(t *testing.T) {
 	}
 }
 
-func TestBodySnippetRedactsCredentials(t *testing.T) {
-	// The package doc is explicit that the key is never in a log or an error
-	// string (§12, I4). A gateway that reflects the request's Authorization
-	// header into its own page is the case that makes truncation alone
-	// insufficient, so the preview redacts rather than merely caps.
-	for _, in := range []string{
-		`{"error":{"message":"bad key sk-abc123XYZ"}}`,
-		`{"error":{"message":"Authorization: Bearer sk-abc123XYZ"}}`,
-		`gateway: api_key=ghp_abcdefgh12345678 rejected`,
-	} {
-		got := bodySnippet([]byte(in))
-		if strings.ContainsAny(got, "\n\r") {
-			t.Fatalf("snippet must stay single-line: %q", got)
-		}
-		if !strings.Contains(got, "[redacted]") {
-			t.Fatalf("credential not redacted in %q", got)
-		}
-		for _, secret := range []string{"sk-abc123XYZ", "ghp_abcdefgh12345678"} {
-			if strings.Contains(got, secret) {
-				t.Fatalf("secret %q survived redaction: %q", secret, got)
+func TestNewClientConfiguredEndpointIsNeverRedirected(t *testing.T) {
+	// Every row names an endpoint the operator configured, and none of them may
+	// be replaced by the zero-secret inference. Before that rule existed, a
+	// configured endpoint whose key was missing sent the ambient token to
+	// GitHub Models while still carrying the model id configured for the
+	// intended host, and the failure surfaced as an opaque provider error
+	// rather than as the misconfiguration it was.
+	cases := []struct {
+		name, base, id, token     string
+		wantURL, wantKey, wantMdl string
+	}{
+		{"third-party endpoint keeps its model id and an empty key", "https://ollama.com/v1", "deepseek-v4.1-flash", "gh-ambient", "https://ollama.com/v1", "", "deepseek-v4.1-flash"},
+		{"a local endpoint needs no key at all", "http://localhost:11434/v1/", "qwen3", "", "http://localhost:11434/v1", "", "qwen3"},
+		{"GitHub Models named explicitly still gets the ambient token", githubModelsBase, "", "gh-ambient", githubModelsBase, "gh-ambient", "openai/gpt-4o-mini"},
+		{"a trailing slash still names GitHub Models", githubModelsBase + "/", "", "gh-ambient", githubModelsBase, "gh-ambient", "openai/gpt-4o-mini"},
+		{"GitHub Models named explicitly without any token", githubModelsBase, "", "", githubModelsBase, "", "openai/gpt-4o-mini"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, k := range []string{"MODEL_API_KEY", "MODEL_BASE_URL", "MODEL_ID", "GITHUB_TOKEN"} {
+				t.Setenv(k, "")
 			}
+			t.Setenv("MODEL_BASE_URL", tc.base)
+			t.Setenv("MODEL_ID", tc.id)
+			t.Setenv("GITHUB_TOKEN", tc.token)
+			c, err := NewOpenAICompatClient()
+			if err != nil {
+				t.Fatalf("a configured endpoint must not fail construction: %v", err)
+			}
+			if c.BaseURL != tc.wantURL || c.APIKey != tc.wantKey || c.Model != tc.wantMdl {
+				t.Fatalf("got %+v, want url=%q key=%q model=%q", c, tc.wantURL, tc.wantKey, tc.wantMdl)
+			}
+		})
+	}
+}
+
+func TestAuthHintNamesTheFixThatApplies(t *testing.T) {
+	// A 401 has two causes needing opposite fixes, and a message naming the
+	// wrong one sends the operator somewhere useless. The hint follows the
+	// credential that was sent, not the endpoint that was chosen.
+	if got := authHint(&OpenAICompatClient{BaseURL: "https://ollama.com/v1"}); !strings.Contains(got, "Dependabot secret store") {
+		t.Fatalf("a client with no key must be told where the key has to live, got %q", got)
+	}
+	if got := authHint(&OpenAICompatClient{BaseURL: githubModelsBase, APIKey: "gh-ambient", ambient: true}); !strings.Contains(got, "models: read") {
+		t.Fatalf("an ambient-token client must be told about the permission, got %q", got)
+	}
+	if got := authHint(&OpenAICompatClient{BaseURL: githubModelsBase, APIKey: "sk-configured"}); got != "" {
+		t.Fatalf("a configured key rejected by GitHub Models is a bad key, not a missing permission, got %q", got)
+	}
+	if got := authHint(&OpenAICompatClient{BaseURL: "https://ollama.com/v1", APIKey: "k"}); got != "" {
+		t.Fatalf("a keyed third-party client has no configuration advice to give, got %q", got)
+	}
+}
+
+func TestCompleteMalformedResponseNamesEndpointNotBody(t *testing.T) {
+	// The endpoint, the status and the shape are what make a gateway
+	// interstitial distinguishable from an endpoint serving an unexpected
+	// protocol. The body is never echoed: the package doc is absolute that the
+	// key is never in an error string (§12, I4), and provider text is where a
+	// reflected header would appear.
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("<html>\n<body>upstream timeout for sk-abc123XYZ</body>\n</html>"))
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, APIKey: "k", Model: "m"}
+	_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 8})
+	if !errors.Is(err, ErrDeterministic) {
+		t.Fatalf("want ErrDeterministic, got %v", err)
+	}
+	for _, want := range []string{ts.URL, "HTTP 200", "an HTML page", "CITE_DEBUG=1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q must name %q", err.Error(), want)
 		}
 	}
-	// Text without credentials survives intact, so the preview stays useful.
-	if got := bodySnippet([]byte("<html>\n<body>upstream timeout</body>\n</html>")); got != "<html> <body>upstream timeout</body> </html>" {
-		t.Fatalf("plain body mangled: %q", got)
+	for _, forbidden := range []string{"sk-abc123XYZ", "upstream timeout"} {
+		if strings.Contains(err.Error(), forbidden) {
+			t.Fatalf("the error must not echo provider text (%q): %q", forbidden, err.Error())
+		}
+	}
+	if strings.Contains(err.Error(), "\n") {
+		t.Fatalf("error must stay single-line, got %q", err.Error())
 	}
 }

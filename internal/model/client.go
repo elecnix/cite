@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -332,6 +331,11 @@ type OpenAICompatClient struct {
 	ExtraHeaders map[string]string
 	Model        string
 	HTTP         *http.Client
+	// ambient marks a client whose key is the job's own GITHUB_TOKEN rather
+	// than a configured MODEL_API_KEY. It changes what a 401 means: the
+	// permission is missing, not the secret, so the hint has to follow which
+	// credential was actually sent rather than which endpoint was chosen.
+	ambient bool
 }
 
 // githubModelsBase is the one endpoint the ambient GITHUB_TOKEN authenticates.
@@ -372,9 +376,11 @@ func NewOpenAICompatClient() (*OpenAICompatClient, error) {
 	if base := strings.TrimSuffix(os.Getenv("MODEL_BASE_URL"), "/"); base != "" {
 		key := os.Getenv("MODEL_API_KEY")
 		model := os.Getenv("MODEL_ID")
+		ambient := false
 		if base == githubModelsBase {
 			if key == "" {
 				key = os.Getenv("GITHUB_TOKEN")
+				ambient = key != ""
 			}
 			if model == "" {
 				model = "openai/gpt-4o-mini"
@@ -382,7 +388,7 @@ func NewOpenAICompatClient() (*OpenAICompatClient, error) {
 		} else if model == "" {
 			model = "gpt-5-mini"
 		}
-		return &OpenAICompatClient{BaseURL: base, APIKey: key, Model: model}, nil
+		return &OpenAICompatClient{BaseURL: base, APIKey: key, Model: model, ambient: ambient}, nil
 	}
 	// Zero-secret first run: nothing is configured, so GitHub's models
 	// endpoint is inferred from the ambient token.
@@ -391,7 +397,7 @@ func NewOpenAICompatClient() (*OpenAICompatClient, error) {
 		if model == "" {
 			model = "openai/gpt-4o-mini"
 		}
-		return &OpenAICompatClient{BaseURL: githubModelsBase, APIKey: k, Model: model}, nil
+		return &OpenAICompatClient{BaseURL: githubModelsBase, APIKey: k, Model: model, ambient: true}, nil
 	}
 	return nil, fmt.Errorf("no model key found: set MODEL_API_KEY, or grant the workflow `models: read` so the ambient GITHUB_TOKEN can be used with GitHub Models (the provider is inferred from which key is present)")
 }
@@ -411,43 +417,32 @@ func authHint(c *OpenAICompatClient) string {
 	switch {
 	case c.APIKey == "":
 		return "MODEL_API_KEY is empty; a run triggered by Dependabot cannot read Actions secrets, so the key must also exist in the Dependabot secret store"
-	case c.BaseURL == githubModelsBase:
+	case c.ambient:
 		return "the ambient GITHUB_TOKEN was rejected by GitHub Models; the zero-secret first run needs `models: read` on the workflow"
 	}
 	return ""
 }
 
-// A credential, as a provider or gateway echoes one back: a scheme-prefixed
-// value, a named field, or a token with a recognisable vendor prefix.
-var (
-	bearerCredential = regexp.MustCompile(`(?i)bearer\s+[\w.~+/=:-]{8,}`)
-	namedCredential  = regexp.MustCompile(`(?i)(api[_-]?key|authorization|access[_-]?token|client[_-]?secret|token|secret)("?\s*[:=]\s*"?)[\w.~+/=:-]{8,}`)
-	prefixedToken    = regexp.MustCompile(`\b(?:sk|pk|ghp|gho|ghu|ghs|ghr|github_pat|xox[baprs])[-_][\w-]{8,}`)
-)
-
-// redactCredentials removes anything shaped like a credential from text that is
-// about to be rendered into an error string. A gateway that reflects the
-// request's Authorization header into its own response page is exactly the case
-// the package doc forbids: the key is never in a log or an error string (§12,
-// I4), so the preview of a provider body has to be redacted, not merely
-// truncated.
-func redactCredentials(s string) string {
-	s = bearerCredential.ReplaceAllString(s, "Bearer [redacted]")
-	s = prefixedToken.ReplaceAllString(s, "[redacted]")
-	return namedCredential.ReplaceAllString(s, "$1$2[redacted]")
-}
-
-// bodySnippet renders a bounded, single-line preview of a response body for an
-// error message: whitespace is collapsed so a multi-line provider page cannot
-// break the log format, credentials are redacted, and the result is capped.
-// Headers are never included, so nothing else can leak through it.
-func bodySnippet(raw []byte) string {
-	s := redactCredentials(strings.Join(strings.Fields(string(raw)), " "))
-	const limit = 200
-	if len(s) > limit {
-		s = s[:limit] + "…"
+// bodyShape describes a response body that failed to decode without quoting
+// any of it. The package doc is absolute that the key is never in an error
+// string (§12, I4), and a gateway that reflects the request's Authorization
+// header into its own page is exactly how it would get there, so no amount of
+// pattern-matching on provider text is a guarantee. One leading character is
+// not a credential, and it still separates an HTML interstitial from a
+// truncated JSON document. The body itself stays recoverable through the
+// existing CITE_DEBUG capture.
+func bodyShape(raw []byte) string {
+	trimmed := bytes.TrimLeft(raw, " \t\r\n")
+	switch {
+	case len(trimmed) == 0:
+		return "an empty body"
+	case trimmed[0] == '<':
+		return "an HTML page rather than an OpenAI completion"
+	case trimmed[0] == '{' || trimmed[0] == '[':
+		return "a JSON document that does not decode as an OpenAI completion"
+	default:
+		return fmt.Sprintf("a non-JSON body starting with %q", string(trimmed[0]))
 	}
-	return s
 }
 
 // typedError maps provider errors to typed codes before rendering (I4).
@@ -655,11 +650,12 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		_ = os.WriteFile("/tmp/cite-last-response.json", raw, 0o600)
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		// Name the endpoint and the shape of the body. "malformed provider
-		// response" alone left the operator nothing to act on, and every way
-		// to reach it — a redirected endpoint, a gateway interstitial, a
-		// model id the host does not serve — reads identically without them.
-		return nil, fmt.Errorf("%w: malformed provider response from %s (HTTP %d, %d bytes: %s)", ErrDeterministic, c.BaseURL, resp.StatusCode, len(raw), bodySnippet(raw))
+		// Name the endpoint, the status and the shape — never the body.
+		// "malformed provider response" alone left the operator nothing to act
+		// on, and every way to reach it (a redirected endpoint, a gateway
+		// interstitial, a model id the host does not serve) reads identically
+		// without them.
+		return nil, fmt.Errorf("%w: malformed provider response from %s (HTTP %d, %d bytes, %s; set CITE_DEBUG=1 to capture the body)", ErrDeterministic, c.BaseURL, resp.StatusCode, len(raw), bodyShape(raw))
 	}
 	if len(out.Choices) == 0 {
 		return nil, fmt.Errorf("%w: no choices in response", ErrDeterministic)
