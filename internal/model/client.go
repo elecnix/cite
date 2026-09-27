@@ -416,6 +416,10 @@ func (c *OpenAICompatClient) DescribeProvider() string { return c.BaseURL }
 // has no configuration advice worth printing.
 func authHint(c *OpenAICompatClient) string {
 	switch {
+	case c.APIKey == "" && c.BaseURL == githubModelsBase:
+		// Pointed at GitHub Models with nothing to authenticate with: either
+		// permission unlocks the ambient token, or a key replaces it.
+		return "no credential reached GitHub Models: grant the workflow `models: read` so the ambient GITHUB_TOKEN can be used, or set MODEL_API_KEY"
 	case c.APIKey == "":
 		return "MODEL_API_KEY is empty; a run triggered by Dependabot cannot read Actions secrets, so the key must also exist in the Dependabot secret store"
 	case c.ambient:

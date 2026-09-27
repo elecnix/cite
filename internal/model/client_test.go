@@ -585,6 +585,9 @@ func TestAuthHintNamesTheFixThatApplies(t *testing.T) {
 	if got := authHint(&OpenAICompatClient{BaseURL: githubModelsBase, APIKey: "gh-ambient", ambient: true}); !strings.Contains(got, "models: read") {
 		t.Fatalf("an ambient-token client must be told about the permission, got %q", got)
 	}
+	if got := authHint(&OpenAICompatClient{BaseURL: githubModelsBase}); !strings.Contains(got, "models: read") || strings.Contains(got, "Dependabot") {
+		t.Fatalf("GitHub Models with no credential needs the permission or a key, not Dependabot advice, got %q", got)
+	}
 	if got := authHint(&OpenAICompatClient{BaseURL: githubModelsBase, APIKey: "sk-configured"}); got != "" {
 		t.Fatalf("a configured key rejected by GitHub Models is a bad key, not a missing permission, got %q", got)
 	}
