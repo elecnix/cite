@@ -2,7 +2,11 @@
 # exists because dogfooding on this repository showed a need, not as an
 # example.
 
-model: deepseek/deepseek-v4-flash-0731
+# No `model:` here. Provider and model move together (Ollama Cloud cannot run
+# the OpenRouter model id, and the reverse is also true), so the CITE_PROVIDER
+# switch in .github/workflows/review.yml owns both: it sets the action's
+# model_id input, which reaches Cite as MODEL_ID, which is the id the client
+# sends. A static model here would be wrong on one leg of every switch.
 
 # Scope: THIS REPOSITORY'S CHOICE ONLY, not a recommendation to consumers.
 # A consumer reading this file should not infer that unsetting the gate is

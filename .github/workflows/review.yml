@@ -71,9 +71,15 @@ jobs:
         uses: elecnix/cite@dd49586e9858a8af211a1535909b95ea5e79b7f5  # v0.11.4
         with:
           tool_failure_blocks: false
-          model_id: deepseek/deepseek-v4-flash-0731
-          model_base_url: https://openrouter.ai/api/v1
-          model_api_key: ${{ secrets.MODEL_API_KEY }}
+          # Ollama Cloud is the default provider; set the CITE_PROVIDER
+          # repository variable to "openrouter" to switch this repository
+          # back. Provider and model move together, which is why
+          # .github/cite.yml no longer pins a model.
+          structured_output: ${{ vars.CITE_PROVIDER == 'openrouter' && 'response_format' || 'tools' }}
+          require_parameters: ${{ vars.CITE_PROVIDER == 'openrouter' }}
+          model_api_key: ${{ vars.CITE_PROVIDER == 'openrouter' && secrets.MODEL_API_KEY || secrets.OLLAMA_API_KEY }}
+          model_base_url: ${{ vars.CITE_PROVIDER == 'openrouter' && 'https://openrouter.ai/api/v1' || 'https://ollama.com/v1' }}
+          model_id: ${{ vars.CITE_PROVIDER == 'openrouter' && 'deepseek/deepseek-v4-flash-0731' || 'deepseek-v4.1-flash' }}
           # Scope: this repository's own choice, not a recommendation to
           # consumers (our reviewer is also the product under review, so the
           # config here is read from the base ref of every PR we open).
@@ -145,9 +151,16 @@ jobs:
 
       - name: Review this pull request with the head build of Cite
         env:
-          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
-          MODEL_BASE_URL: https://openrouter.ai/api/v1
-          MODEL_ID: deepseek/deepseek-v4-flash-0731
+          MODEL_API_KEY: ${{ vars.CITE_PROVIDER == 'openrouter' && secrets.MODEL_API_KEY || secrets.OLLAMA_API_KEY }}
+          MODEL_BASE_URL: ${{ vars.CITE_PROVIDER == 'openrouter' && 'https://openrouter.ai/api/v1' || 'https://ollama.com/v1' }}
+          MODEL_ID: ${{ vars.CITE_PROVIDER == 'openrouter' && 'deepseek/deepseek-v4-flash-0731' || 'deepseek-v4.1-flash' }}
+          # The action leg gets these two from its own inputs; this leg drives
+          # the CLI directly, so it has to say the same thing: Ollama Cloud
+          # ignores response_format and reads the schema from a forced tool
+          # call, while require_parameters is a router-only field that a
+          # direct provider rejects.
+          CITE_STRUCTURED_OUTPUT: ${{ vars.CITE_PROVIDER == 'openrouter' && 'response_format' || 'tools' }}
+          CITE_REQUIRE_PARAMETERS: ${{ vars.CITE_PROVIDER == 'openrouter' }}
           GITHUB_TOKEN: ${{ github.token }}
           CITE_REVIEWER_ID: cite-head
           CITE_RECORD_OUT: ${{ runner.temp }}/cite-head-run-record.json
