@@ -15,19 +15,34 @@ verified against the file before anyone sees it.
 
 ```yaml
 name: review
-on: pull_request
+on: pull_request_target
 permissions:
   contents: read
   pull-requests: write
   checks: write
 jobs:
   review:
+    # Forks are not reviewed by default: the job is skipped for them, so a
+    # fork pull request cannot spend the model key. Delete this line to opt
+    # in — and read docs/security.md first: the two-workflow split there is
+    # the pattern for reviewing fork pull requests.
+    if: github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     steps:
       - uses: elecnix/cite@9c2964b0298b7ae110a2d4111fd84d7aa5b5b739  # v0.11.1
         env:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
 ```
+
+GitHub takes the workflow definition from the default branch when a workflow
+listens for `pull_request_target`, so that trigger, rather than `pull_request`,
+keeps a pull request from running a stale copy of this file. Neither trigger
+makes the job check anything out: the job holds the key and calls the GitHub
+API, and that is what keeps pull-request-head code away from the trusted
+context ([docs/security.md](docs/security.md), I1). The action reads the pull
+request number from the event payload, so this trigger needs the next release
+(v0.11.4 or later). Earlier pins resolve the number from `refs/pull/N/merge`
+and skip the review silently under `pull_request_target`.
 
 Configuration is optional, and the workflow above is the whole of it. Cite
 reads the provider from whichever key is present, so a `with:` block can be

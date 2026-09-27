@@ -37,7 +37,14 @@
 name: review
 
 on:
-  pull_request:
+  # pull_request_target, not pull_request: the workflow definition is always
+  # taken from the default branch, so a long-lived branch cannot keep running
+  # a stale copy of this file (the reviewer that reviews the reviewer's own
+  # configuration). The trusted contexts stay safe for the reason in
+  # docs/security.md I1 — nothing from the pull request head is executed in
+  # them — and the fork gates below keep head code out of this repository's
+  # runs entirely.
+  pull_request_target:
 
 permissions:
   contents: read
@@ -144,6 +151,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           CITE_REVIEWER_ID: cite-head
           CITE_RECORD_OUT: ${{ runner.temp }}/cite-head-run-record.json
+          # From the event payload: this step runs under pull_request_target,
+          # where GITHUB_REF is the base branch and carries no pull number.
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           chmod +x ./cite-head
@@ -151,8 +161,8 @@ jobs:
           # (per-call timings, token usage, per-file outcomes) even when the
           # run fails. pipefail preserves cite's exit code through the tee.
           CITE_LOG="$RUNNER_TEMP/cite-head-output.log"
-          # PR_NUMBER is not a default runner variable; pull_request events
-          # put the number in the ref as refs/pull/N/merge.
+          # PR_NUMBER arrives from the event payload above; the ref parse
+          # stays as a fallback for the pull_request trigger.
           PR_NUM="${PR_NUMBER:-}"
           if [ -z "$PR_NUM" ] && [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
             PR_NUM="${GITHUB_REF#refs/pull/}"
