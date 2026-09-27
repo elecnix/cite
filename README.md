@@ -26,7 +26,9 @@ jobs:
     # fork pull request cannot spend the model key. Delete this line to opt
     # in — and read docs/security.md first: the two-workflow split there is
     # the pattern for reviewing fork pull requests.
-    if: github.event.pull_request.head.repo.fork == false
+    # Comparing the head repository by name, rather than testing
+    # head.repo.fork, also holds when this repository is itself a fork.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: elecnix/cite@dd49586e9858a8af211a1535909b95ea5e79b7f5  # v0.11.4

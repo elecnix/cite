@@ -16,7 +16,7 @@ permissions:
 jobs:
   review:
     # Forks are not reviewed by default; delete this line to opt in.
-    if: github.event.pull_request.head.repo.fork == false
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: elecnix/cite@dd49586e9858a8af211a1535909b95ea5e79b7f5  # v0.11.4
