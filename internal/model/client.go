@@ -374,14 +374,15 @@ func NewOpenAICompatClient() (*OpenAICompatClient, error) {
 	// surfaced as an opaque provider error rather than as the misconfiguration
 	// it was.
 	if base := strings.TrimSuffix(os.Getenv("MODEL_BASE_URL"), "/"); base != "" {
-		key := os.Getenv("MODEL_API_KEY")
+		// The branch above returns whenever MODEL_API_KEY is set, so a key read
+		// here is always empty: what is left to decide is which credential this
+		// endpoint takes, and only GitHub Models takes the ambient token.
 		model := os.Getenv("MODEL_ID")
+		key := ""
 		ambient := false
 		if base == githubModelsBase {
-			if key == "" {
-				key = os.Getenv("GITHUB_TOKEN")
-				ambient = key != ""
-			}
+			key = os.Getenv("GITHUB_TOKEN")
+			ambient = key != ""
 			if model == "" {
 				model = "openai/gpt-4o-mini"
 			}
@@ -427,9 +428,8 @@ func authHint(c *OpenAICompatClient) string {
 // any of it. The package doc is absolute that the key is never in an error
 // string (§12, I4), and a gateway that reflects the request's Authorization
 // header into its own page is exactly how it would get there, so no amount of
-// pattern-matching on provider text is a guarantee. One leading character is
-// not a credential, and it still separates an HTML interstitial from a
-// truncated JSON document. The body itself stays recoverable through the
+// pattern-matching on provider text — and not even one character of it — is a
+// guarantee worth relying on. The body itself stays recoverable through the
 // existing CITE_DEBUG capture.
 func bodyShape(raw []byte) string {
 	trimmed := bytes.TrimLeft(raw, " \t\r\n")
@@ -441,7 +441,7 @@ func bodyShape(raw []byte) string {
 	case trimmed[0] == '{' || trimmed[0] == '[':
 		return "a JSON document that does not decode as an OpenAI completion"
 	default:
-		return fmt.Sprintf("a non-JSON body starting with %q", string(trimmed[0]))
+		return "a body that is not JSON"
 	}
 }
 

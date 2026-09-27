@@ -624,3 +624,28 @@ func TestCompleteMalformedResponseNamesEndpointNotBody(t *testing.T) {
 		t.Fatalf("error must stay single-line, got %q", err.Error())
 	}
 }
+
+func TestBodyShapeQuotesNothing(t *testing.T) {
+	// The error may describe a body's shape but never quote it: one character
+	// of provider text is still provider text, and a gateway that reflects the
+	// request's Authorization header is why the rule is absolute (§12, I4).
+	cases := []struct{ body, want string }{
+		{"", "an empty body"},
+		{"   \n\t", "an empty body"},
+		{"<html>hello</html>", "an HTML page"},
+		{`{"choices":`, "a JSON document"},
+		{`[{"error":"sk-abc123XYZ"}]`, "a JSON document"},
+		{"sk-abc123XYZ", "not JSON"},
+	}
+	for _, tc := range cases {
+		got := bodyShape([]byte(tc.body))
+		if !strings.Contains(got, tc.want) {
+			t.Fatalf("bodyShape(%q) = %q, want it to mention %q", tc.body, got, tc.want)
+		}
+		for _, echoed := range []string{"sk-abc123XYZ", "hello", "error"} {
+			if strings.Contains(got, echoed) {
+				t.Fatalf("bodyShape(%q) echoed body text %q: %q", tc.body, echoed, got)
+			}
+		}
+	}
+}
