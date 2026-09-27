@@ -356,13 +356,28 @@ func NewOpenAICompatClient() (*OpenAICompatClient, error) {
 		}
 		return &OpenAICompatClient{BaseURL: strings.TrimSuffix(base, "/"), APIKey: k, Model: model}, nil
 	}
+	// A configured endpoint is never redirected to GitHub Models. The ambient
+	// GITHUB_TOKEN authenticates GitHub Models and nothing else: sending it to
+	// another host while requesting a model that host does not serve fails at
+	// review time as an opaque provider error, which reads as a broken
+	// reviewer rather than as the misconfiguration it is. Keeping the
+	// configured endpoint with whatever credentials are present — none at all,
+	// for a local server — lets the provider answer for itself.
+	const githubModelsBase = "https://models.github.ai/inference"
+	if base := strings.TrimSuffix(os.Getenv("MODEL_BASE_URL"), "/"); base != "" && base != githubModelsBase {
+		model := os.Getenv("MODEL_ID")
+		if model == "" {
+			model = "gpt-5-mini"
+		}
+		return &OpenAICompatClient{BaseURL: base, APIKey: os.Getenv("MODEL_API_KEY"), Model: model}, nil
+	}
 	// Zero-secret first run: GitHub's models endpoint on the ambient token.
 	if k := os.Getenv("GITHUB_TOKEN"); k != "" {
 		model := os.Getenv("MODEL_ID")
 		if model == "" {
 			model = "openai/gpt-4o-mini"
 		}
-		return &OpenAICompatClient{BaseURL: "https://models.github.ai/inference", APIKey: k, Model: model}, nil
+		return &OpenAICompatClient{BaseURL: githubModelsBase, APIKey: k, Model: model}, nil
 	}
 	return nil, fmt.Errorf("no model key found: set MODEL_API_KEY, or grant the workflow `models: read` so the ambient GITHUB_TOKEN can be used with GitHub Models (the provider is inferred from which key is present)")
 }
@@ -372,13 +387,36 @@ func (c *OpenAICompatClient) ModelID() string { return c.Model }
 // DescribeProvider names the endpoint this client targets (ProviderDescriber).
 func (c *OpenAICompatClient) DescribeProvider() string { return c.BaseURL }
 
+// bodySnippet renders a bounded, single-line preview of a response body for an
+// error message: whitespace is collapsed so a multi-line provider page cannot
+// break the log format, and the result is capped. Headers are never included,
+// so credentials cannot leak through it.
+func bodySnippet(raw []byte) string {
+	s := strings.Join(strings.Fields(string(raw)), " ")
+	const limit = 200
+	if len(s) > limit {
+		s = s[:limit] + "…"
+	}
+	return s
+}
+
 // typedError maps provider errors to typed codes before rendering (I4).
 type typedError struct {
 	Code string
 	Body string // sanitised: never verbatim provider text with headers
+	// Hint carries Cite's own guidance about the configuration that produced
+	// the error. It is separate from Body because Body mirrors untrusted
+	// provider text and is bounded on that account (I4), while a hint is
+	// written here and can be as specific as the fix requires.
+	Hint string
 }
 
-func (e *typedError) Error() string { return e.Code + ": " + e.Body }
+func (e *typedError) Error() string {
+	if e.Hint == "" {
+		return e.Code + ": " + e.Body
+	}
+	return e.Code + ": " + e.Body + " — " + e.Hint
+}
 
 // Complete performs one bounded call. The deadline comes from ctx, set at the
 // call site. The output-token cap is the bound, never an inactivity timeout.
@@ -524,15 +562,19 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 				msg += ": " + m
 			}
 		}
+		var hint string
 		switch {
 		case resp.StatusCode == http.StatusTooManyRequests:
 			code = "rate_limited"
 		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 			code = "auth"
+			if os.Getenv("MODEL_API_KEY") == "" {
+				hint = "MODEL_API_KEY is empty; a run triggered by Dependabot cannot read Actions secrets, so the key must also exist in the Dependabot secret store"
+			}
 		case resp.StatusCode >= 500:
 			code = "provider_unavailable"
 		}
-		return nil, &typedError{Code: code, Body: msg}
+		return nil, &typedError{Code: code, Body: msg, Hint: hint}
 	}
 	var out struct {
 		// Provider stays raw: it is a diagnostic label, and a field of
@@ -565,7 +607,11 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		_ = os.WriteFile("/tmp/cite-last-response.json", raw, 0o600)
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("%w: malformed provider response", ErrDeterministic)
+		// Name the endpoint and the shape of the body. "malformed provider
+		// response" alone left the operator nothing to act on, and every way
+		// to reach it — a redirected endpoint, a gateway interstitial, a
+		// model id the host does not serve — reads identically without them.
+		return nil, fmt.Errorf("%w: malformed provider response from %s (HTTP %d, %d bytes: %s)", ErrDeterministic, c.BaseURL, resp.StatusCode, len(raw), bodySnippet(raw))
 	}
 	if len(out.Choices) == 0 {
 		return nil, fmt.Errorf("%w: no choices in response", ErrDeterministic)

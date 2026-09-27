@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -516,5 +516,114 @@ func TestSessionIDSentAsHeaderNeverAsBodyField(t *testing.T) {
 	}
 	if gotHeader != "" {
 		t.Fatalf("x-session-id = %q without a session, want none", gotHeader)
+	}
+}
+
+func TestNewClientKeepsConfiguredEndpointWithoutKey(t *testing.T) {
+	// A workflow pointed at another endpoint whose key is missing must not be
+	// redirected to GitHub Models. The ambient GITHUB_TOKEN authenticates
+	// GitHub Models and nothing else, and asking GitHub Models for a model id
+	// it does not serve failed at review time as "malformed provider
+	// response" — a symptom that named neither the endpoint nor the cause.
+	t.Setenv("MODEL_API_KEY", "")
+	t.Setenv("MODEL_BASE_URL", "https://ollama.com/v1")
+	t.Setenv("MODEL_ID", "deepseek-v4.1-flash")
+	t.Setenv("GITHUB_TOKEN", "gh-ambient")
+	c, err := NewOpenAICompatClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BaseURL != "https://ollama.com/v1" {
+		t.Fatalf("endpoint redirected to %q", c.BaseURL)
+	}
+	if c.APIKey != "" {
+		t.Fatalf("ambient token sent to a third-party endpoint: %q", c.APIKey)
+	}
+	if c.Model != "deepseek-v4.1-flash" {
+		t.Fatalf("model: %q", c.Model)
+	}
+}
+
+func TestNewClientLocalEndpointNeedsNoKey(t *testing.T) {
+	// A local server is the case that forbids "no key is an error": it is
+	// legitimate to run with no credential at all, and the configured
+	// endpoint must still be the one used.
+	t.Setenv("MODEL_API_KEY", "")
+	t.Setenv("MODEL_BASE_URL", "http://localhost:11434/v1/")
+	t.Setenv("MODEL_ID", "qwen3")
+	t.Setenv("GITHUB_TOKEN", "")
+	c, err := NewOpenAICompatClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BaseURL != "http://localhost:11434/v1" {
+		t.Fatalf("base URL: %q", c.BaseURL)
+	}
+	if c.APIKey != "" || c.Model != "qwen3" {
+		t.Fatalf("local endpoint changed: %+v", c)
+	}
+}
+
+func TestNewClientZeroSecretKeepsAmbientTokenForGitHubModels(t *testing.T) {
+	// Naming the GitHub Models endpoint explicitly still gets the ambient
+	// token: that is the one host the token authenticates.
+	t.Setenv("MODEL_API_KEY", "")
+	t.Setenv("MODEL_BASE_URL", "https://models.github.ai/inference")
+	t.Setenv("MODEL_ID", "")
+	t.Setenv("GITHUB_TOKEN", "gh-ambient")
+	c, err := NewOpenAICompatClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BaseURL != "https://models.github.ai/inference" || c.APIKey != "gh-ambient" {
+		t.Fatalf("ambient token not used: %+v", c)
+	}
+	if c.Model != "openai/gpt-4o-mini" {
+		t.Fatalf("default model: %q", c.Model)
+	}
+}
+
+func TestCompleteMalformedResponseNamesEndpointAndBody(t *testing.T) {
+	// The bare "malformed provider response" error named nothing. The
+	// endpoint, the status and a body preview are what distinguish a gateway
+	// interstitial from an endpoint serving an unexpected protocol.
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("<html>\n<body>upstream timeout</body>\n</html>"))
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, APIKey: "k", Model: "m"}
+	_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 8})
+	if !errors.Is(err, ErrDeterministic) {
+		t.Fatalf("want ErrDeterministic, got %v", err)
+	}
+	for _, want := range []string{ts.URL, "HTTP 200", "upstream timeout"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q must name %q", err.Error(), want)
+		}
+	}
+	if strings.Contains(err.Error(), "\n") {
+		t.Fatalf("error must stay single-line, got %q", err.Error())
+	}
+}
+
+func TestCompleteAuthErrorHintsAtMissingKey(t *testing.T) {
+	// A 401 with no key configured is the Dependabot case: the run cannot
+	// read Actions secrets, so the hint has to say where the key has to live.
+	t.Setenv("MODEL_API_KEY", "")
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":{"message":"invalid api key"}}`))
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, APIKey: "", Model: "m"}
+	_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 8})
+	if err == nil || !strings.Contains(err.Error(), "MODEL_API_KEY is empty") {
+		t.Fatalf("want the empty-key hint, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "Dependabot secret store") {
+		t.Fatalf("want the Dependabot note, got %v", err)
 	}
 }
