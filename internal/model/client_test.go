@@ -608,6 +608,45 @@ func TestCompleteMalformedResponseNamesEndpointAndBody(t *testing.T) {
 	}
 }
 
+func TestNewClientGitHubModelsEndpointWithoutAnyToken(t *testing.T) {
+	// Naming the GitHub Models endpoint explicitly is still a configured
+	// endpoint. Building the client for it, rather than replacing it with the
+	// zero-secret inference error, means the operator faces the endpoint they
+	// asked for and its 401 instead of "no model key found" for an endpoint
+	// they did configure.
+	t.Setenv("MODEL_API_KEY", "")
+	t.Setenv("MODEL_BASE_URL", "https://models.github.ai/inference")
+	t.Setenv("MODEL_ID", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	c, err := NewOpenAICompatClient()
+	if err != nil {
+		t.Fatalf("an explicitly configured endpoint must not fail construction: %v", err)
+	}
+	if c.BaseURL != githubModelsBase || c.APIKey != "" {
+		t.Fatalf("configured endpoint discarded: %+v", c)
+	}
+	if c.Model != "openai/gpt-4o-mini" {
+		t.Fatalf("default model for GitHub Models: %q", c.Model)
+	}
+}
+
+func TestAuthHintNamesTheFixThatApplies(t *testing.T) {
+	// A 401 has two causes that need opposite fixes, and a message that names
+	// the wrong one sends the operator somewhere useless.
+	if got := authHint(&OpenAICompatClient{BaseURL: "https://ollama.com/v1", APIKey: ""}); !strings.Contains(got, "Dependabot secret store") {
+		t.Fatalf("no-key client must be told where the key has to live, got %q", got)
+	}
+	if got := authHint(&OpenAICompatClient{BaseURL: githubModelsBase, APIKey: "gh-ambient"}); !strings.Contains(got, "models: read") {
+		t.Fatalf("ambient-token client must be told about the permission, got %q", got)
+	}
+	if got := authHint(&OpenAICompatClient{BaseURL: githubModelsBase, APIKey: ""}); !strings.Contains(got, "Dependabot secret store") {
+		t.Fatalf("an empty key is the missing-secret case on any endpoint, got %q", got)
+	}
+	if got := authHint(&OpenAICompatClient{BaseURL: "https://ollama.com/v1", APIKey: "k"}); got != "" {
+		t.Fatalf("a keyed third-party client has no configuration advice to give, got %q", got)
+	}
+}
+
 func TestCompleteAuthErrorHintsAtMissingKey(t *testing.T) {
 	// A 401 with no key configured is the Dependabot case: the run cannot
 	// read Actions secrets, so the hint has to say where the key has to live.
@@ -625,5 +664,34 @@ func TestCompleteAuthErrorHintsAtMissingKey(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Dependabot secret store") {
 		t.Fatalf("want the Dependabot note, got %v", err)
+	}
+}
+
+func TestBodySnippetRedactsCredentials(t *testing.T) {
+	// The package doc is explicit that the key is never in a log or an error
+	// string (§12, I4). A gateway that reflects the request's Authorization
+	// header into its own page is the case that makes truncation alone
+	// insufficient, so the preview redacts rather than merely caps.
+	for _, in := range []string{
+		`{"error":{"message":"bad key sk-abc123XYZ"}}`,
+		`{"error":{"message":"Authorization: Bearer sk-abc123XYZ"}}`,
+		`gateway: api_key=ghp_abcdefgh12345678 rejected`,
+	} {
+		got := bodySnippet([]byte(in))
+		if strings.ContainsAny(got, "\n\r") {
+			t.Fatalf("snippet must stay single-line: %q", got)
+		}
+		if !strings.Contains(got, "[redacted]") {
+			t.Fatalf("credential not redacted in %q", got)
+		}
+		for _, secret := range []string{"sk-abc123XYZ", "ghp_abcdefgh12345678"} {
+			if strings.Contains(got, secret) {
+				t.Fatalf("secret %q survived redaction: %q", secret, got)
+			}
+		}
+	}
+	// Text without credentials survives intact, so the preview stays useful.
+	if got := bodySnippet([]byte("<html>\n<body>upstream timeout</body>\n</html>")); got != "<html> <body>upstream timeout</body> </html>" {
+		t.Fatalf("plain body mangled: %q", got)
 	}
 }

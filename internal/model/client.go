@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -333,6 +334,9 @@ type OpenAICompatClient struct {
 	HTTP         *http.Client
 }
 
+// githubModelsBase is the one endpoint the ambient GITHUB_TOKEN authenticates.
+const githubModelsBase = "https://models.github.ai/inference"
+
 // NewOpenAICompatClient infers the endpoint from the environment when no
 // explicit provider is configured: the provider is inferred from which key is
 // present (§1).
@@ -356,22 +360,32 @@ func NewOpenAICompatClient() (*OpenAICompatClient, error) {
 		}
 		return &OpenAICompatClient{BaseURL: strings.TrimSuffix(base, "/"), APIKey: k, Model: model}, nil
 	}
-	// A configured endpoint is never redirected to GitHub Models. The ambient
-	// GITHUB_TOKEN authenticates GitHub Models and nothing else: sending it to
-	// another host while requesting a model that host does not serve fails at
-	// review time as an opaque provider error, which reads as a broken
-	// reviewer rather than as the misconfiguration it is. Keeping the
-	// configured endpoint with whatever credentials are present — none at all,
-	// for a local server — lets the provider answer for itself.
-	const githubModelsBase = "https://models.github.ai/inference"
-	if base := strings.TrimSuffix(os.Getenv("MODEL_BASE_URL"), "/"); base != "" && base != githubModelsBase {
+	// A configured endpoint is never redirected to GitHub Models, and it is
+	// never discarded either: it is the endpoint the operator asked for. The
+	// ambient GITHUB_TOKEN authenticates GitHub Models and nothing else, so it
+	// is attached to that endpoint alone; every other host gets whatever
+	// MODEL_API_KEY holds, including nothing at all, which is what a server
+	// needing no key asks for. Redirecting instead sent the job token to a
+	// third-party host and requested a model that host does not serve, which
+	// surfaced as an opaque provider error rather than as the misconfiguration
+	// it was.
+	if base := strings.TrimSuffix(os.Getenv("MODEL_BASE_URL"), "/"); base != "" {
+		key := os.Getenv("MODEL_API_KEY")
 		model := os.Getenv("MODEL_ID")
-		if model == "" {
+		if base == githubModelsBase {
+			if key == "" {
+				key = os.Getenv("GITHUB_TOKEN")
+			}
+			if model == "" {
+				model = "openai/gpt-4o-mini"
+			}
+		} else if model == "" {
 			model = "gpt-5-mini"
 		}
-		return &OpenAICompatClient{BaseURL: base, APIKey: os.Getenv("MODEL_API_KEY"), Model: model}, nil
+		return &OpenAICompatClient{BaseURL: base, APIKey: key, Model: model}, nil
 	}
-	// Zero-secret first run: GitHub's models endpoint on the ambient token.
+	// Zero-secret first run: nothing is configured, so GitHub's models
+	// endpoint is inferred from the ambient token.
 	if k := os.Getenv("GITHUB_TOKEN"); k != "" {
 		model := os.Getenv("MODEL_ID")
 		if model == "" {
@@ -387,12 +401,48 @@ func (c *OpenAICompatClient) ModelID() string { return c.Model }
 // DescribeProvider names the endpoint this client targets (ProviderDescriber).
 func (c *OpenAICompatClient) DescribeProvider() string { return c.BaseURL }
 
+// authHint explains a 401 or 403 from the model endpoint. The two ways to
+// reach it need different fixes: a client with no key at all is the missing
+// secret (the Dependabot case, where Actions secrets are not readable), while
+// the ambient token talking to GitHub Models is the permission case. Neither
+// message helps the other, and a client holding a token for another endpoint
+// has no configuration advice worth printing.
+func authHint(c *OpenAICompatClient) string {
+	switch {
+	case c.APIKey == "":
+		return "MODEL_API_KEY is empty; a run triggered by Dependabot cannot read Actions secrets, so the key must also exist in the Dependabot secret store"
+	case c.BaseURL == githubModelsBase:
+		return "the ambient GITHUB_TOKEN was rejected by GitHub Models; the zero-secret first run needs `models: read` on the workflow"
+	}
+	return ""
+}
+
+// A credential, as a provider or gateway echoes one back: a scheme-prefixed
+// value, a named field, or a token with a recognisable vendor prefix.
+var (
+	bearerCredential = regexp.MustCompile(`(?i)bearer\s+[\w.~+/=:-]{8,}`)
+	namedCredential  = regexp.MustCompile(`(?i)(api[_-]?key|authorization|access[_-]?token|client[_-]?secret|token|secret)("?\s*[:=]\s*"?)[\w.~+/=:-]{8,}`)
+	prefixedToken    = regexp.MustCompile(`\b(?:sk|pk|ghp|gho|ghu|ghs|ghr|github_pat|xox[baprs])[-_][\w-]{8,}`)
+)
+
+// redactCredentials removes anything shaped like a credential from text that is
+// about to be rendered into an error string. A gateway that reflects the
+// request's Authorization header into its own response page is exactly the case
+// the package doc forbids: the key is never in a log or an error string (§12,
+// I4), so the preview of a provider body has to be redacted, not merely
+// truncated.
+func redactCredentials(s string) string {
+	s = bearerCredential.ReplaceAllString(s, "Bearer [redacted]")
+	s = prefixedToken.ReplaceAllString(s, "[redacted]")
+	return namedCredential.ReplaceAllString(s, "$1$2[redacted]")
+}
+
 // bodySnippet renders a bounded, single-line preview of a response body for an
 // error message: whitespace is collapsed so a multi-line provider page cannot
-// break the log format, and the result is capped. Headers are never included,
-// so credentials cannot leak through it.
+// break the log format, credentials are redacted, and the result is capped.
+// Headers are never included, so nothing else can leak through it.
 func bodySnippet(raw []byte) string {
-	s := strings.Join(strings.Fields(string(raw)), " ")
+	s := redactCredentials(strings.Join(strings.Fields(string(raw)), " "))
 	const limit = 200
 	if len(s) > limit {
 		s = s[:limit] + "…"
@@ -568,9 +618,7 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 			code = "rate_limited"
 		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 			code = "auth"
-			if os.Getenv("MODEL_API_KEY") == "" {
-				hint = "MODEL_API_KEY is empty; a run triggered by Dependabot cannot read Actions secrets, so the key must also exist in the Dependabot secret store"
-			}
+			hint = authHint(c)
 		case resp.StatusCode >= 500:
 			code = "provider_unavailable"
 		}
