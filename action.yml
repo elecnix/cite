@@ -164,6 +164,12 @@ runs:
         MODEL_BASE_URL: ${{ inputs.model_base_url }}
         MODEL_ID: ${{ inputs.model_id }}
         GITHUB_TOKEN: ${{ github.token }}
+        # The pull request number, from the authenticated event payload: the
+        # same expression covers pull_request, pull_request_target and the
+        # workflow_run split of examples/fork-safe.yml (I2: the number is
+        # authenticated metadata, never a ref parse). CITE_EVENT_PR_NUMBER is
+        # only read when the caller has not set PR_NUMBER itself.
+        CITE_EVENT_PR_NUMBER: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
         CITE_CONFIG_PATH: ${{ inputs.config_path }}
         CITE_DRY_RUN: ${{ inputs.dry_run }}
         CITE_TOOL_FAILURE_BLOCKS: ${{ inputs.tool_failure_blocks }}
@@ -172,9 +178,12 @@ runs:
         CITE_REQUIRE_PARAMETERS: ${{ inputs.require_parameters }}
       run: |
         set -euo pipefail
-        # PR_NUMBER is not a default runner variable; pull_request events put
-        # the number in the ref as refs/pull/N/merge.
-        PR_NUM="${PR_NUMBER:-}"
+        # PR_NUMBER is not a default runner variable. The number comes from
+        # the event payload (CITE_EVENT_PR_NUMBER above), which is the only
+        # place it exists for pull_request_target and workflow_run: neither
+        # carries a refs/pull/N/merge ref. A caller-supplied PR_NUMBER wins.
+        # The ref parse below stays as a fallback for pull_request.
+        PR_NUM="${PR_NUMBER:-${CITE_EVENT_PR_NUMBER:-}}"
         if [ -z "$PR_NUM" ] && [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
           PR_NUM="${GITHUB_REF#refs/pull/}"
           PR_NUM="${PR_NUM%/merge}"

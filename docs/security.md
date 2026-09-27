@@ -21,6 +21,19 @@ and a read-write token, and loading a head-controlled file through an install
 hook or a config include is remote code execution with your organisation's
 credentials.
 
+That property is what lets the default install use `pull_request_target` with no
+head checkout: no head-controlled file enters the trusted context. GitHub
+resolves the workflow definition from the default branch, so a pull request
+opened from a long-lived branch cannot keep running a stale copy of the
+reviewer's own configuration.
+
+The default install skips the review job on a fork pull request: the job sets
+`if: github.event.pull_request.head.repo.fork == false`, and GitHub assigns a
+runner only once that condition passes. A fork pull request does not reach the
+model, so the model key goes unspent. Reviewing forks is opt-in: delete the
+guard on a same-repository-only setup, or use the two-workflow structure below
+when the model key must coexist with fork pull requests.
+
 For fork pull requests, the safe structure is two workflows: see
 [fork-safe.yml](../examples/fork-safe.yml) below.
 
@@ -183,10 +196,11 @@ jobs:
       - uses: elecnix/cite@9c2964b0298b7ae110a2d4111fd84d7aa5b5b739  # v0.11.1
         env:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
-        # Pull request number and head SHA are taken ONLY from the
-        # workflow_run event's authenticated metadata (I2), and the check
-        # run is created explicitly on the pull request head SHA —
-        # workflow_run otherwise attaches checks to the default branch.
+        # The pull request number is read from `github.event.workflow_run
+        # .pull_requests[0].number` — the event's authenticated metadata
+        # (I2) — and the head SHA from the pull request itself, so the check
+        # run lands on the PR head SHA; `workflow_run` otherwise attaches
+        # checks to the default branch.
 ```
 
 The trusted job does not consume the untrusted job's artifact as input to any

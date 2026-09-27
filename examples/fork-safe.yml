@@ -8,7 +8,9 @@
 #
 #   1. cite-diff      on `pull_request`. Untrusted side. Runs for fork PRs too,
 #                     with a read-only token and NO secrets. Captures the diff
-#                     as inert data.
+#                     as inert data. This side stays on `pull_request` on
+#                     purpose: it is the copy that runs from the pull request
+#                     ref, and it holds nothing worth protecting.
 #   2. cite-review    on `workflow_run`. Trusted side. Runs in the BASE
 #                     repository context with MODEL_API_KEY. It takes the pull
 #                     request number ONLY from the authenticated workflow_run
@@ -63,10 +65,10 @@ jobs:
         uses: elecnix/cite@9c2964b0298b7ae110a2d4111fd84d7aa5b5b739  # v0.11.1
         env:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
-        with:
-          workflow_run_event: true   # resolve PR number + head SHA from the
-                                     # authenticated event only; create the
-                                     # check run on the PR head SHA
+          # No input is needed for the event shape: the action takes the pull
+          # request number from `github.event.workflow_run.pull_requests[0].number`
+          # (authenticated event metadata, I2) and reads the head SHA from the
+          # pull request itself, so the check run lands on the PR head SHA.
       # Deliberately absent from BOTH workflows:
       # - actions/checkout            no head code executes in any privileged job
       # - artifact download as input  trust is never taken from an
