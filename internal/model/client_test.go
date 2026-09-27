@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -516,5 +516,139 @@ func TestSessionIDSentAsHeaderNeverAsBodyField(t *testing.T) {
 	}
 	if gotHeader != "" {
 		t.Fatalf("x-session-id = %q without a session, want none", gotHeader)
+	}
+}
+
+func TestCompleteAuthErrorHintsAtMissingKey(t *testing.T) {
+	// A 401 with no key configured is the Dependabot case: the run cannot
+	// read Actions secrets, so the hint has to say where the key has to live.
+	t.Setenv("MODEL_API_KEY", "")
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":{"message":"invalid api key"}}`))
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, APIKey: "", Model: "m"}
+	_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 8})
+	if err == nil || !strings.Contains(err.Error(), "MODEL_API_KEY is empty") {
+		t.Fatalf("want the empty-key hint, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "Dependabot secret store") {
+		t.Fatalf("want the Dependabot note, got %v", err)
+	}
+}
+
+func TestNewClientConfiguredEndpointIsNeverRedirected(t *testing.T) {
+	// Every row names an endpoint the operator configured, and none of them may
+	// be replaced by the zero-secret inference. Before that rule existed, a
+	// configured endpoint whose key was missing sent the ambient token to
+	// GitHub Models while still carrying the model id configured for the
+	// intended host, and the failure surfaced as an opaque provider error
+	// rather than as the misconfiguration it was.
+	cases := []struct {
+		name, base, id, token     string
+		wantURL, wantKey, wantMdl string
+	}{
+		{"third-party endpoint keeps its model id and an empty key", "https://ollama.com/v1", "deepseek-v4.1-flash", "gh-ambient", "https://ollama.com/v1", "", "deepseek-v4.1-flash"},
+		{"a local endpoint needs no key at all", "http://localhost:11434/v1/", "qwen3", "", "http://localhost:11434/v1", "", "qwen3"},
+		{"GitHub Models named explicitly still gets the ambient token", githubModelsBase, "", "gh-ambient", githubModelsBase, "gh-ambient", "openai/gpt-4o-mini"},
+		{"a trailing slash still names GitHub Models", githubModelsBase + "/", "", "gh-ambient", githubModelsBase, "gh-ambient", "openai/gpt-4o-mini"},
+		{"GitHub Models named explicitly without any token", githubModelsBase, "", "", githubModelsBase, "", "openai/gpt-4o-mini"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, k := range []string{"MODEL_API_KEY", "MODEL_BASE_URL", "MODEL_ID", "GITHUB_TOKEN"} {
+				t.Setenv(k, "")
+			}
+			t.Setenv("MODEL_BASE_URL", tc.base)
+			t.Setenv("MODEL_ID", tc.id)
+			t.Setenv("GITHUB_TOKEN", tc.token)
+			c, err := NewOpenAICompatClient()
+			if err != nil {
+				t.Fatalf("a configured endpoint must not fail construction: %v", err)
+			}
+			if c.BaseURL != tc.wantURL || c.APIKey != tc.wantKey || c.Model != tc.wantMdl {
+				t.Fatalf("got %+v, want url=%q key=%q model=%q", c, tc.wantURL, tc.wantKey, tc.wantMdl)
+			}
+		})
+	}
+}
+
+func TestAuthHintNamesTheFixThatApplies(t *testing.T) {
+	// A 401 has two causes needing opposite fixes, and a message naming the
+	// wrong one sends the operator somewhere useless. The hint follows the
+	// credential that was sent, not the endpoint that was chosen.
+	if got := authHint(&OpenAICompatClient{BaseURL: "https://ollama.com/v1"}); !strings.Contains(got, "Dependabot secret store") {
+		t.Fatalf("a client with no key must be told where the key has to live, got %q", got)
+	}
+	if got := authHint(&OpenAICompatClient{BaseURL: githubModelsBase, APIKey: "gh-ambient", ambient: true}); !strings.Contains(got, "models: read") {
+		t.Fatalf("an ambient-token client must be told about the permission, got %q", got)
+	}
+	if got := authHint(&OpenAICompatClient{BaseURL: githubModelsBase}); !strings.Contains(got, "models: read") || strings.Contains(got, "Dependabot") {
+		t.Fatalf("GitHub Models with no credential needs the permission or a key, not Dependabot advice, got %q", got)
+	}
+	if got := authHint(&OpenAICompatClient{BaseURL: githubModelsBase, APIKey: "sk-configured"}); got != "" {
+		t.Fatalf("a configured key rejected by GitHub Models is a bad key, not a missing permission, got %q", got)
+	}
+	if got := authHint(&OpenAICompatClient{BaseURL: "https://ollama.com/v1", APIKey: "k"}); got != "" {
+		t.Fatalf("a keyed third-party client has no configuration advice to give, got %q", got)
+	}
+}
+
+func TestCompleteMalformedResponseNamesEndpointNotBody(t *testing.T) {
+	// The endpoint, the status and the shape are what make a gateway
+	// interstitial distinguishable from an endpoint serving an unexpected
+	// protocol. The body is never echoed: the package doc is absolute that the
+	// key is never in an error string (§12, I4), and provider text is where a
+	// reflected header would appear.
+	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("<html>\n<body>upstream timeout for sk-abc123XYZ</body>\n</html>"))
+	})
+	ts := newTestServer(srv)
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, APIKey: "k", Model: "m"}
+	_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 8})
+	if !errors.Is(err, ErrDeterministic) {
+		t.Fatalf("want ErrDeterministic, got %v", err)
+	}
+	for _, want := range []string{ts.URL, "HTTP 200", "an HTML page", "CITE_DEBUG=1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q must name %q", err.Error(), want)
+		}
+	}
+	for _, forbidden := range []string{"sk-abc123XYZ", "upstream timeout"} {
+		if strings.Contains(err.Error(), forbidden) {
+			t.Fatalf("the error must not echo provider text (%q): %q", forbidden, err.Error())
+		}
+	}
+	if strings.Contains(err.Error(), "\n") {
+		t.Fatalf("error must stay single-line, got %q", err.Error())
+	}
+}
+
+func TestBodyShapeQuotesNothing(t *testing.T) {
+	// The error may describe a body's shape but never quote it: one character
+	// of provider text is still provider text, and a gateway that reflects the
+	// request's Authorization header is why the rule is absolute (§12, I4).
+	cases := []struct{ body, want string }{
+		{"", "an empty body"},
+		{"   \n\t", "an empty body"},
+		{"<html>hello</html>", "an HTML page"},
+		{`{"choices":`, "a JSON document"},
+		{`[{"error":"sk-abc123XYZ"}]`, "a JSON document"},
+		{"sk-abc123XYZ", "not JSON"},
+	}
+	for _, tc := range cases {
+		got := bodyShape([]byte(tc.body))
+		if !strings.Contains(got, tc.want) {
+			t.Fatalf("bodyShape(%q) = %q, want it to mention %q", tc.body, got, tc.want)
+		}
+		for _, echoed := range []string{"sk-abc123XYZ", "hello", "error"} {
+			if strings.Contains(got, echoed) {
+				t.Fatalf("bodyShape(%q) echoed body text %q: %q", tc.body, echoed, got)
+			}
+		}
 	}
 }

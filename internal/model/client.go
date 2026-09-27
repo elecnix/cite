@@ -331,7 +331,15 @@ type OpenAICompatClient struct {
 	ExtraHeaders map[string]string
 	Model        string
 	HTTP         *http.Client
+	// ambient marks a client whose key is the job's own GITHUB_TOKEN rather
+	// than a configured MODEL_API_KEY. It changes what a 401 means: the
+	// permission is missing, not the secret, so the hint has to follow which
+	// credential was actually sent rather than which endpoint was chosen.
+	ambient bool
 }
+
+// githubModelsBase is the one endpoint the ambient GITHUB_TOKEN authenticates.
+const githubModelsBase = "https://models.github.ai/inference"
 
 // NewOpenAICompatClient infers the endpoint from the environment when no
 // explicit provider is configured: the provider is inferred from which key is
@@ -356,13 +364,41 @@ func NewOpenAICompatClient() (*OpenAICompatClient, error) {
 		}
 		return &OpenAICompatClient{BaseURL: strings.TrimSuffix(base, "/"), APIKey: k, Model: model}, nil
 	}
-	// Zero-secret first run: GitHub's models endpoint on the ambient token.
+	// A configured endpoint is never redirected to GitHub Models, and it is
+	// never discarded either: it is the endpoint the operator asked for. The
+	// ambient GITHUB_TOKEN authenticates GitHub Models and nothing else, so it
+	// is attached to that endpoint alone; every other host gets whatever
+	// MODEL_API_KEY holds, including nothing at all, which is what a server
+	// needing no key asks for. Redirecting instead sent the job token to a
+	// third-party host and requested a model that host does not serve, which
+	// surfaced as an opaque provider error rather than as the misconfiguration
+	// it was.
+	if base := strings.TrimSuffix(os.Getenv("MODEL_BASE_URL"), "/"); base != "" {
+		// The branch above returns whenever MODEL_API_KEY is set, so a key read
+		// here is always empty: what is left to decide is which credential this
+		// endpoint takes, and only GitHub Models takes the ambient token.
+		model := os.Getenv("MODEL_ID")
+		key := ""
+		ambient := false
+		if base == githubModelsBase {
+			key = os.Getenv("GITHUB_TOKEN")
+			ambient = key != ""
+			if model == "" {
+				model = "openai/gpt-4o-mini"
+			}
+		} else if model == "" {
+			model = "gpt-5-mini"
+		}
+		return &OpenAICompatClient{BaseURL: base, APIKey: key, Model: model, ambient: ambient}, nil
+	}
+	// Zero-secret first run: nothing is configured, so GitHub's models
+	// endpoint is inferred from the ambient token.
 	if k := os.Getenv("GITHUB_TOKEN"); k != "" {
 		model := os.Getenv("MODEL_ID")
 		if model == "" {
 			model = "openai/gpt-4o-mini"
 		}
-		return &OpenAICompatClient{BaseURL: "https://models.github.ai/inference", APIKey: k, Model: model}, nil
+		return &OpenAICompatClient{BaseURL: githubModelsBase, APIKey: k, Model: model, ambient: true}, nil
 	}
 	return nil, fmt.Errorf("no model key found: set MODEL_API_KEY, or grant the workflow `models: read` so the ambient GITHUB_TOKEN can be used with GitHub Models (the provider is inferred from which key is present)")
 }
@@ -372,13 +408,64 @@ func (c *OpenAICompatClient) ModelID() string { return c.Model }
 // DescribeProvider names the endpoint this client targets (ProviderDescriber).
 func (c *OpenAICompatClient) DescribeProvider() string { return c.BaseURL }
 
+// authHint explains a 401 or 403 from the model endpoint. The two ways to
+// reach it need different fixes: a client with no key at all is the missing
+// secret (the Dependabot case, where Actions secrets are not readable), while
+// the ambient token talking to GitHub Models is the permission case. Neither
+// message helps the other, and a client holding a token for another endpoint
+// has no configuration advice worth printing.
+func authHint(c *OpenAICompatClient) string {
+	switch {
+	case c.APIKey == "" && c.BaseURL == githubModelsBase:
+		// Pointed at GitHub Models with nothing to authenticate with: either
+		// permission unlocks the ambient token, or a key replaces it.
+		return "no credential reached GitHub Models: grant the workflow `models: read` so the ambient GITHUB_TOKEN can be used, or set MODEL_API_KEY"
+	case c.APIKey == "":
+		return "MODEL_API_KEY is empty; a run triggered by Dependabot cannot read Actions secrets, so the key must also exist in the Dependabot secret store"
+	case c.ambient:
+		return "the ambient GITHUB_TOKEN was rejected by GitHub Models; the zero-secret first run needs `models: read` on the workflow"
+	}
+	return ""
+}
+
+// bodyShape describes a response body that failed to decode without quoting
+// any of it. The package doc is absolute that the key is never in an error
+// string (§12, I4), and a gateway that reflects the request's Authorization
+// header into its own page is exactly how it would get there, so no amount of
+// pattern-matching on provider text — and not even one character of it — is a
+// guarantee worth relying on. The body itself stays recoverable through the
+// existing CITE_DEBUG capture.
+func bodyShape(raw []byte) string {
+	trimmed := bytes.TrimLeft(raw, " \t\r\n")
+	switch {
+	case len(trimmed) == 0:
+		return "an empty body"
+	case trimmed[0] == '<':
+		return "an HTML page rather than an OpenAI completion"
+	case trimmed[0] == '{' || trimmed[0] == '[':
+		return "a JSON document that does not decode as an OpenAI completion"
+	default:
+		return "a body that is not JSON"
+	}
+}
+
 // typedError maps provider errors to typed codes before rendering (I4).
 type typedError struct {
 	Code string
 	Body string // sanitised: never verbatim provider text with headers
+	// Hint carries Cite's own guidance about the configuration that produced
+	// the error. It is separate from Body because Body mirrors untrusted
+	// provider text and is bounded on that account (I4), while a hint is
+	// written here and can be as specific as the fix requires.
+	Hint string
 }
 
-func (e *typedError) Error() string { return e.Code + ": " + e.Body }
+func (e *typedError) Error() string {
+	if e.Hint == "" {
+		return e.Code + ": " + e.Body
+	}
+	return e.Code + ": " + e.Body + " — " + e.Hint
+}
 
 // Complete performs one bounded call. The deadline comes from ctx, set at the
 // call site. The output-token cap is the bound, never an inactivity timeout.
@@ -524,15 +611,17 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 				msg += ": " + m
 			}
 		}
+		var hint string
 		switch {
 		case resp.StatusCode == http.StatusTooManyRequests:
 			code = "rate_limited"
 		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 			code = "auth"
+			hint = authHint(c)
 		case resp.StatusCode >= 500:
 			code = "provider_unavailable"
 		}
-		return nil, &typedError{Code: code, Body: msg}
+		return nil, &typedError{Code: code, Body: msg, Hint: hint}
 	}
 	var out struct {
 		// Provider stays raw: it is a diagnostic label, and a field of
@@ -565,7 +654,12 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		_ = os.WriteFile("/tmp/cite-last-response.json", raw, 0o600)
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("%w: malformed provider response", ErrDeterministic)
+		// Name the endpoint, the status and the shape — never the body.
+		// "malformed provider response" alone left the operator nothing to act
+		// on, and every way to reach it (a redirected endpoint, a gateway
+		// interstitial, a model id the host does not serve) reads identically
+		// without them.
+		return nil, fmt.Errorf("%w: malformed provider response from %s (HTTP %d, %d bytes, %s; set CITE_DEBUG=1 to capture the body)", ErrDeterministic, c.BaseURL, resp.StatusCode, len(raw), bodyShape(raw))
 	}
 	if len(out.Choices) == 0 {
 		return nil, fmt.Errorf("%w: no choices in response", ErrDeterministic)
