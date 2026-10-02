@@ -2,12 +2,25 @@ package scope
 
 import "path"
 
-// Match reports whether name matches pattern. Patterns are '/'-separated
-// globs used by paths_ignore:
+// Match reports whether the repository-relative path name matches pattern, in
+// the glob dialect Cite pins (CONFORMANCE.md, "Glob dialect": the dialect is
+// unspecified upstream, so Cite picks one and writes it down).
 //
-//   - '**' matches any number of whole path segments, including none;
+// This function is the single owner of that grammar. It is the reference
+// implementation for paths_ignore and for the applyTo globs and paths
+// frontmatter of instruction files, which reach it through
+// instructions.Match rather than through a second matcher of their own.
+//
+//   - patterns are '/'-separated and match against the whole path;
+//   - '**' matches any number of whole path segments, including none, and
+//     consecutive '**' segments collapse;
 //   - within a single segment, '*', '?', and '[...]' behave as in
-//     path.Match — '*' never crosses a '/'.
+//     path.Match — '*' never crosses a '/' and a malformed class matches
+//     nothing;
+//   - brace expansion is not part of the dialect, so braces match literally;
+//   - the pattern is normalised before matching, so a leading slash, a './'
+//     prefix and repeated separators are cosmetic;
+//   - an empty pattern matches nothing.
 //
 // Examples:
 //
@@ -15,7 +28,11 @@ import "path"
 //	Match("**/*.gen.go", "c.gen.go")     == true
 //	Match("docs/*.md",    "docs/a.md")   == true
 //	Match("docs/*.md",    "docs/x/a.md") == false
+//	Match("/docs/**",     "docs/a/b.md") == true
 func Match(pattern, name string) bool {
+	if pattern == "" {
+		return false
+	}
 	return matchSegments(splitSegments(pattern), splitSegments(name))
 }
 
@@ -27,7 +44,8 @@ func splitSegments(p string) []string {
 	return splitPath(p)
 }
 
-// strings2Normalize strips a leading slash so "/docs/**" and "docs/**" agree.
+// strings2Normalize strips leading slashes so "/docs/**" and "docs/**"
+// agree, and maps an all-slash path to the repository root.
 func strings2Normalize(p string) string {
 	for len(p) > 0 && p[0] == '/' {
 		p = p[1:]
