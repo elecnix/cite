@@ -1036,6 +1036,15 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 		fr, perr = model.ParseFileReview([]byte(resp.Text))
 		syntaxErr := perr != nil && errors.Is(perr, model.ErrSyntax)
 		blankBody := strings.TrimSpace(resp.Text) == ""
+		// Opt-in wire capture: the bytes this response was rejected for,
+		// next to the request that asked for them. It is a passive observer.
+		// The outcome, the re-ask below and the budget that bounds it are
+		// all decided without it, and with the capture off this is a nil
+		// check. A blank body arrives here as a syntax error, so it is
+		// covered with the rest.
+		if perr != nil {
+			resp.MarkRejected(perr)
+		}
 		// Issue #59: a schema-level failure (wrong schema_version, unknown
 		// outcome, an anchor out of range) is also a mechanical failure of
 		// the output format, not a confident wrong answer about the code.
@@ -1058,6 +1067,7 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 		if perr == nil && fr != nil && fr.Path != e.Path {
 			r.noteEchoCorrection()
 			r.logf("review of %s: response echoed path %q; relabeled by the echo guard without spending a re-ask (issue #73)", e.Path, fr.Path)
+			resp.MarkRejected(fmt.Errorf("echoed path %q, relabeled by the echo guard (issue #73)", fr.Path))
 			fr.Path = e.Path
 		}
 		if perr == nil && fr != nil && fr.Path == e.Path {

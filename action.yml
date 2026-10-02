@@ -116,6 +116,27 @@ inputs:
       unknown request arguments with a 400. Ollama ignores the field.
     required: false
     default: 'false'
+  capture_wire:
+    description: >
+      Set to "true" to capture the reviewer's exchange with the model
+      provider: one document per model call holding the exact request sent
+      (model, messages, tools or response-format payload, temperature and
+      output cap, the provider host) and the exact raw response received
+      before any parsing, plus the HTTP status and headers. Masking is
+      allowlist-first: a request header keeps its value only if Cite set it
+      (content-type, content-length, accept, user-agent, x-session-id), every
+      other request header keeps its name and loses its value, and your key is
+      masked wherever it appears, including inside a provider's own error
+      page.
+      A response the review schema rejected is captured with outcome
+      "parse-failure" and the raw bytes that were refused, which is the
+      diagnosis a failed run otherwise cannot give. A capture CONTAINS THE
+      PROMPT, so it contains the diff under review: treat it as private
+      review material. Uploaded as a cite-wire-<run> artifact kept 7 days,
+      on every run rather than only on failure. Off by default, because a
+      prompt is repository content.
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -185,6 +206,13 @@ runs:
         CITE_STRUCTURED_OUTPUT: ${{ inputs.structured_output }}
         CITE_REASONING_EFFORT: ${{ inputs.reasoning_effort }}
         CITE_REQUIRE_PARAMETERS: ${{ inputs.require_parameters }}
+        # Opt-in wire capture (default off). CITE_CAPTURE_WIRE is the switch
+        # the input sets; the directory is $RUNNER_TEMP so the upload step
+        # below can name it. CITE_CAPTURE_MAX_BYTES is left unset: the
+        # per-body ceiling has a default, and a workflow can override it in
+        # its own env without a new input.
+        CITE_CAPTURE_WIRE: ${{ inputs.capture_wire }}
+        CITE_CAPTURE_DIR: $RUNNER_TEMP/cite-wire
       run: |
         set -euo pipefail
         # PR_NUMBER is not a default runner variable. The number comes from
@@ -261,3 +289,19 @@ runs:
           ${{ runner.temp }}/cite-truncated-response.json
         if-no-files-found: warn
         retention-days: 30
+
+    # The opt-in wire capture, on every run rather than only on failure: a
+    # response the schema rejected is worth reading on the run that produced
+    # it, and a provider that intermittently ignores response_format is only
+    # visible in the calls around the good one. Separate from the forensics
+    # archive, and kept for 7 days rather than 30, because every document
+    # carries the prompt and therefore the reviewed diff. Nothing is written
+    # when the input is off, so this step never has a directory to find.
+    - name: Archive the wire capture
+      if: always() && inputs.capture_wire == 'true'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      with:
+        name: cite-wire-${{ steps.archive.outputs.suffix }}
+        path: ${{ runner.temp }}/cite-wire/
+        if-no-files-found: warn
+        retention-days: 7
