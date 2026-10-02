@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 )
@@ -717,5 +718,47 @@ func TestCaptureCutKeepsEverythingAfterAnInvalidByte(t *testing.T) {
 	}
 	if doc.Response.OriginalBytes != len(body) {
 		t.Errorf("original_bytes = %d, want %d", doc.Response.OriginalBytes, len(body))
+	}
+}
+
+// A review runs several calls at once, and the manifest is one file. Every
+// call that lands must appear in it: an index that lost a row would hide a
+// call whose document sits right there on disk.
+func TestCaptureManifestSurvivesConcurrentCalls(t *testing.T) {
+	cap := captureIn(t, 0)
+	srv := newTestServer(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(completionBody(`{"schema_version":1,"path":"a.go","outcome":"reviewed","findings":[]}`)))
+	})
+	defer srv.Close()
+	c := testClient(srv.URL)
+	c.HTTP = srv.Client()
+
+	const calls = 12
+	var wg sync.WaitGroup
+	for i := 0; i < calls; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := c.Complete(context.Background(), CompletionRequest{
+				System: "s", User: "u", MaxOutputTokens: 8,
+			}); err != nil {
+				t.Errorf("Complete: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	m := readManifest(t, cap.Dir())
+	if len(m.Calls) != calls {
+		rows := make([]int, 0, len(m.Calls))
+		for _, row := range m.Calls {
+			rows = append(rows, row.CallIndex)
+		}
+		t.Errorf("manifest rows = %d (%v), want %d: a concurrent write dropped a row", len(m.Calls), rows, calls)
+	}
+	for i := 1; i <= calls; i++ {
+		if _, err := os.Stat(captureFile(cap.Dir(), i)); err != nil {
+			t.Errorf("call %d has no document: %v", i, err)
+		}
 	}
 }

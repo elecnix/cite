@@ -191,10 +191,15 @@ func TestWireCaptureRecordsSchemaViolatingResponse(t *testing.T) {
 // keeps the name with the value masked.
 func TestWireCaptureNeverHoldsTheKey(t *testing.T) {
 	const apiKey = "sk-test-0000000000000000"
+	// The handler runs on the server's goroutine, so it records what it saw
+	// and the test goroutine asserts it. Calling t.Errorf from there would
+	// report a failure that the test can already have finished past.
+	var mu sync.Mutex
+	var seen []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got, want := r.Header.Get("Authorization"), "Bearer "+apiKey; got != want {
-			t.Errorf("the provider saw Authorization = %q, want the key", got)
-		}
+		mu.Lock()
+		seen = append(seen, r.Header.Get("Authorization"))
+		mu.Unlock()
 		body, _ := io.ReadAll(r.Body)
 		if systemOf(body) == triageSystemPrompt {
 			w.Write([]byte(wireEnvelope(triageJSON("a.go"))))
@@ -208,6 +213,17 @@ func TestWireCaptureNeverHoldsTheKey(t *testing.T) {
 	client := &model.OpenAICompatClient{BaseURL: srv.URL, APIKey: apiKey, Model: "test-model", HTTP: srv.Client()}
 	if _, err := runOnce(t, baseInputs(), baseOptions(client)); err != nil {
 		t.Fatalf("Run: %v", err)
+	}
+	mu.Lock()
+	got := append([]string(nil), seen...)
+	mu.Unlock()
+	if len(got) == 0 {
+		t.Fatal("the provider received no call")
+	}
+	for _, header := range got {
+		if header != "Bearer "+apiKey {
+			t.Errorf("the provider saw Authorization = %q, want the key", header)
+		}
 	}
 
 	entries, err := os.ReadDir(dir)
