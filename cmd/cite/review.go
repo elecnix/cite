@@ -741,6 +741,22 @@ func rankForBudget(fs []model.ValidatedFinding) []model.ValidatedFinding {
 // old behaviour — let a stale, out-of-diff finding conclude the gate as
 // FOUND on a file with no diff, and could even promote a previous run's
 // non-blocking note to a blocker.
+//
+// This path decides blocking from what the sticky comment records, which is
+// only what is needed to match a live thread: fingerprint, path, category,
+// title and evidence lines. Four conjuncts of the §8 formula have no input
+// here and are therefore not applied: the repository's blocking_categories,
+// verified external claims, verified negative-existence claims, and certain
+// confidence. The carried finding is recorded as ConfidenceLikely, which is
+// what it is — nothing re-established certainty this run — so a carried
+// finding that Blocks is a record §8 cannot produce on the fresh path, and
+// a repository that removed a category from blocking_categories still sees
+// it block through carry-forward. gate.Decide trusts the Blocks flag rather
+// than re-deriving it, so the divergence reaches the verdict. Aligning the
+// two needs the sticky state to carry confidence and the claim dispositions,
+// and the repository configuration to be passed in here; neither is available
+// at this call site. See cmd/cite/carry_blocking_test.go, which pins what
+// both paths agree on and names what they do not.
 func carryIntoRecord(rec *model.RunRecord, prev *stickyState, toReview []string, manifest map[string]bool, diffs map[string]*scope.DiffFile) {
 	reviewing := map[string]bool{}
 	for _, p := range toReview {
