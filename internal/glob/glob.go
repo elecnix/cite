@@ -14,8 +14,10 @@
 //
 // Normalisation is applied to the pattern and to the name before matching: a
 // leading "/", a leading "./", repeated "//", "." and ".." elements are
-// resolved and a trailing "/" is dropped. So "/docs/**", "./docs/**",
-// "docs//**" and "docs/" name the same thing as "docs/**".
+// resolved and a trailing "/" is dropped. So "/docs/**", "./docs/**" and
+// "docs//**" all name the same thing as "docs/**". The trailing slash is not
+// a "and everything below it" spelling: "docs/" names the path "docs" and
+// nothing under it, which is what path.Clean leaves behind.
 //
 //   - "**", as a whole segment, matches zero or more whole segments, so
 //     "**/*.gen.go" matches both "c.gen.go" and "a/b/c.gen.go";
@@ -31,10 +33,12 @@
 //     has no spelling of "match every path" other than "**".
 //
 // The trailing slash is the one normalisation with a widening in it, and the
-// widening is bounded: "**/" canonicalises to "**" and therefore matches every
+// widening is bounded. "**/" canonicalises to "**" and therefore matches every
 // path, because a trailing slash carries no meaning and "**" is already the
-// universal pattern. A pattern naming a directory keeps that directory ("docs/"
-// means "docs"), and a pattern with no segments stays inert rather than
+// universal pattern; the paths_ignore dialect has always answered that way,
+// since path.Clean has always stripped the slash there. A pattern naming a
+// directory keeps that directory, so "docs/" stays "docs" and cannot reach
+// every path, and a pattern with no segments at all stays inert rather than
 // becoming the universal one.
 //
 // There is no brace expansion, no "**" inside a segment, and no "~" handling.
@@ -44,6 +48,10 @@
 //	Match("docs/*.md",    "docs/x/a.md") == false
 //	Match("/docs/**",     "docs/a/b.md") == true
 //	Match("./docs/*.md",  "docs/a.md")   == true
+//	Match("docs/",        "docs")        == true
+//	Match("docs/",        "docs/a.md")   == false
+//	Match("**/",          "anything")    == true
+//	Match(".",            "a.go")        == false
 package glob
 
 import (

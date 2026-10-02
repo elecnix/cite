@@ -50,6 +50,8 @@ var dialectCases = []dialectCase{
 	{"./**", "deep/a/b.go", true, "leading ./ on a bare **"},
 	{"**/", "a.go", true, "trailing slash is dropped"},
 	{"/internal/", "internal", true, "trailing slash names the directory itself"},
+	{"docs/", "docs", true, "and matches that path exactly"},
+	{"docs/", "docs/a.md", false, "a trailing slash is not an implicit **"},
 	{"//internal//**", "internal/a/b.go", true, "leading and inner duplicate slashes"},
 	{"docs/../docs/*.md", "docs/a.md", true, ".. is resolved"},
 	{"/docs/*.md", "./docs/a.md", true, "the name is normalised too"},
