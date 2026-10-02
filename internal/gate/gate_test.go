@@ -6,6 +6,7 @@ import (
 
 	"github.com/elecnix/cite/internal/config"
 	"github.com/elecnix/cite/internal/model"
+	"github.com/elecnix/cite/internal/scope"
 )
 
 func baseRecord() *model.RunRecord {
@@ -133,7 +134,7 @@ func TestDecideCouldNotEvaluateMatrix(t *testing.T) {
 			mutate: func(r *model.RunRecord, o *Options) {
 				r.Files = []model.FileOutcome{
 					{Path: "big.go", State: model.FileReviewed},
-					{Path: "small.go", State: model.FileSkipped, Reason: scopeSkipRiskCutoff},
+					{Path: "small.go", State: model.FileSkipped, Reason: scope.SkipReasonRiskCutoff},
 				}
 				r.Coverage = model.Coverage{APIFiles: 2, Reviewed: 1, Complete: false}
 			},
@@ -170,23 +171,46 @@ func TestDecideCouldNotEvaluateMatrix(t *testing.T) {
 	}
 }
 
-// scopeSkipRiskCutoff mirrors the scope package constant without importing
-// it twice under test; the value is asserted to match below.
-const scopeSkipRiskCutoff = "risk_rank_cutoff"
+// TestApprovedSkipReasonsFollowScope pins the gate's approved-skip decision to
+// scope's. The gate holds no list of its own: every reason scope names is
+// classified through scope.IsApprovedSkipReason, and Decide's verdict has to
+// agree with that classification for each one. A second copy of the vocabulary
+// inside the gate is free to drift from scope's, and the only symptom of that
+// drift is a gate that approves a skip nobody reviewed, or rejects a skip scope
+// already counts as coverage — so the check runs the decision, not a list.
+func TestApprovedSkipReasonsFollowScope(t *testing.T) {
+	reasons := []string{
+		scope.SkipReasonBinary,
+		scope.SkipReasonVendored,
+		scope.SkipReasonLockfile,
+		scope.SkipReasonGenerated,
+		scope.SkipReasonMinified,
+		scope.SkipReasonIgnored,
+		scope.SkipReasonOversized,
+		scope.SkipReasonRiskCutoff,
+		"not-a-skip-reason-scope-knows",
+	}
+	for _, reason := range reasons {
+		t.Run(reason, func(t *testing.T) {
+			rec := baseRecord()
+			rec.Files = []model.FileOutcome{{Path: "a.go", State: model.FileSkipped, Reason: reason}}
+			rec.Coverage = model.Coverage{APIFiles: 1, ApprovedSkip: 1, Complete: true}
 
-func TestApprovedSkipReasonsMatchScope(t *testing.T) {
-	got := map[string]bool{}
-	for _, r := range ApprovedSkipReasons {
-		got[r] = true
-	}
-	for _, want := range []string{"binary", "vendored", "lockfile", "generated", "minified", "paths_ignore", "oversized"} {
-		if !got[want] {
-			t.Errorf("ApprovedSkipReasons missing %q", want)
-		}
-		delete(got, want)
-	}
-	for extra := range got {
-		t.Errorf("ApprovedSkipReasons has unexpected entry %q", extra)
+			v, why := Decide(rec, config.Default(), Options{})
+
+			if scope.IsApprovedSkipReason(reason) {
+				if v != model.VerdictPass {
+					t.Fatalf("approved skip %q gave %s (%q), want PASS", reason, v, why)
+				}
+				return
+			}
+			if v != model.VerdictCouldNotEvaluate {
+				t.Fatalf("unapproved skip %q gave %s (%q), want COULD_NOT_EVALUATE", reason, v, why)
+			}
+			if !strings.Contains(why, "unapproved skip") {
+				t.Fatalf("reason %q should name the unapproved skip", why)
+			}
+		})
 	}
 }
 
