@@ -75,8 +75,14 @@ check_capture() {
   # A capture carries the prompt, so its retention is held below the 14 days
   # the run record keeps and well under the 30 of the failure archive.
   retention="$(step_block "$action" "Archive the wire capture" | sed -n 's/^        retention-days: //p')"
-  if [ -z "$retention" ] || [ "$retention" -gt 7 ] 2>/dev/null; then
-    fail "$action: the wire capture is kept for ${retention:-no} days, want at most 7"
+  # The bound is checked as a bound, not as a string: `[ x -gt 7 ]` on a
+  # value that is not a number exits non-zero with a diagnostic on stderr,
+  # which a silenced check would read as "compliant". An unparseable value
+  # is its own failure, then the bound applies to a real number.
+  if ! printf '%s' "$retention" | grep -qE '^[0-9]+$'; then
+    fail "$action: the wire capture retention-days is not a number: '${retention:-none}'"
+  elif [ "$retention" -gt 7 ]; then
+    fail "$action: the wire capture is kept for $retention days, want at most 7"
   fi
 }
 
@@ -286,6 +292,7 @@ runs:
       with:
         name: cite-wire-x
         path: ${{ runner.temp }}/elsewhere/
+        retention-days: 7d
     - name: Something else
       id: archive
       if: success() && inputs.archive_run_record == 'true'
@@ -299,7 +306,9 @@ misplaced=$?
 fails="$real_fails"
 # The sample misplaces 9 fields: four of the run record's (the default, the
 # id, the if and the retention) and five of the capture's (the input default,
-# the gate, the name suffix, the upload path and the missing retention).
+# the gate, the name suffix, the upload path, and a retention of `7d` where an
+# integer bound applies). Changing 9 here must fail this script, which is how
+# the count stays honest as checks are added.
 if [ "$misplaced" -ne 9 ]; then
   fail "the checks found $misplaced of the 9 misplaced fields in the sample action"
 fi
