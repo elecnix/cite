@@ -468,10 +468,18 @@ func (c *Capture) body(text string) CapturedBody {
 		return b
 	}
 	cut := raw[:c.maxBytes]
-	// Never end the document mid-rune: a partial UTF-8 sequence would make
-	// the JSON document itself undecodable, which is the one failure this
-	// feature exists to prevent.
-	for len(cut) > 0 && !utf8.Valid(cut) {
+	// Drop at most the last few bytes, never a rescan of the prefix. A cut
+	// that lands inside a rune would make the JSON document undecodable,
+	// which is the one failure this feature exists to prevent, and a
+	// trailing rune is at most utf8.UTFMax-1 bytes wide. An invalid byte
+	// earlier in the body is a different matter: json encoding replaces it
+	// with U+FFFD, so the document still decodes, and trimming back to the
+	// first invalid byte would throw away everything after it for nothing.
+	for n := 0; n < utf8.UTFMax && len(cut) > 0; n++ {
+		r, size := utf8.DecodeLastRune(cut)
+		if r != utf8.RuneError || size != 1 {
+			break
+		}
 		cut = cut[:len(cut)-1]
 	}
 	b.Text = string(cut)

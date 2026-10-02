@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // captureFile is the document of one call.
@@ -174,13 +175,16 @@ func TestCaptureHoldsRequestAndRawResponse(t *testing.T) {
 	}
 	// The captured body is the raw completion envelope, in which the
 	// completion's own text sits JSON-escaped as a string value.
-	if doc.Response == nil || !strings.Contains(doc.Response.Text, `schema_version`) {
+	if doc.Response == nil {
+		t.Fatalf("the response capture has no body at all: %+v", doc)
+	}
+	if !strings.Contains(doc.Response.Text, `schema_version`) {
 		t.Errorf("the response capture has no raw body: %+v", doc.Response)
 	}
 	if !holdsText(t, doc.Response.Text, resp.Text) {
 		t.Errorf("the response capture is not the provider's own bytes: %+v", doc.Response)
 	}
-	if doc.Response == nil || doc.Response.Bytes == 0 || doc.Response.SHA256 == "" {
+	if doc.Response.Bytes == 0 || doc.Response.SHA256 == "" {
 		t.Errorf("the response capture has no size or hash: %+v", doc.Response)
 	}
 	if doc.Request.SHA256 == "" {
@@ -678,4 +682,40 @@ func captureOutput(t *testing.T, fn func()) (stdout, stderr string) {
 	_ = outW.Close()
 	_ = errW.Close()
 	return <-outCh, <-errCh
+}
+
+// A cut body must lose at most the trailing partial rune. A body that also
+// holds an invalid byte in the middle keeps everything after that byte: json
+// encoding replaces the invalid byte with U+FFFD, so the document still
+// decodes, and trimming back to the first invalid byte would discard the rest
+// of the body the capture exists to preserve.
+func TestCaptureCutKeepsEverythingAfterAnInvalidByte(t *testing.T) {
+	cap := captureIn(t, captureMinMaxBytes)
+	// Valid text, then an invalid byte a third of the way in, then more
+	// valid text, then enough filler to pass the ceiling.
+	body := []byte(strings.Repeat("a", captureMinMaxBytes/3))
+	body = append(body, 0xff)
+	body = append(body, []byte(strings.Repeat("b", 4*captureMinMaxBytes))...)
+	srv := newTestServer(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(body)
+	})
+	defer srv.Close()
+	c := testClient(srv.URL)
+	c.HTTP = srv.Client()
+	if _, err := c.Complete(context.Background(), CompletionRequest{System: "s", User: "u", MaxOutputTokens: 8}); err == nil {
+		t.Fatal("Complete: want an error for a body that is not a completion")
+	}
+	doc := readCapture(t, cap.Dir(), 1)
+	if doc.Response == nil || !doc.Response.Truncated {
+		t.Fatalf("the response body was not truncated: %+v", doc.Response)
+	}
+	// The document decoded, which is the point of the loop, and it kept
+	// everything up to the ceiling minus at most one rune.
+	if n := len(doc.Response.Text); n < captureMinMaxBytes-utf8.UTFMax {
+		t.Errorf("kept %d bytes, want at least %d: the cut dropped more than a partial rune",
+			n, captureMinMaxBytes-utf8.UTFMax)
+	}
+	if doc.Response.OriginalBytes != len(body) {
+		t.Errorf("original_bytes = %d, want %d", doc.Response.OriginalBytes, len(body))
+	}
 }
