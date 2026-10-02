@@ -249,6 +249,12 @@ findingsLoop:
 		// finding from the record, which is not a boolean this expression
 		// can fold in. The candidate is computed first so the verifier is
 		// only asked about a finding that could block at all.
+		//
+		// It also costs a call, which is why it stays out of the expression.
+		// When no DiscriminativeVerifier is configured the conjunct is not
+		// applied at all, and nothing in the record says so: the interface's
+		// only implementation is a test fake, so the pass this comment
+		// describes does not run in production. Recorded in #139.
 		blocks := model.BlockingCandidate(model.BlockInputs{
 			Category:               f.Category,
 			BlockingSet:            r.blockingSet,
@@ -272,21 +278,22 @@ findingsLoop:
 			if err != nil {
 				// Verifier failure fails open to a note, never to a block:
 				// an unverifiable verdict must not become a merge blocker.
-				vf.VerifierResult = "error"
+				vf.VerifierResult = string(VerifierError)
 				blocks = false
 				r.logf("discriminative verifier error for %s/%s: %v", fc.path, f.ID, err)
 			} else {
-				vf.VerifierResult = res
+				vf.VerifierResult = string(res)
 				switch res {
-				case "supported":
+				case VerifierSupported:
 					// blocks stays true
-				case "unsupported":
+				case VerifierUnsupported:
 					drop(&vf.Finding, model.DropVerifierUnsupported, "discriminative verifier returned unsupported")
 					continue
 				default:
-					// "needs-context-not-provided" (and any other answer)
-					// is genuinely the right answer often — the reviewer
-					// only saw one file. It cannot block; it stays a note.
+					// VerifierNeedsContextNotProvided (and any other
+					// answer) is genuinely the right answer often — the
+					// reviewer only saw one file. It cannot block; it
+					// stays a note.
 					blocks = false
 				}
 			}
