@@ -32,6 +32,13 @@ compat_profile: "2026-08"     # which snapshot of the instruction formats to hon
 
 Seven keys. A v1 with more than ten has already lost.
 
+The action's inputs are a separate surface from these keys, and two of them
+govern what a failing run leaves behind rather than how a review reads code:
+`archive_on_failure` and `capture_wire`. `capture_wire` is deliberately not a
+key here. It is a one-run debugging switch, the key budget is spent, and a
+config file is read from the base ref on every run, which is the wrong place
+for a switch an operator flips while diagnosing one failure.
+
 ## Providers
 
 The configuration keys above cover almost everyone; the `providers` block

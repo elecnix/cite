@@ -58,6 +58,37 @@ Already have instruction files (`.github/copilot-instructions.md`,
 `AGENTS.md`, `*.instructions.md`)? Cite reads them from the base ref and tells
 you what it did with them.
 
+## Diagnostics
+
+Every run publishes a check run, and every finding links the run record that
+produced it. A failed run uploads a forensics artifact (the step log and the
+run record, kept 14 to 30 days), which answers what the run concluded and what
+it spent. It cannot answer what your provider actually returned, because a
+response Cite's schema rejected leaves no bytes behind. When you need those
+bytes, opt into the wire capture:
+
+```yaml
+      - uses: elecnix/cite@dd49586e9858a8af211a1535909b95ea5e79b7f5  # v0.11.4
+        with:
+          capture_wire: true
+        env:
+          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
+```
+
+That uploads a `cite-wire-<run id>-…` artifact, kept 7 days, with one masked
+document per model call: the exact request body sent, the exact raw response
+received before any parsing, the HTTP status and headers, and an outcome of
+`ok`, `parse-failure` or `http-error`. Masking is allowlist-first, so a
+request header keeps its value only if Cite set it, and your provider key is
+replaced wherever it appears, including inside a provider's own error page.
+
+Read the privacy cost before turning it on: a capture contains the prompt, and
+the prompt contains the diff under review. A capture of a private repository is
+private review material, and the masking covers credentials only. The input is
+off by default for that reason. [docs/troubleshooting.md](docs/troubleshooting.md)
+has the field list, the masking rules and the two knobs (`CITE_CAPTURE_DIR`,
+`CITE_CAPTURE_MAX_BYTES`).
+
 ## The noise contract
 
 - At most 10 comments per review, at most 2 per file. Small pull requests get
@@ -97,7 +128,7 @@ The `--report json|markdown` path runs the reviewer against the real pull reques
 - [docs/noise.md](docs/noise.md): the budget formula and category table
 - [docs/security.md](docs/security.md) covers the invariants, the fork case, and the capabilities Cite works without.
 - [docs/downstream-contract.md](docs/downstream-contract.md): what an agent consuming these comments must be told
-- [docs/troubleshooting.md](docs/troubleshooting.md)
+- [docs/troubleshooting.md](docs/troubleshooting.md): the diagnostic chain, the forensics archive and the opt-in wire capture
 - [CONFORMANCE.md](CONFORMANCE.md): the compatibility tiers, dated
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 
