@@ -65,8 +65,18 @@ func runReReview(args []string) error {
 	since := fs.Duration("since", 24*time.Hour, "look-back window for merges and bypass-log entries (e.g. 720h)")
 	dryRun := fs.Bool("dry-run", false, "print findings instead of creating issues")
 	cfgPath := fs.String("config", ".github/cite.yml", "config file (optional)")
+	structuredOutput := fs.String("structured-output", os.Getenv("CITE_STRUCTURED_OUTPUT"),
+		"how the model returns schema-shaped JSON: response_format (default) or tools")
+	reasoningEffort := fs.String("reasoning-effort", os.Getenv("CITE_REASONING_EFFORT"),
+		"reasoning_effort sent to the provider; empty omits the field")
+	requireParameters := fs.Bool("require-parameters", envBool("CITE_REQUIRE_PARAMETERS"),
+		"send the router-only provider.require_parameters field, so a router refuses endpoints that drop the request parameters")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	mode, err := model.ParseStructuredOutputMode(*structuredOutput)
+	if err != nil {
+		return fmt.Errorf("re-review: %w", err)
 	}
 	if *repoFlag == "" {
 		fs.Usage()
@@ -110,7 +120,7 @@ func runReReview(args []string) error {
 		if len(entries) == 0 {
 			continue // bypass log exists but nothing inside the window
 		}
-		findings, verdict, reason, err := rereviewMerged(ctx, c, cfg, owner, repo, mp)
+		findings, verdict, reason, err := rereviewMerged(ctx, c, cfg, owner, repo, mp, mode, *reasoningEffort, *requireParameters)
 		if err != nil {
 			logToStderr("warning: re-reviewing #%d failed: %v", mp.Number, err)
 			failed++
@@ -179,7 +189,7 @@ func parseBypassLog(body string, cutoff time.Time) []bypassEntry {
 // from the base ref, reviewer.New + gate.Decide — exactly like
 // `cite review --pr`, but with no check run, no review posting, no sticky
 // state: GitHub surfaces are untouched. Only blocking findings come back.
-func rereviewMerged(ctx context.Context, c *githubclient.Client, cfg *config.Config, owner, repo string, mp githubclient.MergedPR) ([]model.ValidatedFinding, model.Verdict, string, error) {
+func rereviewMerged(ctx context.Context, c *githubclient.Client, cfg *config.Config, owner, repo string, mp githubclient.MergedPR, structuredOutput model.StructuredOutputMode, reasoningEffort string, requireParameters bool) ([]model.ValidatedFinding, model.Verdict, string, error) {
 	pr, err := c.GetPR(ctx, mp.Number)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("fetching #%d: %w", mp.Number, err)
@@ -218,33 +228,23 @@ func rereviewMerged(ctx context.Context, c *githubclient.Client, cfg *config.Con
 		}
 	}
 
-	// Per-file patches → one parsed diff set for anchor validation.
-	diffs := map[string]*scope.DiffFile{}
-	var sb strings.Builder
-	for _, e := range entries {
-		if x, ok := extras[e.Path]; ok && x.Patch != "" {
-			sb.WriteString(x.Patch)
-			sb.WriteString("\n")
-		}
-	}
-	if sb.Len() > 0 {
-		if d, perr := scope.ParseUnifiedDiff(sb.String()); perr == nil {
-			for _, df := range d.Files {
-				diffs[df.Path] = df
-			}
-		}
-	}
+	// Per-file patches → one parsed diff set for anchor validation, exactly
+	// as `cite review --pr` assembles it.
+	diffs := buildRereviewDiffs(entries, extras, logToStderr)
 
 	modelClient, err := model.NewOpenAICompatClient()
 	if err != nil {
 		return nil, model.VerdictCouldNotEvaluate, err.Error(), err
 	}
 	r := reviewer.New(reviewer.Options{
-		Cfg:      cfg,
-		Client:   modelClient,
-		Instr:    instr,
-		Verifier: &apiVerifier{c: c, owner: owner, repo: repo, ref: pr.BaseRef, tree: baseTree},
-		Logger:   logToStderr,
+		Cfg:               cfg,
+		Client:            modelClient,
+		Instr:             instr,
+		Verifier:          &apiVerifier{c: c, owner: owner, repo: repo, ref: pr.BaseRef, tree: baseTree},
+		Logger:            logToStderr,
+		StructuredOutput:  structuredOutput,
+		ReasoningEffort:   reasoningEffort,
+		RequireParameters: requireParameters,
 	})
 	rec, err := r.Run(ctx, reviewer.Inputs{
 		Manifest:      entries,
@@ -273,6 +273,38 @@ func rereviewMerged(ctx context.Context, c *githubclient.Client, cfg *config.Con
 		}
 	}
 	return blocking, verdict, reason, nil
+}
+
+// buildRereviewDiffs turns the PR-files patches into the parsed diff set the
+// reviewer validates anchors against. GitHub's files API returns each patch as
+// bare @@ hunks with no "diff --git", "---" or "+++" lines, so every patch is
+// parsed on its own with scope.ParseFilePatch, which synthesises the headers
+// from the manifest's known path and status — the same assembly `cite review
+// --pr` uses.
+//
+// Batching the patches into one ParseUnifiedDiff call does not work: the very
+// first hunk arrives with no file header and the parse fails with "hunk header
+// before any file header". A patch that fails to parse is logged loudly and
+// skipped: findings for that one file are dropped anchor_invalid (fail-closed),
+// but one unparseable file must not silently neuter anchor validation for the
+// whole run — which is what swallowing the whole-batch error did. Every finding
+// the re-review produces needs an anchorable post-change line, and without
+// hunks there are none, so an empty diff map discards the entire review.
+func buildRereviewDiffs(entries []scope.ManifestEntry, extras map[string]githubclient.FileExtra, logf func(string, ...any)) map[string]*scope.DiffFile {
+	diffs := map[string]*scope.DiffFile{}
+	for _, e := range entries {
+		x, ok := extras[e.Path]
+		if !ok || x.Patch == "" {
+			continue // binary, too large, or deleted: no textual hunks to validate against
+		}
+		df, perr := scope.ParseFilePatch(e.Path, e.Status, x.Patch)
+		if perr != nil {
+			logf("WARNING: diff parse failed for %s; anchors in this file cannot validate: %v", e.Path, perr)
+			continue
+		}
+		diffs[e.Path] = df
+	}
+	return diffs
 }
 
 // fileEscapedFinding opens ONE issue per blocking finding — the escaped
