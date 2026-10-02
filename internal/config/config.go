@@ -432,57 +432,152 @@ func (c *Config) checkModelRefs(probs *[]Problem) {
 	}
 }
 
-// Role resolves the effective settings for one of the three roles (review,
-// triage, assemble). Defaults: review concurrency 8, triage and assemble
-// timeouts of 15 minutes. The review timeout has no fixed default: it derives
-// from the resolved output cap (60s base + tokens ÷ 128 tok/s, floored at 15
-// minutes, issue #28) unless an explicit roles.review.timeout is configured.
-// An unset role model falls back to c.Model.
-func (c *Config) Role(role model.Role) model.RoleConfig {
-	rc := model.RoleConfig{}
-	if spec, ok := c.Roles[role]; ok {
-		rc.Model = spec.Model
-		rc.MaxOutputTokens = spec.MaxOutputTokens
+// RoleDefaults carries the built-in values applied when the configuration
+// specifies nothing. They are arguments rather than package constants
+// because the built-in output cap is stated by the caller that owns the
+// role: internal/reviewer sizes the review cap at
+// DefaultReviewMaxOutputTokens and the triage cap at 8192, and a caller that
+// states none gets no cap rather than a wrong one.
+type RoleDefaults struct {
+	Timeout     time.Duration
+	Concurrency int
+	MaxTokens   int
+}
+
+// resolveRole is the ONE ladder that resolves a role's model, deadline,
+// output cap and concurrency. Every layer, most specific first:
+//
+//  1. roles.<role>.<field> — an explicit operator instruction. It wins
+//     outright: silently shrinking a number someone wrote down would be the
+//     kind of invisible behaviour change §6 forbids.
+//  2. the resolved model entry's max_tokens, for the OUTPUT CAP only — what
+//     the model says it can emit. This both raises the cap on a roomy model
+//     and lowers it on a narrow one, which is the only way Cite can know a
+//     ceiling it cannot query.
+//  3. the caller's built-in default.
+//
+// The review deadline is the one field with no fixed default: it derives
+// from the SAME resolved cap (issue #28) via DerivedReviewTimeout, so a
+// larger token budget buys proportionally more wall clock instead of dying
+// at "context deadline exceeded". Triage and assemble keep the fixed
+// deadline in def.Timeout; they emit bounded output regardless of file
+// size. An unset role model falls back to c.Model.
+func (c *Config) resolveRole(role model.Role, def RoleDefaults) model.RoleConfig {
+	if c == nil {
+		// An absent configuration is the default configuration: that is
+		// exactly what Load returns for a missing file, and it keeps the nil
+		// guard on ModelMaxTokens from resolving to a different answer than
+		// a written-out one.
+		return Default().resolveRole(role, def)
+	}
+	rc := model.RoleConfig{MaxOutputTokens: def.MaxTokens}
+	spec, hasSpec := c.Roles[role]
+	if hasSpec {
 		rc.Concurrency = spec.Concurrency
+		if spec.MaxOutputTokens > 0 {
+			rc.MaxOutputTokens = spec.MaxOutputTokens
+		}
 		if spec.Timeout != "" {
-			if d, err := time.ParseDuration(spec.Timeout); err == nil {
+			// A pin that does not parse to a positive duration is not a
+			// deadline; Load rejects it before a run starts.
+			if d, err := time.ParseDuration(spec.Timeout); err == nil && d > 0 {
 				rc.Timeout = d
 				rc.TimeoutStr = spec.Timeout
 			}
 		}
 	}
-	if rc.Model == "" {
-		rc.Model = c.Model
+	rc.Model = c.roleModel(role)
+	if rc.Concurrency <= 0 {
+		rc.Concurrency = def.Concurrency
 	}
-	switch role {
-	case model.RoleReview:
-		if rc.Concurrency <= 0 {
-			rc.Concurrency = DefaultReviewConcurrency
+	// Layer 2 applies only when the operator did not pin the cap themselves:
+	// an explicit number outranks what the model advertises, in either
+	// direction.
+	if !hasSpec || spec.MaxOutputTokens <= 0 {
+		if n := c.modelEntryMaxTokens(rc.Model); n > 0 {
+			rc.MaxOutputTokens = n
 		}
-		if rc.Timeout <= 0 {
-			// Derive from the same resolved cap the call will carry (issue
-			// #28). rc.MaxOutputTokens holds the roles.review.max_output_tokens
-			// layer; fall back to the resolved model entry's max_tokens, then
-			// to the built-in default inside DerivedReviewTimeout.
-			tokens := rc.MaxOutputTokens
-			if tokens <= 0 {
-				tokens = c.modelEntryMaxTokens(rc.Model)
-			}
-			rc.Timeout = DerivedReviewTimeout(tokens)
-			rc.TimeoutStr = fmt.Sprintf("%ds", int(rc.Timeout.Seconds()))
+	}
+	if rc.Timeout <= 0 {
+		if role == model.RoleReview {
+			rc.Timeout = DerivedReviewTimeout(rc.MaxOutputTokens)
+		} else {
+			rc.Timeout = def.Timeout
 		}
-	case model.RoleTriage:
-		if rc.Timeout <= 0 {
-			rc.Timeout = DefaultTriageTimeout
-			rc.TimeoutStr = "15m"
-		}
-	case model.RoleAssemble:
-		if rc.Timeout <= 0 {
-			rc.Timeout = DefaultAssembleTimeout
-			rc.TimeoutStr = "15m"
-		}
+		rc.TimeoutStr = fmt.Sprintf("%ds", int(rc.Timeout.Seconds()))
 	}
 	return rc
+}
+
+// roleModel resolves the model reference for one role: the role's own model
+// when it declares one, else the top-level model.
+func (c *Config) roleModel(role model.Role) string {
+	if c == nil {
+		return ""
+	}
+	if spec, ok := c.Roles[role]; ok && spec.Model != "" {
+		return spec.Model
+	}
+	return c.Model
+}
+
+// Role resolves the effective settings for one of the three roles (review,
+// triage, assemble), stating the built-in defaults this package owns:
+// review concurrency DefaultReviewConcurrency, the review output cap
+// DefaultReviewMaxOutputTokens, and the triage and assemble timeouts of 15
+// minutes. The review timeout has no fixed default: it derives from the
+// resolved output cap (ReviewTimeoutBase + tokens ÷ AssumedGenerationRate,
+// floored at DefaultReviewTimeout, issue #28) unless an explicit
+// roles.review.timeout is configured.
+//
+// It is the same ladder RoleSettings runs, with the package defaults; the
+// reviewer calls RoleSettings with the built-in caps it sizes for itself.
+// One ladder, two entry points.
+func (c *Config) Role(role model.Role) model.RoleConfig {
+	def := RoleDefaults{Timeout: configDefaultRoleTimeout(role)}
+	if role == model.RoleReview {
+		def.Concurrency = DefaultReviewConcurrency
+		def.MaxTokens = DefaultReviewMaxOutputTokens
+	}
+	return c.resolveRole(role, def)
+}
+
+// configDefaultRoleTimeout is the fixed deadline default for the two roles
+// that have one; the review role returns 0 because its deadline derives from
+// the output cap instead.
+func configDefaultRoleTimeout(role model.Role) time.Duration {
+	switch role {
+	case model.RoleTriage:
+		return DefaultTriageTimeout
+	case model.RoleAssemble:
+		return DefaultAssembleTimeout
+	}
+	return 0
+}
+
+// RoleSettings resolves the same ladder as Role with the caller's built-in
+// defaults supplied explicitly, for a call site whose built-in output cap is
+// not this package's to state. Every field it returns is the effective one:
+// the deadline the call carries, the cap it is bounded by, the concurrency
+// the wave runs at.
+func (c *Config) RoleSettings(role model.Role, def RoleDefaults) model.RoleConfig {
+	return c.resolveRole(role, def)
+}
+
+// RoleTimeoutExplicit reports whether the configuration pins a literal,
+// parsable, positive roles.<role>.timeout. Callers that must word an error
+// differently for a pinned and a derived deadline ask here instead of
+// re-parsing the timeout string themselves.
+func (c *Config) RoleTimeoutExplicit(role model.Role) bool {
+	if c == nil {
+		return false
+	}
+	spec, ok := c.Roles[role]
+	if !ok || spec.Timeout == "" {
+		return false
+	}
+	d, err := time.ParseDuration(spec.Timeout)
+	return err == nil && d > 0
 }
 
 // ModelMaxTokens returns the output cap advertised by the model a role
@@ -500,7 +595,23 @@ func (c *Config) ModelMaxTokens(role model.Role) int {
 	if c == nil {
 		return 0
 	}
-	return c.modelEntryMaxTokens(c.Role(role).Model)
+	return c.modelEntryMaxTokens(c.roleModel(role))
+}
+
+// DeadlineFormula renders the derived-deadline arithmetic for operator-facing
+// prose, naming capKey as the configuration key that drives it. It exists so
+// the constants are quoted once: a sentence that transcribes "60s +
+// tokens/128" into a string literal starts lying the moment either constant
+// moves, and no test catches a stale number the way a test catches a changed
+// formula.
+func DeadlineFormula(capKey string) string {
+	return fmt.Sprintf("%ds + %s/%d tok/s, floored at %s",
+		int(ReviewTimeoutBase/time.Second), capKey, AssumedGenerationRate, DefaultReviewTimeout)
+}
+
+// ReviewTimeoutFormula is DeadlineFormula for the review role's cap key.
+func ReviewTimeoutFormula() string {
+	return DeadlineFormula("roles.review.max_output_tokens")
 }
 
 // modelEntryMaxTokens resolves one "provider/id" reference against the
