@@ -436,6 +436,12 @@ func TestCaptureMasksKeyValueAnywhereItAppears(t *testing.T) {
 			if doc.Response == nil || !strings.Contains(doc.Response.Text, Redacted) {
 				t.Errorf("the echoed key was not marked as masked: %+v", doc.Response)
 			}
+			// The document says it masked something. A counter that read zero
+			// while the body was rewritten would leave an operator unable to
+			// tell masking from a body that never held the key.
+			if doc.Redaction.SecretValuesMasked < 1 {
+				t.Errorf("secret_values_masked = %d, want at least 1 for a body that held the key", doc.Redaction.SecretValuesMasked)
+			}
 			if doc.Usage != nil {
 				t.Error("a failed call has no usage to record")
 			}

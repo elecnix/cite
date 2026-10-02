@@ -397,8 +397,12 @@ func (c *Capture) redact(call *CaptureCall) *CaptureCall {
 		out.Redaction.SecretValuesMasked += n
 	}
 	if out.Response != nil {
+		// Both counts are added. Keeping only the second would let a
+		// document that masked the key out of the body report zero, which
+		// is the number an operator reads to see that masking ran.
 		var n int
 		out.Response.Text, n = c.scrub(out.Response.Text)
+		out.Redaction.SecretValuesMasked += n
 		out.Response.TruncationNote, n = c.scrub(out.Response.TruncationNote)
 		out.Redaction.SecretValuesMasked += n
 	}
