@@ -87,6 +87,7 @@ func TestRereviewDiffsAnchorableCoversAddedLines(t *testing.T) {
 func TestRereviewDiffsSkipsUnpatchedAndIsolatesBadPatch(t *testing.T) {
 	entries := []scope.ManifestEntry{
 		{Status: "M", Path: "good.go", Adds: 1},
+		{Status: "M", Path: "bad.go", Adds: 1},
 		{Status: "M", Path: "binary.png"},
 		{Status: "D", Path: "gone.go"},
 	}
@@ -95,13 +96,20 @@ func TestRereviewDiffsSkipsUnpatchedAndIsolatesBadPatch(t *testing.T) {
 			Filename: "good.go",
 			Patch:    "@@ -1,1 +1,2 @@\n ctx\n+added\n",
 		},
+		"bad.go": {
+			Filename: "bad.go",
+			Patch:    "@@ this is not a hunk header @@\n ctx\n",
+		},
 		"binary.png": {Filename: "binary.png", Patch: ""},
 	}
 	diffs := buildRereviewDiffs(entries, extras, t.Logf)
 	if len(diffs) != 1 {
-		t.Fatalf("got %d diff files, want exactly the one patched file: %v", len(diffs), diffs)
+		t.Fatalf("got %d diff files, want exactly the one parseable patched file: %v", len(diffs), diffs)
 	}
 	if _, ok := diffs["good.go"]; !ok {
-		t.Fatalf("patched file missing from diff map: %v", diffs)
+		t.Fatalf("a file with an unparseable patch discarded the healthy ones: %v", diffs)
+	}
+	if _, ok := diffs["bad.go"]; ok {
+		t.Fatalf("unparseable patch was kept in the diff map: %v", diffs)
 	}
 }
