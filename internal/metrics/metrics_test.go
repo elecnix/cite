@@ -57,6 +57,30 @@ func TestSpanChangedAllQuotesMustSurvive(t *testing.T) {
 	}
 }
 
+// A quote that spans several lines is the ordinary shape for a multi-line
+// finding, and the head content still contains it verbatim. Normalisation
+// collapses the newlines on BOTH sides, so the span survives and nothing was
+// actioned. Normalising line by line and rejoining with a literal newline
+// made every multi-line quote unsatisfiable, which reported a fixed span for
+// code that never moved.
+func TestSpanChangedMultiLineQuoteSurvives(t *testing.T) {
+	head := []byte("func f() {\n\tif !escaped {\n\t\tel.innerHTML = user.displayName\n\t}\n}\n")
+	fs := []model.Evidence{ev(2, "if !escaped {\n\t\tel.innerHTML = user.displayName")}
+	if SpanChanged(fs, head) {
+		t.Fatal("a multi-line quote still present at head must not count as changed")
+	}
+}
+
+// The same span with the newline replaced by a space in the file: still
+// unchanged, because the normaliser collapses whitespace on both sides.
+func TestSpanChangedMultiLineQuoteReflowed(t *testing.T) {
+	head := []byte("func f() {\n\tif !escaped { el.innerHTML = user.displayName }\n}\n")
+	fs := []model.Evidence{ev(2, "if !escaped {\n\t\tel.innerHTML = user.displayName")}
+	if SpanChanged(fs, head) {
+		t.Fatal("a reflowed multi-line span is whitespace drift, not a change")
+	}
+}
+
 // Empty evidence cannot be verified either way; it must never claim action.
 func TestSpanChangedEmptyEvidence(t *testing.T) {
 	if SpanChanged(nil, []byte("code")) {
