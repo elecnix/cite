@@ -30,6 +30,13 @@
 //   - an empty pattern (and ".", "/", "./", "docs/..") matches nothing. Cite
 //     has no spelling of "match every path" other than "**".
 //
+// The trailing slash is the one normalisation with a widening in it, and the
+// widening is bounded: "**/" canonicalises to "**" and therefore matches every
+// path, because a trailing slash carries no meaning and "**" is already the
+// universal pattern. A pattern naming a directory keeps that directory ("docs/"
+// means "docs"), and a pattern with no segments stays inert rather than
+// becoming the universal one.
+//
 // There is no brace expansion, no "**" inside a segment, and no "~" handling.
 //
 //	Match("**/*.gen.go", "c.gen.go")     == true

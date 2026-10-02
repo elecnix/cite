@@ -73,6 +73,10 @@ var dialectCases = []dialectCase{
 	{"docs/..", "a.go", false, "resolves to the root"},
 	{"a//b/*.go", "a/b/", false, "a pattern cannot match a prefix"},
 
+	// --- the one normalisation that reaches the widest pattern ----------
+	{"**/", "a.go", true, "a trailing slash carries no meaning"},
+	{"docs/**/", "docs/a/b.md", true, "trailing slash after ** is dropped"},
+
 	// --- the empty pattern must not become a match-everything ----------
 	{"**", "", true, "bare ** still matches the (degenerate) empty path"},
 }
@@ -185,6 +189,52 @@ func TestUnmatchedFindsThePreviouslyInertApplyTo(t *testing.T) {
 	old := Unmatched([]string{"docs/**/*.md", "*.md"}, []string{"README.md"})
 	if len(old) != 1 || old[0] != "docs/**/*.md" {
 		t.Fatalf("Unmatched = %q, want the one pattern that missed", old)
+	}
+}
+
+// TestTrailingSlashReachesTheUniversalPatternOnlyWhenItAlreadyIs pins the
+// one normalisation with a real widening in it, so the decision is on the
+// record instead of implied.
+//
+// A trailing slash is dropped, so "**/" canonicalises to "**". Under the
+// instruction dialect before this change "**/" matched nothing at all,
+// because that dialect split on "/" without normalising and then required an
+// empty final segment no path has. Under the paths_ignore dialect "**/" has
+// always matched everything, because path.Clean has always stripped the
+// slash there. Unifying makes applyTo agree with paths_ignore, which is the
+// whole point of the change, so the widening is intended rather than a
+// defect. What matters is that it is bounded: a pattern naming a directory
+// keeps that directory, and a pattern with no segments stays inert instead of
+// becoming the universal one.
+func TestTrailingSlashReachesTheUniversalPatternOnlyWhenItAlreadyIs(t *testing.T) {
+	const somePath = "internal/scope/glob.go"
+
+	universal := []string{"**", "**/", "/**", "./**", "//**", "**//", "/**/", "docs/../**"}
+	for _, p := range universal {
+		if got := Normalize(p); got != "**" {
+			t.Errorf("Normalize(%q) = %q, want %q", p, got, "**")
+		}
+		if !Match(p, somePath) {
+			t.Errorf("Match(%q, %q) = false, want true", p, somePath)
+		}
+	}
+
+	scoped := []string{"docs/", "/docs/", "docs/**/", "internal/", "./docs/"}
+	for _, p := range scoped {
+		if got := Normalize(p); got == "**" {
+			t.Errorf("Normalize(%q) reached the universal pattern", p)
+		}
+		if Match(p, somePath) {
+			t.Errorf("Match(%q, %q) = true, want false: a named directory is not every path", p, somePath)
+		}
+	}
+
+	// The direction that would actually invert: no segments must stay inert
+	// rather than becoming the widest pattern in the dialect.
+	for _, p := range []string{"", ".", "/", "./", "docs/..", "///"} {
+		if Match(p, somePath) {
+			t.Errorf("Match(%q, %q) = true, want false: an inert pattern must not widen", p, somePath)
+		}
 	}
 }
 
