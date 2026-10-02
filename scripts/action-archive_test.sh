@@ -54,7 +54,7 @@ step_block() {
 # checked separately, so a gate that reads a different input, or a step that
 # ignores the input, is caught rather than assumed consistent.
 check_capture() {
-  local action="$1" before="$fails" retention
+  local action="$1" retention
 
   input_block "$action" capture_wire | grep -q "^    default: 'false'$" ||
     fail "$action: capture_wire does not default to 'false' (a capture holds the prompt, so it is opt-in)"
@@ -70,8 +70,6 @@ check_capture() {
   if [ -z "$retention" ] || [ "$retention" -gt 7 ] 2>/dev/null; then
     fail "$action: the wire capture is kept for ${retention:-no} days, want at most 7"
   fi
-
-  return $((fails - before))
 }
 
 # check_action <file>: every rule this script holds action.yml to. Returns
@@ -109,6 +107,9 @@ check_action() {
   step_block "$action" "Archive the run record" | grep -q '^        retention-days: 14$' ||
     fail "$action: the run record is not kept for 14 days"
 
+  # check_capture adds to the same global counter the sample-action assertion
+  # reads, so its problems reach the verdict without a return value of its
+  # own to be dropped.
   check_capture "$action"
 
   return $((fails - before))

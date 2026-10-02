@@ -693,16 +693,21 @@ func captureFromEnv() *Capture {
 	maxBytes := DefaultCaptureMaxBytes
 	if v := os.Getenv(CaptureMaxEnvVar); v != "" {
 		n, err := strconv.Atoi(v)
+		// Each branch assigns the value it announces. A message that says
+		// "using 67108864" while the caller's larger number survives into
+		// the capture is a log that lies about the artifact's size, which is
+		// the one thing an operator reading it needs to be true.
 		switch {
 		case err != nil || n <= 0:
 			fmt.Fprintf(os.Stderr, "cite: %s=%q is not a byte count; using %d\n", CaptureMaxEnvVar, v, DefaultCaptureMaxBytes)
+			maxBytes = DefaultCaptureMaxBytes
+		case n > captureMaxBytesCeiling:
+			fmt.Fprintf(os.Stderr, "cite: %s=%d is above the %d-byte ceiling; using %d\n", CaptureMaxEnvVar, n, captureMaxBytesCeiling, captureMaxBytesCeiling)
+			maxBytes = captureMaxBytesCeiling
+		case n < captureMinMaxBytes:
+			fmt.Fprintf(os.Stderr, "cite: %s=%d is below the %d-byte floor; using %d\n", CaptureMaxEnvVar, n, captureMinMaxBytes, captureMinMaxBytes)
+			maxBytes = captureMinMaxBytes
 		default:
-			if n < captureMinMaxBytes {
-				fmt.Fprintf(os.Stderr, "cite: %s=%d is below the %d-byte floor; using %d\n", CaptureMaxEnvVar, n, captureMinMaxBytes, captureMinMaxBytes)
-			}
-			if n > captureMaxBytesCeiling {
-				fmt.Fprintf(os.Stderr, "cite: %s=%d is above the %d-byte ceiling; using %d\n", CaptureMaxEnvVar, n, captureMaxBytesCeiling, captureMaxBytesCeiling)
-			}
 			maxBytes = n
 		}
 	}
