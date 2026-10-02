@@ -93,22 +93,21 @@ string, or the output. Echo-exfiltration becomes impossible because there is
 nothing to echo. Provider errors are mapped to typed codes before rendering,
 never shown verbatim, because verbatim text can contain an echoed header.
 
-The one artifact that holds the exchange itself is the opt-in wire capture
-(`capture_wire`), and it is held to the same rule. Its masking is
-allowlist-first, because a list of credential header names is a guess about
-what a provider will send: request headers keep their values only for the five
-names Cite itself sets, and every other request header keeps its name and loses
-its value. Response headers are the diagnosis, so they are masked by
-credential name and then by value, and the value of the key is masked wherever
-it appears, including inside a provider's own reflected error page, as is an
-inline bearer token in a body. The URL is recorded as host and path, with the
-query string dropped. Masking by value is the part that closes the real gap:
-the key never enters a body in the first place, so what is being stopped is a
-gateway that reflects a header into its own page, not the ordinary path. What
-masking does not cover is the rest of the capture, which is the prompt, and
-therefore the diff under review. That is why the input is off by default and
-why the artifact is kept for 7 days: a capture is private review material, not
-a log, and Cite never prints one into a job log
+One artifact records the exchange itself, the opt-in wire capture
+(`capture_wire`), and it follows the same rule. Its masking is allowlist-first,
+because a list of credential header names is a guess about what a provider will
+send: request headers keep their values only for the five names Cite itself
+sets, and every other request header keeps its name and loses its value.
+Response headers are the diagnosis, so a name that reads like a credential is
+replaced, and every remaining value is scrubbed. Masking by value is the part that closes the
+real gap. The key never enters a body in the first place, so the only route into
+a capture is a gateway that reflects a header into its own page. A URL is
+recorded as host and path, and an inline bearer token in a body is replaced
+too.
+
+What masking does not cover is the rest of the capture, which is the prompt,
+and so the diff under review. The input is off by default for that reason, the
+artifact expires after 7 days, and Cite never prints a capture into a job log
 ([troubleshooting.md](troubleshooting.md#2c-the-wire-capture-opt-in)).
 
 ### I5: Model output is data, published through a strict schema

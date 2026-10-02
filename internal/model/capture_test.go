@@ -587,6 +587,10 @@ func TestCaptureFromEnv(t *testing.T) {
 		{env: "True", wantOn: true, wantBytes: DefaultCaptureMaxBytes},
 		{env: "true", maxEnv: "4096", wantOn: true, wantBytes: 4096},
 		{env: "true", maxEnv: "16", wantOn: true, wantBytes: captureMinMaxBytes},
+		// Above the ceiling: the message says the ceiling, so the ceiling is
+		// what the capture uses. A log that under-reports the artifact's
+		// size is worse than no log.
+		{env: "true", maxEnv: "1000000000", wantOn: true, wantBytes: captureMaxBytesCeiling},
 		{env: "true", maxEnv: "not-a-number", wantOn: true, wantBytes: DefaultCaptureMaxBytes},
 		{env: "true", maxEnv: "0", wantOn: true, wantBytes: DefaultCaptureMaxBytes},
 	} {
