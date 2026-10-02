@@ -201,10 +201,8 @@ fi
 mkdir -p "$work/drift/cmd/cite" "$work/drift/internal/model"
 cat > "$work/drift.yml" <<'EOF'
 runs:
-  using: composite
   steps:
     - name: Run Cite review
-      shell: bash
       run: |
         CITE_LOG="$RUNNER_TEMP/cite-output.log"
         CITE_RECORD="$RUNNER_TEMP/cite-run-record.json"
@@ -216,7 +214,6 @@ runs:
         CITE_UNUSED="$RUNNER_TEMP/cite-unused.json"
         cite review $ARGS 2>&1 | tee "$CITE_LOG"
     - name: Archive forensics on failure
-      uses: actions/upload-artifact@v4
       with:
         path: |
           ${{ runner.temp }}/cite-output.log
@@ -229,32 +226,23 @@ package cite
 
 import "os"
 
-func record() { _ = os.Getenv("CITE_RECORD_OUT") }
-EOF
-cat > "$work/drift/internal/model/secret.go" <<'EOF'
-package model
-
-import "os"
-
-func secret() { _ = os.Getenv("CITE_SECRET_OUT") }
+func record() {
+	_ = os.Getenv("CITE_RECORD_OUT")
+	_ = os.Getenv("CITE_SECRET_OUT")
+}
 EOF
 cat > "$work/drift/internal/model/capture.go" <<'EOF'
 package model
 
 import "os"
 
-func capture() { _ = os.Getenv("CITE_TRUNCATED_OUT") }
+func capture() {
+	_ = os.Getenv("CITE_TRUNCATED_OUT")
+	_ = os.Getenv("CITE_TRUNCATED_OUT")
+}
 
-func second() { _ = os.Getenv("CITE_TRUNCATED_OUT") }
-EOF
-cat > "$work/drift/internal/model/baked.go" <<'EOF'
-package model
-
-import "os"
-
-// The workflow's own directory, resolved inside the binary: the capture path
-// can no longer be pointed somewhere the archive step looks.
-var capture = os.Getenv("RUNNER_TEMP") + "/cite-truncated-response.json"
+// The workflow's own directory, resolved inside the binary.
+var baked = os.Getenv("RUNNER_TEMP") + "/cite-truncated-response.json"
 EOF
 real_fails="$fails"
 check_captures "$work/drift.yml" "$work/drift" 2>/dev/null
