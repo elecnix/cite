@@ -468,7 +468,16 @@ func TestCaptureCapsBodyAndSaysSo(t *testing.T) {
 		t.Errorf("truncation_note = %q, want a note naming the setting", doc.Request.TruncationNote)
 	}
 	if doc.Response == nil || !doc.Response.Truncated {
-		t.Errorf("the response body was not truncated: %+v", doc.Response)
+		t.Fatalf("the response body was not truncated: %+v", doc.Response)
+	}
+	// The note travels with the body, and the body is still the body: the
+	// two masking passes are separate assignments, so neither can overwrite
+	// the other.
+	if doc.Response.TruncationNote == "" || !strings.Contains(doc.Response.TruncationNote, CaptureMaxEnvVar) {
+		t.Errorf("the response truncation note = %q, want a note naming the setting", doc.Response.TruncationNote)
+	}
+	if !strings.Contains(doc.Response.Text, big) && !strings.Contains(doc.Response.Text, strings.Repeat("x", captureMinMaxBytes/2)) {
+		t.Errorf("the truncated response body is not the provider's bytes: %.80q", doc.Response.Text)
 	}
 	row := readManifest(t, cap.Dir()).Calls[0]
 	if !row.Truncated {
