@@ -53,29 +53,6 @@ type Options struct {
 	NeutralToolFailure bool
 }
 
-// ApprovedSkipReasons is the closed set of skip reasons that count toward
-// coverage. It mirrors scope's approved set; any other reason fails the
-// gate, because a skipped file is not a reviewed file and "skipped" must
-// never collapse into "clean".
-var ApprovedSkipReasons = []string{
-	scope.SkipReasonBinary,
-	scope.SkipReasonVendored,
-	scope.SkipReasonLockfile,
-	scope.SkipReasonGenerated,
-	scope.SkipReasonMinified,
-	scope.SkipReasonIgnored,
-	scope.SkipReasonOversized,
-}
-
-func approvedSkip(reason string) bool {
-	for _, r := range ApprovedSkipReasons {
-		if r == reason {
-			return true
-		}
-	}
-	return false
-}
-
 // Decide maps a run record onto one of the three §11 states, fail-closed:
 //
 //	COULD_NOT_EVALUATE — provider or budget failure, zero in-scope files
@@ -166,10 +143,13 @@ func Decide(rec *model.RunRecord, cfg *config.Config, opts Options) (model.Verdi
 		return model.VerdictCouldNotEvaluate, reason
 	}
 
-	// A skipped file with an unexpected reason is not a reviewed file.
+	// A skipped file with an unexpected reason is not a reviewed file. The
+	// closed set of approved reasons belongs to scope, which already
+	// applies it when it computes coverage; asking it keeps a skipped file
+	// from being approved here and counted as reviewed there.
 	var badSkips []string
 	for _, f := range rec.Files {
-		if f.State == model.FileSkipped && !approvedSkip(f.Reason) {
+		if f.State == model.FileSkipped && !scope.IsApprovedSkipReason(f.Reason) {
 			badSkips = append(badSkips, fmt.Sprintf("%s (%s)", f.Path, f.Reason))
 		}
 	}
