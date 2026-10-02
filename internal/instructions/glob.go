@@ -1,70 +1,30 @@
 package instructions
 
-import "strings"
+import (
+	"github.com/elecnix/cite/internal/glob"
+)
 
 // Match reports whether name (a slash-separated repository-relative path)
-// matches pattern, in the glob dialect Cite pins (PLAN.md §5: the dialect
-// is unspecified upstream, so Cite picks one and writes it down):
+// matches pattern, in the glob dialect Cite pins (PLAN.md §5: the dialect is
+// unspecified upstream, so Cite picks one and writes it down). The dialect is
+// owned and documented by internal/glob, the same matcher paths_ignore uses,
+// so a pattern cannot work in cite.yml and quietly match nothing here:
 //
-//   - patterns are `/`-separated and match against the whole path;
-//   - `*` matches any run of characters within a single segment;
-//   - `?` matches exactly one character within a segment;
-//   - a `**` segment matches zero or more whole segments.
+//   - patterns are '/'-separated and match against the whole path, after
+//     normalising a leading "/", a leading "./", repeated "//", "." and "..",
+//     and a trailing "/" — "/docs/**", "./docs/**" and "docs//**" are one
+//     pattern;
+//   - `**` as a whole segment matches zero or more whole segments;
+//   - within a segment, `*` matches any run of characters, `?` matches one
+//     character, `[...]` a character class, and `\` escapes — as in
+//     path.Match, so none of them cross a "/".
+//
+// A frontmatter pattern is canonicalised at parse time (frontmatter.go), so
+// the pattern `cite doctor` reports is the one paths_ignore would have
+// understood too, and glob.Unmatched names the ones that matched none of the
+// changed files: a match-nothing applyTo is disclosed, not invisible.
 func Match(pattern, name string) bool {
-	if pattern == "" {
-		return false
-	}
-	return matchSegs(strings.Split(pattern, "/"), strings.Split(name, "/"))
-}
-
-func matchSegs(p, n []string) bool {
-	for len(p) > 0 {
-		if p[0] == "**" {
-			for len(p) > 0 && p[0] == "**" {
-				p = p[1:]
-			}
-			if len(p) == 0 {
-				return true
-			}
-			for i := 0; i <= len(n); i++ {
-				if matchSegs(p, n[i:]) {
-					return true
-				}
-			}
-			return false
-		}
-		if len(n) == 0 || !matchToken(p[0], n[0]) {
-			return false
-		}
-		p, n = p[1:], n[1:]
-	}
-	return len(n) == 0
-}
-
-// matchToken matches one path segment with the classic * / ? backtracking.
-func matchToken(pat, s string) bool {
-	px, sx := 0, 0
-	star, mark := -1, 0
-	for sx < len(s) {
-		if px < len(pat) && (pat[px] == '?' || pat[px] == s[sx]) {
-			px++
-			sx++
-		} else if px < len(pat) && pat[px] == '*' {
-			star = px
-			mark = sx
-			px++
-		} else if star != -1 {
-			mark++
-			sx = mark
-			px = star + 1
-		} else {
-			return false
-		}
-	}
-	for px < len(pat) && pat[px] == '*' {
-		px++
-	}
-	return px == len(pat)
+	return glob.Match(pattern, name)
 }
 
 // wildcards counts `*` and `?` occurrences. Specificity ordering (§5,

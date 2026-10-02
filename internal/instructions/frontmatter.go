@@ -1,6 +1,10 @@
 package instructions
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/elecnix/cite/internal/glob"
+)
 
 // frontmatter is the subset of YAML frontmatter Cite honours (PLAN.md §5).
 // applyTo is documented as comma-separated globs in ONE string; the
@@ -69,7 +73,10 @@ func parseFrontmatter(content []byte) frontmatter {
 }
 
 // parseGlobValue accepts the comma-separated single-string form and the
-// YAML flow-array alias (`[a, b]`); both are split on commas.
+// YAML flow-array alias (`[a, b]`); both are split on commas and then
+// canonicalised into the one glob dialect (internal/glob), so an applyTo of
+// "./docs/**" is stored — and reported by `cite doctor` — as the "docs/**"
+// that paths_ignore would also have understood.
 func parseGlobValue(val string) []string {
 	val = strings.TrimSpace(val)
 	if val == "" || val == "[]" {
@@ -85,9 +92,21 @@ func splitCSV(v string) []string {
 	var out []string
 	for _, part := range strings.Split(v, ",") {
 		p := stripQuotes(strings.TrimSpace(part))
-		if p != "" {
-			out = append(out, p)
+		if p == "" {
+			continue
 		}
+		// Canonicalise into the shared dialect. A pattern with no canonical
+		// spelling at all (".", "/", "docs/..") is kept verbatim rather than
+		// dropped: discover.go reads an empty paths list as "no frontmatter
+		// paths declared" and widens the file to repository-wide, so
+		// dropping here would turn a match-nothing pattern into a
+		// match-everything one. Kept verbatim it stays inert, stays named in
+		// the doctor's match explanation, and is reportable through
+		// glob.Unmatched.
+		if c := glob.Normalize(p); c != "" {
+			p = c
+		}
+		out = append(out, p)
 	}
 	return out
 }
