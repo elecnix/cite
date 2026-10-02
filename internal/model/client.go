@@ -312,6 +312,12 @@ type CompletionResponse struct {
 	// Provider is the upstream provider a router reported serving the call
 	// (OpenRouter's top-level "provider" field); empty when not reported.
 	Provider string
+
+	// capture and captureCall reach the opt-in wire capture (capture.go),
+	// which is the only writer. They are nil when the operator did not ask
+	// for a capture, which is every default run.
+	capture     *Capture
+	captureCall *CaptureCall
 }
 
 // Client sends one provider-neutral completion. Implementations must map
@@ -471,6 +477,30 @@ func (e *typedError) Error() string {
 // call site. The output-token cap is the bound, never an inactivity timeout.
 func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	start := time.Now()
+	// Opt-in wire capture (capture.go). Passive: it observes the request and
+	// the response on their way past and writes a document on the way out.
+	// It never touches the bytes that are sent, the outcome that is returned,
+	// or whether this call happens at all. With CITE_CAPTURE_WIRE unset,
+	// cc is nil and every line below is a nil check.
+	cap := ActiveCapture()
+	var cc *CaptureCall
+	if cap != nil {
+		cap.registerSecret(c.APIKey)
+		cc = cap.begin(CaptureCall{
+			Model:           c.Model,
+			Temperature:     req.Temperature,
+			MaxOutputTokens: req.MaxOutputTokens,
+			Outcome:         CaptureOutcomeOK,
+		})
+		defer func() { cap.write(cc) }()
+	}
+	// end records how the call ended, for the capture only.
+	end := func(outcome, detail string) {
+		if cc == nil {
+			return
+		}
+		cc.Outcome, cc.OutcomeDetail = outcome, detail
+	}
 	if _, ok := ctx.Deadline(); !ok {
 		// An explicit per-request deadline at the call site. Never inherit
 		// an unbounded client default. The fallback mirrors the triage role
@@ -542,7 +572,11 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 	}
 	body, err := json.Marshal(httpReq)
 	if err != nil {
+		end(CaptureOutcomeHTTPError, "request body could not be encoded: "+err.Error())
 		return nil, err
+	}
+	if cc != nil {
+		cc.Request = CapturedBody{Text: string(body)}
 	}
 	if os.Getenv("CITE_DEBUG") != "" {
 		// Debug aid: dump the exact request body (without the key, which is
@@ -556,6 +590,7 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 	}
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", httpReqBody)
 	if err != nil {
+		end(CaptureOutcomeHTTPError, "request could not be built: "+err.Error())
 		return nil, err
 	}
 	httpRequest.Header.Set("Content-Type", "application/json")
@@ -571,14 +606,26 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		// while every endpoint ignores a header it does not know.
 		httpRequest.Header.Set("X-Session-Id", req.SessionID)
 	}
+	if cc != nil {
+		cc.ProviderHost, cc.RequestPath = captureURL(httpRequest.URL)
+		cc.RequestMethod = httpRequest.Method
+		cc.RequestHeaders = captureHeaders(httpRequest.Header)
+	}
 	resp, err := httpClient.Do(httpRequest)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
+			end(CaptureOutcomeHTTPError, "no HTTP response: the per-call deadline was "+deadlineBudget())
 			return nil, fmt.Errorf("%w (per-call deadline was %s)", ErrDeadline, deadlineBudget())
 		}
+		end(CaptureOutcomeHTTPError, "no HTTP response: provider unreachable: "+err.Error())
 		return nil, fmt.Errorf("provider unreachable: %w", err)
 	}
 	defer resp.Body.Close()
+	if cc != nil {
+		cc.ResponseStatus = resp.StatusCode
+		cc.ResponseStatusText = resp.Status
+		cc.ResponseHeaders = captureHeaders(resp.Header)
+	}
 	if resp.StatusCode != http.StatusOK {
 		// Map to a typed code; never surface verbatim provider text (I4).
 		var b struct {
@@ -590,7 +637,19 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 				} `json:"metadata"`
 			} `json:"error"`
 		}
-		_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&b)
+		// Read the capped window into memory rather than decoding straight
+		// off the reader: the wire capture needs the bytes a non-200 came
+		// back with, and a streaming decode leaves nothing to hand it.
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		// A decoder over the same bytes, not Unmarshal: decoding the first
+		// JSON value of a stream tolerates trailing junk where Unmarshal
+		// rejects the whole body, and that tolerance is existing behaviour.
+		_ = json.NewDecoder(bytes.NewReader(errBody)).Decode(&b)
+		if cc != nil {
+			r := CapturedBody{Text: string(errBody)}
+			cc.Response = &r
+		}
+		end(CaptureOutcomeHTTPError, fmt.Sprintf("HTTP %d from %s", resp.StatusCode, c.BaseURL))
 		code := "provider_error"
 		msg := fmt.Sprintf("HTTP %d", resp.StatusCode)
 		if b.Error != nil {
@@ -643,9 +702,15 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 			// as ErrDeadline with the value, or it reaches the operator as a
 			// bare "reading response: context deadline exceeded" with no
 			// hint of which knob to turn (issue #28).
+			end(CaptureOutcomeHTTPError, "no HTTP body: the per-call deadline was "+deadlineBudget()+" while reading the response body")
 			return nil, fmt.Errorf("%w while reading the response body (per-call deadline was %s)", ErrDeadline, deadlineBudget())
 		}
+		end(CaptureOutcomeHTTPError, "response body could not be read: "+err.Error())
 		return nil, fmt.Errorf("reading response: %w", err)
+	}
+	if cc != nil {
+		r := CapturedBody{Text: string(raw)}
+		cc.Response = &r
 	}
 	if os.Getenv("CITE_DEBUG") != "" {
 		// Debug aid: dump the exact response body so a truncation or a
@@ -654,6 +719,7 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		_ = os.WriteFile("/tmp/cite-last-response.json", raw, 0o600)
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
+		end(CaptureOutcomeHTTPError, fmt.Sprintf("malformed provider response from %s (HTTP %d, %d bytes, %s)", c.BaseURL, resp.StatusCode, len(raw), bodyShape(raw)))
 		// Name the endpoint, the status and the shape — never the body.
 		// "malformed provider response" alone left the operator nothing to act
 		// on, and every way to reach it (a redirected endpoint, a gateway
@@ -662,9 +728,15 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		return nil, fmt.Errorf("%w: malformed provider response from %s (HTTP %d, %d bytes, %s; set CITE_DEBUG=1 to capture the body)", ErrDeterministic, c.BaseURL, resp.StatusCode, len(raw), bodyShape(raw))
 	}
 	if len(out.Choices) == 0 {
+		end(CaptureOutcomeHTTPError, "no choices in the provider response")
 		return nil, fmt.Errorf("%w: no choices in response", ErrDeterministic)
 	}
 	ch := out.Choices[0]
+	if cc != nil {
+		cc.FinishReason = ch.FinishReason
+		usage := out.Usage.toUsage()
+		cc.Usage = &usage
+	}
 	// In tools mode the answer is the forced call's argument. A call to a
 	// function Cite did not offer is not that answer, so Text then stays the
 	// content and the caller rejects it and follows up.
@@ -689,6 +761,10 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		// always goes to stderr: a CI run that captures stderr keeps it in
 		// the job log, where it can be downloaded later.
 		fmt.Fprintf(os.Stderr, "cite: partial output before the token cap captured to %s (%d bytes):\n%s\n", capturePath, len(raw), text)
+		// The wire capture holds the same raw bytes next to the request that
+		// provoked them, which is the diagnostic the standalone file cannot
+		// give; it is additive, so a run that has not opted in is unchanged.
+		end(CaptureOutcomeHTTPError, "output truncated at the token cap (finish_reason=length)")
 		return nil, fmt.Errorf("%w: output truncated at token cap (finish_reason=length)", ErrDeterministic)
 	}
 	return &CompletionResponse{
@@ -698,6 +774,8 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		FinishReason: ch.FinishReason,
 		Model:        c.Model,
 		Provider:     upstreamProvider(out.Provider),
+		capture:      cap,
+		captureCall:  cc,
 	}, nil
 }
 

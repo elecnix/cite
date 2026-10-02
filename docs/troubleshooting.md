@@ -40,6 +40,103 @@ than parsed, so this capture is the only place that content is kept. Set
 `archive_on_failure: false` to disable. Note that a run killed mid-flight
 still archives its partial record.
 
+**2c. The wire capture (opt-in).** The forensics archive answers what a run
+concluded and what it spent. It cannot answer what the provider actually sent
+back, because a response the review schema rejected is never written down. The
+run log states the error, the run record lists the call, and the bytes
+themselves survive nowhere. A run that ends in `response violated the review
+schema (schema: version 0, want 1)`, which a consumer repository has seen, is
+undiagnosable from the artifact, which writes none of those bytes down. An
+operator cannot tell whether the provider ignored `response_format` or whether
+it answered with a schema of its own invention, and a provider that stopped
+mid-document looks identical from here.
+
+Set the action's `capture_wire: true` input and the action uploads a
+`cite-wire-<run id>-…` artifact, kept 7 days, on every run rather than only on
+failure. The artifact has one document per model call plus a `manifest.json`:
+
+| Field | What it is |
+| -- | -- |
+| `request.body` | The exact JSON body sent, so the system prompt, the user payload with the diff, the `response_format` or `tools` payload, and the `temperature` and `max_tokens` values. |
+| `request_headers` | Every request header by name. Values are kept for an allowlist of five (`content-type`, `content-length`, `accept`, `user-agent`, `x-session-id`) and replaced everywhere else. |
+| `response_headers` | Every response header, with credential-bearing names replaced and every value scrubbed. |
+| `response.body` | The exact raw bytes that came back, before any decoding or parsing. |
+| `response_status`, `response_status_text` | The HTTP status line. |
+| `outcome` | `ok`, `parse-failure`, or `http-error`. A rejected response also states the parse error in `rejected_reason`. |
+| `model`, `provider_host`, `request_path` | Which model, which host, which path. The query string and the userinfo are both dropped. |
+| `request.sha256`, `response.sha256` | Hashes of the exact bytes, so two runs of the same input can be compared without reading the prompt. |
+| `usage` | The provider's token counters. |
+| `redaction` | Which header names are masked, and how many values were masked in this document. |
+
+`manifest.json` gives one row per call with the call index, model, provider
+host, input hash, token counts and outcome, so an operator can triage the
+directory without opening any document. When the review schema refuses a
+response, that document records outcome `parse-failure`, a parse error, and the
+rejected bytes verbatim. That case is why the feature exists. On a token-cap
+truncation the same raw bytes appear with outcome `http-error` and a note that
+says which setting cut it, so this artifact supersedes `cite-truncated-response.json` for
+diagnosis. Cite still writes that file, because a run which never opted in
+depends on it.
+
+**A capture contains the prompt, and the prompt contains the diff.** The
+capture is the reviewer's whole input, so a capture of a private repository is
+private review material. Masking covers credentials, which makes the directory
+safe to share inside the repository, and it covers nothing else. Download what
+you need, delete the artifact once the diagnosis is done, and treat what you
+downloaded as you would treat the pull request itself. The input is off by
+default for that reason, not because the feature is unfinished.
+
+Masking is the one guarantee a capture makes about content, and it is
+allowlist-first: a list of credential header names is a guess about what a
+provider will send, and providers invent headers.
+
+- **request headers, by allowlist.** Cite chooses every header it sends, so
+  the safe set is knowable: `content-type`, `content-length`, `accept`,
+  `user-agent` and `x-session-id` keep their values, and every other header
+  keeps its name and loses its value. A header name this repository has never
+  seen is masked by the rule rather than by luck. Each document records the
+  allowlist it was built with in `redaction.request_header_allowlist`;
+- **response headers, by name and then by value.** The provider writes these,
+  and they are the diagnosis (request ids, rate-limit counters, the upstream
+  model), so they are not dropped by an allowlist. A name that reads like a
+  credential is replaced (`Authorization`, `Proxy-Authorization`, `Cookie`,
+  `Set-Cookie`, `api-key`, `x-api-key`, and anything containing `token`,
+  `secret`, `password`, `credential` or `authenticate`), and every remaining
+  value is scrubbed for the key and for inline credentials;
+- **the value of your provider key is replaced everywhere**, in a body, a
+  header or a URL. The key is a header and never enters a body
+  ([security.md](security.md), I4), so the only way one could end up in a
+  capture is a gateway that reflects a request header into its own error page.
+  This closes that path;
+- **an inline `Bearer`, `Basic` or `token` credential inside a body is
+  replaced** too, for the same reason;
+- **the URL is recorded as host and path.** The query string is dropped whole,
+  because a parameter name is not a reliable place to look for a credential;
+- **a value shorter than 8 bytes is not searched for in bodies**, because
+  masking a three-character key would corrupt the reviewed source around it.
+  Each document records how many such values this run held in
+  `redaction.secret_values_too_short_to_mask`.
+
+Read a capture from the files inside the artifact. Cite never echoes one
+into a job log, and the manifest lists sizes, hashes and counters only.
+
+The capture is a passive observer. It never changes the verdict, the findings,
+the coverage, the bounded per-file retry budget, or the fail-closed
+`tool_failure_blocks` behaviour; a run with the capture on and a run with it off
+reach the same conclusion.
+
+`CITE_CAPTURE_DIR` sets where the documents go (the action points it at
+`$RUNNER_TEMP/cite-wire`), and `CITE_CAPTURE_MAX_BYTES` sets the per-body
+ceiling, 256 KiB by default. A body over the ceiling is cut with `truncated`,
+`original_bytes` and a note that says which setting cut it, and the manifest
+row carries `request_omitted_bytes` and `response_omitted_bytes`, so a cut is
+never silent. Set either in the workflow's own `env:`. Neither needs an
+input.
+
+Outside CI, `CITE_CAPTURE_WIRE=1 cite review --diff patch.diff` writes the
+same directory under the system temp directory, which is the quickest way to
+see what your provider actually answered.
+
 A successful run uploads `cite-run-record-<run id>-…` instead, kept for 14
 days: the run record JSON alone. Set `archive_run_record: false` to skip it.
 Both names end in the attempt, the job id and a random part, so two jobs of
@@ -132,8 +229,10 @@ summary names the cause:
   `/tmp/cite-truncated-response.json` by default, overridable with
   `CITE_TRUNCATED_OUT`, and stderr always names the path and prints the
   partial content itself (the GitHub Action points the capture at
-  `$RUNNER_TEMP` so the forensics archive uploads it). With `CITE_DEBUG=1` the
-  full raw response body is also dumped to
+  `$RUNNER_TEMP` so the forensics archive uploads it). With the
+  [`capture_wire` input](#2c-the-wire-capture-opt-in) on, the same bytes are in
+  the wire capture next to the request that provoked them. With `CITE_DEBUG=1`
+  the full raw response body is also dumped to
   `/tmp/cite-last-response.json`.
 - **Zero in-scope files.** A pull request that changed files but resolved to an
   empty in-scope set is treated as a possible path-filter bypass, never as a
