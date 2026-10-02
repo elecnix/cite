@@ -80,8 +80,11 @@ check_capture() {
   fi
 }
 
-# check_action <file>: every rule this script holds action.yml to. Returns
-# the number of problems it reported.
+# check_action <file>: every rule this script holds action.yml to. It reports
+# each problem through fail(), which owns the verdict, and it EXITS WITH THE
+# NUMBER OF PROBLEMS it found, which is what the sample action below asserts
+# on. The two are separate on purpose: the sample needs the count, and the
+# script needs the counter.
 check_action() {
   local action="$1" before="$fails" first_step namer names line
 
@@ -290,6 +293,7 @@ runs:
         retention-days: 14
 EOF
 real_fails="$fails"
+# $? is check_action's exit status, which is its problem count.
 check_action "$work/misplaced.yml" 2>/dev/null
 misplaced=$?
 fails="$real_fails"

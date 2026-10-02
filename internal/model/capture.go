@@ -516,7 +516,15 @@ func (c *Capture) manifestRow(doc *CaptureCall, name string) {
 			row.ResponseOmittedBytes = doc.Response.OriginalBytes - len(doc.Response.Text)
 		}
 	}
+	// The whole index update, the marshal and the file write happen under one
+	// lock. A review runs several calls at once, and two of them finishing
+	// together used to each marshal their own snapshot and race the write,
+	// so the later one won and a row went missing from the index while its
+	// document sat on disk. The lock is held across a small file write
+	// because a lost row costs an operator a call they cannot find, and the
+	// write costs microseconds.
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	updated := false
 	for i := range c.rows {
 		if c.rows[i].CallIndex == row.CallIndex {
@@ -529,14 +537,11 @@ func (c *Capture) manifestRow(doc *CaptureCall, name string) {
 		c.rows = append(c.rows, row)
 	}
 	sort.Slice(c.rows, func(i, j int) bool { return c.rows[i].CallIndex < c.rows[j].CallIndex })
-	rows := append([]CaptureEntry(nil), c.rows...)
-	maxBytes := c.maxBytes
-	c.mu.Unlock()
 
 	b, err := json.MarshalIndent(CaptureManifest{
 		SchemaVersion: CaptureSchemaVersion,
-		MaxBodyBytes:  maxBytes,
-		Calls:         rows,
+		MaxBodyBytes:  c.maxBytes,
+		Calls:         c.rows,
 	}, "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cite: wire capture manifest marshal failed: %v\n", err)
