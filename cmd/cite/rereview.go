@@ -284,12 +284,10 @@ func rereviewMerged(ctx context.Context, c *githubclient.Client, cfg *config.Con
 //
 // Batching the patches into one ParseUnifiedDiff call does not work: the very
 // first hunk arrives with no file header and the parse fails with "hunk header
-// before any file header". A patch that fails to parse is logged loudly and
-// skipped: findings for that one file are dropped anchor_invalid (fail-closed),
-// but one unparseable file must not silently neuter anchor validation for the
-// whole run — which is what swallowing the whole-batch error did. Every finding
-// the re-review produces needs an anchorable post-change line, and without
-// hunks there are none, so an empty diff map discards the entire review.
+// before any file header". Swallowing that error empties the whole map, and
+// without hunks no line is anchorable, so the entire review is discarded. A
+// patch that fails to parse is logged loudly and skipped instead, degrading
+// that one file's anchors rather than the run's.
 func buildRereviewDiffs(entries []scope.ManifestEntry, extras map[string]githubclient.FileExtra, logf func(string, ...any)) map[string]*scope.DiffFile {
 	diffs := map[string]*scope.DiffFile{}
 	for _, e := range entries {
