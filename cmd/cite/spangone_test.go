@@ -98,6 +98,20 @@ func TestSpanGoneUnverifiableData(t *testing.T) {
 	}
 }
 
+func TestSpanGoneMultiLineQuoteStillPresent(t *testing.T) {
+	// A multi-line quote survives: the check compares the quote against the
+	// whole normalised content, so the newlines inside the quote collapse to
+	// spaces exactly as the newlines inside the file do. The fix_or_argue
+	// instrument reads the same owner (scope.EvidenceGone's sibling), so the
+	// predicate that resolves a thread and the predicate behind the metric
+	// cannot disagree about whether a multi-line span survived.
+	content := "package main\n\nfunc f() {\n\tif !escaped {\n\t\tel.innerHTML = user.displayName\n\t}\n}\n"
+	gone := spanGone(t, []model.Evidence{{Line: 4, Quote: "if !escaped {\n\t\tel.innerHTML = user.displayName"}}, content)
+	if gone {
+		t.Fatal("a two-line quote present verbatim is still present")
+	}
+}
+
 func TestResolutionReplyStatesItsBasis(t *testing.T) {
 	// Span verified gone: the reply says so.
 	data := map[int64]*threadFinding{1: {Path: "f.txt", Evidence: []model.Evidence{{Line: 1, Quote: "old code"}}}}

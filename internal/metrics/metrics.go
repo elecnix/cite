@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/elecnix/cite/internal/model"
+	"github.com/elecnix/cite/internal/scope"
 )
 
 // MinReplyChars: a reply over 40 characters counts as argument. Shorter
@@ -60,33 +61,14 @@ func (r Report) Rate() float64 {
 }
 
 // SpanChanged reports whether any of the finding's evidence quotes failed to
-// survive into headContent. Both sides go through the same documented
-// normaliser as the evidence cascade, so whitespace drift does not count as
-// an edit. Missing content (a deleted file) is the strongest form of gone.
-// Empty evidence cannot be verified either way and never claims action.
+// survive into headContent. The comparison runs through scope.AnyQuoteGone,
+// the same span-survival owner the thread reconciler reads, so both sides go
+// through the one documented normaliser and a multi-line quote is compared
+// like any other. Whitespace drift does not count as an edit. Missing content
+// (a deleted file) is the strongest form of gone. Empty evidence cannot be
+// verified either way and never claims action.
 func SpanChanged(evidence []model.Evidence, headContent []byte) bool {
-	if len(evidence) == 0 {
-		return false
-	}
-	if len(headContent) == 0 {
-		return true
-	}
-	lines := strings.Split(string(headContent), "\n")
-	normLines := make([]string, len(lines))
-	for i, l := range lines {
-		normLines[i] = model.NormalizeForFingerprint(l)
-	}
-	haystack := strings.Join(normLines, "\n")
-	for _, e := range evidence {
-		q := model.NormalizeForFingerprint(e.Quote)
-		if q == "" {
-			continue // an empty quote verifies nothing
-		}
-		if !strings.Contains(haystack, q) {
-			return true
-		}
-	}
-	return false
+	return scope.AnyQuoteGone(headContent, evidence)
 }
 
 // Evaluate classifies each published finding as fixed, argued, both, or
