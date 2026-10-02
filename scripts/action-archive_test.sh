@@ -71,10 +71,15 @@ check_capture() {
   # value that is not a number exits non-zero with a diagnostic on stderr,
   # which a silenced check would read as "compliant". An unparseable value
   # is its own failure, then the bound applies to a real number.
+  # 0 is not a short retention: upload-artifact reads it as "use the
+  # repository default", which is however many days the repository happens
+  # to set. The bound is therefore 1 to 7 days, both ends checked.
   if ! printf '%s' "$retention" | grep -qE '^[0-9]+$'; then
     fail "$action: the wire capture retention-days is not a number: '${retention:-none}'"
+  elif [ "$retention" -lt 1 ]; then
+    fail "$action: the wire capture retention-days is $retention, which means the repository default rather than a short retention"
   elif [ "$retention" -gt 7 ]; then
-    fail "$action: the wire capture is kept for $retention days, want at most 7"
+    fail "$action: the wire capture is kept for $retention days, want between 1 and 7"
   fi
 }
 
@@ -153,7 +158,7 @@ runs:
       with:
         name: cite-wire-x
         path: ${{ runner.temp }}/elsewhere/
-        retention-days: 7d
+        retention-days: 0
     - name: Something else
       id: archive
       if: success() && inputs.archive_run_record == 'true'
@@ -167,8 +172,8 @@ misplaced=$?
 fails="$real_fails"
 # The sample misplaces 9 fields: four of the run record's (the default, the
 # id, the if and the retention) and five of the capture's (the input default,
-# the gate, the name suffix, the upload path, and a retention of `7d` where an
-# integer bound applies). Changing 9 here must fail this script, which is how
+# the gate, the name suffix, the upload path, and a retention of 0 where the
+# bound is 1 to 7 days). Changing 9 here must fail this script, which is how
 # the count stays honest as checks are added.
 if [ "$misplaced" -ne 9 ]; then
   fail "the checks found $misplaced of the 9 misplaced fields in the sample action"
