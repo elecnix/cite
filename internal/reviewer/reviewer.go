@@ -47,11 +47,14 @@ type Verifier interface {
 
 // DiscriminativeVerifier is the short discriminative call run on blocking
 // candidates only (§8, "The verifier pass"). It must return
-// "supported", "unsupported" or "needs-context-not-provided". It must NOT be
-// framed as a judge arguing a finding is real: models are strong advocates
-// and weak skeptics.
+// VerifierSupported, VerifierUnsupported or
+// VerifierNeedsContextNotProvided. It must NOT be framed as a judge arguing
+// a finding is real: models are strong advocates and weak skeptics.
+//
+// No adapter is wired in cmd/cite yet, so the pass this interface gates does
+// not run outside tests. See issue #139.
 type DiscriminativeVerifier interface {
-	Verify(ctx context.Context, path string, f model.Finding) (string, error)
+	Verify(ctx context.Context, path string, f model.Finding) (VerifierVerdict, error)
 }
 
 // Options configures a Reviewer. Cfg and Client are required.
