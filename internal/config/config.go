@@ -368,6 +368,25 @@ func (c *Config) checkRoleSpecs(probs *[]Problem) {
 	}
 }
 
+// SplitModelRef splits a "provider/id" model reference into its provider and
+// its model id. The FIRST '/' is the separator, so "gateway/vendor/model-x" is
+// provider "gateway" and model "vendor/model-x". A reference carrying no '/'
+// is a bare model name: it comes back whole as the id, with an empty provider
+// and ok false, so a caller that wants the model name has it rather than the
+// empty string.
+//
+// Every reference Cite resolves goes through here: the output cap in
+// modelEntryMaxTokens, the validation in checkModelRefs, and the canary's
+// fallback legs. They once each carried their own copy of the rule and agreed
+// only by hand.
+func SplitModelRef(ref string) (provider, id string, ok bool) {
+	provider, id, ok = strings.Cut(ref, "/")
+	if !ok {
+		return "", ref, false
+	}
+	return provider, id, true
+}
+
 // checkModelRefs resolves every model reference ("provider/id") against the
 // declared providers. The top-level model key is a free-form name and is not
 // resolved here. When no providers are declared, plain builtin model names
@@ -388,7 +407,7 @@ func (c *Config) checkModelRefs(probs *[]Problem) {
 			addf(probs, path, "model reference must not be empty")
 			continue
 		}
-		provider, id, hasSlash := strings.Cut(ref, "/")
+		provider, id, hasSlash := SplitModelRef(ref)
 		if !hasSlash {
 			if len(c.Providers) > 0 {
 				addf(probs, path, "%q must be \"provider/modelid\" because providers are declared", ref)
@@ -471,11 +490,12 @@ func (c *Config) Role(role model.Role) model.RoleConfig {
 // max_tokens. docs/configuration.md calls max_tokens "default output cap for
 // calls using this model"; this is where that promise is kept.
 //
-// Reference resolution matches checkModelRefs exactly — the FIRST '/'
-// separates provider from model id, so "gateway/vendor/model-x" is provider
-// "gateway", id "vendor/model-x". A reference that fails to resolve yields 0
-// rather than an error: validation already rejects those, and a cap lookup
-// must never be the thing that fails a run.
+// Reference resolution matches checkModelRefs exactly, because both call
+// SplitModelRef: the FIRST '/' separates provider from model id, so
+// "gateway/vendor/model-x" is provider "gateway", id "vendor/model-x". A
+// reference that fails to resolve yields 0 rather than an error: validation
+// already rejects those, and a cap lookup must never be the thing that fails a
+// run.
 func (c *Config) ModelMaxTokens(role model.Role) int {
 	if c == nil {
 		return 0
@@ -493,7 +513,7 @@ func (c *Config) modelEntryMaxTokens(modelRef string) int {
 	if c == nil || len(c.Providers) == 0 {
 		return 0
 	}
-	provider, id, hasSlash := strings.Cut(modelRef, "/")
+	provider, id, hasSlash := SplitModelRef(modelRef)
 	if !hasSlash {
 		return 0
 	}
@@ -507,6 +527,17 @@ func (c *Config) modelEntryMaxTokens(modelRef string) int {
 		}
 	}
 	return 0
+}
+
+// ProviderNames returns the declared provider names in sorted order. The map
+// itself has no order, and any scan over it that settles a value — a cost rate,
+// a leg to exercise — would otherwise make that value depend on Go's randomised
+// map iteration.
+func (c *Config) ProviderNames() []string {
+	if c == nil {
+		return nil
+	}
+	return sortedProviderNames(c.Providers)
 }
 
 func sortedProviderNames(m map[string]*model.Provider) []string {
