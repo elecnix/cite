@@ -217,12 +217,13 @@ findingsLoop:
 		// Runs AFTER the negative-claims check so a finding that both
 		// fabricates a claim about the file and disclaims impact is
 		// recorded under the stronger reason, negative_claim_falsified.
-		if f.Category.MayBlock() &&
-			r.blockingSet[f.Category] &&
-			evidenceOK &&
-			anchorHasAddedLine(f.Anchor, fc.added) &&
-			claimsOK &&
-			f.Confidence == model.ConfidenceCertain {
+		if model.BlocksOnEvidence(model.BlockInputs{
+			Category:          f.Category,
+			BlockingSet:       r.blockingSet,
+			EvidenceMatches:   evidenceOK,
+			AnchorOnAddedLine: anchorHasAddedLine(f.Anchor, fc.added),
+			Confidence:        f.Confidence,
+		}) {
 			imp := strings.ToLower(strings.TrimSpace(f.Impact))
 			for _, pre := range []string{"no impact", "no defect", "no mismatch"} {
 				if strings.HasPrefix(imp, pre) {
@@ -233,7 +234,8 @@ findingsLoop:
 			}
 		}
 
-		// Blocking formula (§8), computed exactly as written:
+		// Blocking formula (§8), computed exactly as written and spelled
+		// once for the whole product, in the model package:
 		//
 		//   blocks = category ∈ gate.blocking_categories
 		//          ∧ every evidence quote matches the file
@@ -241,13 +243,21 @@ findingsLoop:
 		//          ∧ external_claims is empty, or every claim verified true
 		//          ∧ confidence == "certain"
 		//          ∧ the discriminative verifier returned "supported"
-		blocks := f.Category.MayBlock() &&
-			r.blockingSet[f.Category] &&
-			evidenceOK &&
-			anchorHasAddedLine(f.Anchor, fc.added) &&
-			claimsOK &&
-			negVerified &&
-			f.Confidence == model.ConfidenceCertain
+		//
+		// The sixth conjunct is applied immediately below rather than
+		// inside the conjunction: an "unsupported" verdict drops the
+		// finding from the record, which is not a boolean this expression
+		// can fold in. The candidate is computed first so the verifier is
+		// only asked about a finding that could block at all.
+		blocks := model.BlockingCandidate(model.BlockInputs{
+			Category:               f.Category,
+			BlockingSet:            r.blockingSet,
+			EvidenceMatches:        evidenceOK,
+			AnchorOnAddedLine:      anchorHasAddedLine(f.Anchor, fc.added),
+			ClaimsVerified:         claimsOK,
+			NegativeClaimsVerified: negVerified,
+			Confidence:             f.Confidence,
+		})
 
 		vf := model.ValidatedFinding{Finding: *f}
 		vf.Finding.Title = model.SanitizeText(f.Title)
