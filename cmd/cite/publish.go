@@ -103,13 +103,20 @@ func registerThreadText(threads []publisher.LiveThread, data map[int64]*threadFi
 //
 // A span is verified gone only when NO evidence quote appears anywhere in the
 // new file content. The comparison itself — the normaliser, the forward-only
-// containment, and the four edge cases — belongs to scope.EvidenceGone, which
-// the fix_or_argue instrument also reads through scope.AnyQuoteGone; the two
+// containment, and the edge cases — belongs to scope.EvidenceGone, which the
+// fix_or_argue instrument also reads through scope.AnyQuoteGone; the two
 // callers differ only in polarity and in how they aggregate several quotes,
 // and never in whether the same span counts as surviving.
+//
+// The two guards keep main's order, which is the order that makes "nothing to
+// verify" beat "the file is gone": a finding with no evidence has nothing to
+// check against the file, so it fails toward keeping the thread whatever the
+// post-image holds. The file-absence rule below then means what its comment
+// says — a file that genuinely held a quoted span is gone — rather than a
+// blanket licence to resolve any thread whose path is missing.
 func spanGoneFor(data *threadFinding, post map[string][]byte) func(publisher.LiveThread) bool {
 	return func(publisher.LiveThread) bool {
-		if data == nil {
+		if data == nil || len(data.Evidence) == 0 {
 			return false // cannot verify ⇒ never resolve
 		}
 		content, ok := post[data.Path]

@@ -98,6 +98,64 @@ func TestSpanGoneUnverifiableData(t *testing.T) {
 	}
 }
 
+// A thread that carries a fingerprint but no evidence quotes has nothing to
+// verify. Whatever the post-image looks like — file present or file absent —
+// the predicate must answer false. Reading the file-absence rule first makes
+// an empty finding resolve itself on the strength of nothing at all, which is
+// the one direction this predicate is not allowed to fail: it clears a human's
+// thread.
+func TestSpanGoneNoEvidenceKeepsThreadWhateverTheFileDoes(t *testing.T) {
+	for name, post := range map[string]map[string][]byte{
+		"file absent":      {},
+		"file present":     {"f.txt": []byte("anything at all\n")},
+		"other files only": {"other.txt": []byte("x\n")},
+	} {
+		for _, evidence := range [][]model.Evidence{nil, {}} {
+			data := &threadFinding{Path: "f.txt", Evidence: evidence}
+			if spanGoneFor(data, post)(liveStub) {
+				t.Fatalf("%s: a finding with no evidence must never resolve, got gone", name)
+			}
+		}
+	}
+	// The same shape reached through the live predicate over a nil finding.
+	if spanGoneFor(nil, map[string][]byte{})(liveStub) {
+		t.Fatal("no parsed data at all must never resolve")
+	}
+}
+
+// One test per branch of the predicate, with the answer main gave for each.
+// The refactor that introduced internal/scope moved the empty-evidence guard
+// behind the file-absence lookup; this table is the shape that bug hid in,
+// so every edge is written out rather than left implicit.
+func TestSpanGoneBranchTable(t *testing.T) {
+	gone, present := []model.Evidence{{Line: 1, Quote: "old line"}}, []model.Evidence{{Line: 1, Quote: "still line"}}
+	for _, c := range []struct {
+		name     string
+		data     *threadFinding
+		post     map[string][]byte
+		wantGone bool
+	}{
+		{"no data at all", nil, map[string][]byte{}, false},
+		{"no evidence, file absent", &threadFinding{Path: "f.txt"}, map[string][]byte{}, false},
+		{"no evidence, file present", &threadFinding{Path: "f.txt"}, map[string][]byte{"f.txt": []byte("x")}, false},
+		{"empty evidence slice, file absent", &threadFinding{Path: "f.txt", Evidence: []model.Evidence{}}, map[string][]byte{}, false},
+		{"evidence, file absent", &threadFinding{Path: "f.txt", Evidence: gone}, map[string][]byte{}, true},
+		{"evidence, file present, no quote survives", &threadFinding{Path: "f.txt", Evidence: gone}, map[string][]byte{"f.txt": []byte("new line\n")}, true},
+		{"evidence, file present, quote survives", &threadFinding{Path: "f.txt", Evidence: present}, map[string][]byte{"f.txt": []byte("still line\n")}, false},
+		{"unverifiable quote, file present", &threadFinding{Path: "f.txt", Evidence: []model.Evidence{{Line: 1, Quote: "***"}}}, map[string][]byte{"f.txt": []byte("new line\n")}, false},
+		{"unverifiable quote, other quote survives", &threadFinding{Path: "f.txt", Evidence: []model.Evidence{{Line: 1, Quote: "***"}, {Line: 2, Quote: "still line"}}}, map[string][]byte{"f.txt": []byte("still line\n")}, false},
+		{"two quotes, one survives", &threadFinding{Path: "f.txt", Evidence: []model.Evidence{{Line: 1, Quote: "old line"}, {Line: 2, Quote: "still line"}}}, map[string][]byte{"f.txt": []byte("still line\n")}, false},
+		{"two quotes, none survives", &threadFinding{Path: "f.txt", Evidence: []model.Evidence{{Line: 1, Quote: "old line"}, {Line: 2, Quote: "older line"}}}, map[string][]byte{"f.txt": []byte("new line\n")}, true},
+		{"empty file present", &threadFinding{Path: "f.txt", Evidence: gone}, map[string][]byte{"f.txt": {}}, true},
+		{"multi-line quote survives", &threadFinding{Path: "f.txt", Evidence: []model.Evidence{{Line: 1, Quote: "if !escaped {\n\tel.innerHTML"}}}, map[string][]byte{"f.txt": []byte("if !escaped {\n\tel.innerHTML = user.displayName\n")}, false},
+		{"multi-line quote gone", &threadFinding{Path: "f.txt", Evidence: []model.Evidence{{Line: 1, Quote: "if !escaped {\n\tel.innerHTML"}}}, map[string][]byte{"f.txt": []byte("el.textContent = user.displayName\n")}, true},
+	} {
+		if got := spanGoneFor(c.data, c.post)(liveStub); got != c.wantGone {
+			t.Errorf("%s: got gone=%v, want gone=%v", c.name, got, c.wantGone)
+		}
+	}
+}
+
 func TestSpanGoneMultiLineQuoteStillPresent(t *testing.T) {
 	// A multi-line quote survives: the check compares the quote against the
 	// whole normalised content, so the newlines inside the quote collapse to
