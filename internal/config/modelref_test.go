@@ -43,6 +43,13 @@ func TestProviderNamesIsSorted(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		got := c.ProviderNames()
 		want := []string{"alpha", "mid", "zeta"}
+		// Compare lengths first. Indexing got[j] over want would panic on a
+		// short result and pass on a long one, so a ProviderNames that grew a
+		// name or dropped one would not be caught by the element comparison.
+		if len(got) != len(want) {
+			t.Fatalf("ProviderNames() = %v (%d names), want %v (%d names)",
+				got, len(got), want, len(want))
+		}
 		for j := range want {
 			if got[j] != want[j] {
 				t.Fatalf("ProviderNames() = %v, want %v", got, want)
