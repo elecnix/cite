@@ -400,59 +400,35 @@ func requireParameters(cfg *config.Config) bool {
 // timeouts are per role because a slow local model and a fast hosted one
 // cannot share one number.
 //
-// The output cap resolves most-specific-first, in three layers:
-//
-//  1. roles.<role>.max_output_tokens — an explicit operator instruction, and
-//     it wins outright. Silently shrinking a number someone wrote down would
-//     be exactly the kind of invisible behaviour change §6 forbids.
-//  2. the resolved model entry's max_tokens — what the model says it can
-//     emit. This both raises the cap on a roomy model and lowers it on a
-//     narrow one, which is the only way Cite can know a ceiling it cannot
-//     query.
-//  3. the built-in default.
+// It is a thin adapter over config.Config.RoleSettings, which owns the
+// three-layer ladder: the explicit roles.<role> knob, else the resolved
+// model entry's max_tokens, else the built-in default this call site
+// supplies. An explicit max_output_tokens is an operator instruction and
+// wins outright; the model entry's max_tokens raises the cap on a roomy
+// model and lowers it on a narrow one, which is the only ceiling Cite can
+// know without querying for it.
 //
 // The review deadline has no fixed default: when no explicit timeout is
 // configured it derives from the SAME resolved cap (issue #28) via
 // config.DerivedReviewTimeout, so a larger token budget buys proportionally
 // more wall clock instead of dying at "context deadline exceeded". Triage and
-// assemble keep their fixed defaults; they emit bounded output regardless of
-// file size.
+// assemble keep the fixed defaults this function is handed; they emit bounded
+// output regardless of file size.
 //
 // A cap that is still too small truncates, and a truncation stays terminal
 // and reported (model.ErrDeterministic → FileErrored → COULD_NOT_EVALUATE).
 // Raising the ceiling must never turn a truncation into a silent partial
 // review.
 func (r *Reviewer) roleSettings(role model.Role, defTimeout time.Duration, defConcurrency, defMaxTokens int) (timeout time.Duration, concurrency, maxTokens int) {
-	timeout, concurrency, maxTokens = defTimeout, defConcurrency, defMaxTokens
-	explicitTimeout := false
 	if r.o.Cfg == nil {
-		return
+		return defTimeout, defConcurrency, defMaxTokens
 	}
-	if n := r.o.Cfg.ModelMaxTokens(role); n > 0 {
-		maxTokens = n
-	}
-	spec, ok := r.o.Cfg.Roles[role]
-	if ok {
-		if spec.Timeout != "" {
-			if d, err := time.ParseDuration(spec.Timeout); err == nil && d > 0 {
-				timeout = d
-				explicitTimeout = true
-			}
-		}
-		if spec.Concurrency > 0 {
-			concurrency = spec.Concurrency
-		}
-		if spec.MaxOutputTokens > 0 {
-			maxTokens = spec.MaxOutputTokens
-		}
-	}
-	if !explicitTimeout && role == model.RoleReview {
-		// Issue #28: scale the deadline to the resolved output cap. An unset
-		// cap (maxTokens <= 0) falls back to the built-in 131072-token default
-		// inside DerivedReviewTimeout.
-		timeout = config.DerivedReviewTimeout(maxTokens)
-	}
-	return
+	rc := r.o.Cfg.RoleSettings(role, config.RoleDefaults{
+		Timeout:     defTimeout,
+		Concurrency: defConcurrency,
+		MaxTokens:   defMaxTokens,
+	})
+	return rc.Timeout, rc.Concurrency, rc.MaxOutputTokens
 }
 
 // completeWithRetry performs one bounded model call. Deterministic failures
@@ -493,7 +469,7 @@ func (r *Reviewer) completeWithRetry(ctx context.Context, unit string, req model
 			// and stays terminal after that. Name the knob so the fix is one
 			// line away (issue #28; truthful remedy strings for both the
 			// derived and the explicit case, issue #59).
-			r.logf("%s call exceeded its %s per-call deadline; not retried inside completeWithRetry — the review caller may spend its one fresh-budget deadline re-ask (issue #73). If calls legitimately need longer, set an explicit roles.%s.timeout in .github/cite.yml (the built-in review deadline only derives from roles.%s.max_output_tokens when no explicit timeout is set: 60s + tokens/128, so RAISE the cap for a longer derived deadline — lowering it tightens the deadline)", unit, timeout, unit, unit)
+			r.logf("%s call exceeded its %s per-call deadline; not retried inside completeWithRetry — the review caller may spend its one fresh-budget deadline re-ask (issue #73). If calls legitimately need longer, set an explicit roles.%s.timeout in .github/cite.yml (the built-in %s deadline only derives from the output cap when no explicit timeout is set: %s, so RAISE roles.%s.max_output_tokens for a longer derived deadline — lowering it tightens the deadline)", unit, timeout, unit, unit, config.DeadlineFormula(fmt.Sprintf("roles.%s.max_output_tokens", unit)), unit)
 			return nil, err
 		}
 		if ctx.Err() != nil {
@@ -766,30 +742,24 @@ func (r *Reviewer) runBatch(ctx context.Context, in *Inputs, rec *model.RunRecor
 // configured deadline" when nobody configured one (it derived from the
 // output-token cap) — or that recommends lowering the cap, which tightens
 // a derived deadline — names a dial that does not move, in exactly the
-// case the operator needs to move one.
+// case the operator needs to move one. The configuration owns the parse;
+// the reviewer does not read the timeout string a third time.
 func explicitReviewTimeout(cfg *config.Config) bool {
-	if cfg == nil {
-		return false
-	}
-	spec, ok := cfg.Roles[model.RoleReview]
-	if !ok {
-		return false
-	}
-	d, err := time.ParseDuration(spec.Timeout)
-	return err == nil && d > 0
+	return cfg.RoleTimeoutExplicit(model.RoleReview)
 }
 
 // deadlineRemedy is the remedy sentence carried by a deadline-exceeded
 // error. It must say which deadline tripped and name only levers that
-// exist and move in the direction the remedy implies (issue #59).
+// exist and move in the direction the remedy implies (issue #59). The
+// derivation it quotes is rendered from config.ReviewTimeoutFormula, so the
+// sentence cannot drift away from the constants that produce the deadline.
 func deadlineRemedy(cfg *config.Config, timeout time.Duration) string {
 	if explicitReviewTimeout(cfg) {
 		return fmt.Sprintf("the call hit its configured %.0fs review deadline; raise roles.review.timeout in .github/cite.yml if calls legitimately need longer", timeout.Seconds())
 	}
-	// Derived: 60s base + max_output_tokens/128 tok/s (config.DerivedReviewTimeout).
-	// The cap RAISES the deadline; lowering it would tighten the very
-	// deadline that tripped.
-	return fmt.Sprintf("the call hit its %.0fs review deadline (derived, not configured: 60s + roles.review.max_output_tokens/128); set an explicit roles.review.timeout in .github/cite.yml for a deadline the cap cannot move, or RAISE the output-token cap if the model was legitimately still generating — lowering the cap tightens this deadline", timeout.Seconds())
+	// Derived: the cap RAISES the deadline; lowering it would tighten the
+	// very deadline that tripped.
+	return fmt.Sprintf("the call hit its %.0fs review deadline (derived, not configured: %s); set an explicit roles.review.timeout in .github/cite.yml for a deadline the cap cannot move, or RAISE the output-token cap if the model was legitimately still generating — lowering the cap tightens this deadline", timeout.Seconds(), config.ReviewTimeoutFormula())
 }
 
 func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRecord, e scope.ManifestEntry) error {
