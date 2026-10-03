@@ -20,7 +20,9 @@ import "path"
 //   - brace expansion is not part of the dialect, so braces match literally;
 //   - the pattern is normalised before matching, so a leading slash, a './'
 //     prefix and repeated separators are cosmetic;
-//   - an empty pattern matches nothing.
+//   - a pattern that normalises to the repository root matches nothing, which
+//     covers the empty pattern and every cosmetic spelling of the root: the
+//     empty string, '/', '//' and './'.
 //
 // Examples:
 //
@@ -29,11 +31,19 @@ import "path"
 //	Match("docs/*.md",    "docs/a.md")   == true
 //	Match("docs/*.md",    "docs/x/a.md") == false
 //	Match("/docs/**",     "docs/a/b.md") == true
+//	Match("/",           "")             == false
 func Match(pattern, name string) bool {
-	if pattern == "" {
+	pat := splitSegments(pattern)
+	if len(pat) == 0 {
+		// The pattern named nothing to match: it was empty, or it was one
+		// of the spellings that normalises to the repository root. Deciding
+		// this before normalisation is the mistake the root spellings expose,
+		// because a raw-pattern guard catches only the empty string and lets
+		// '/', '//' and './' normalise straight back into a pattern that
+		// matches the root name.
 		return false
 	}
-	return matchSegments(splitSegments(pattern), splitSegments(name))
+	return matchSegments(pat, splitSegments(name))
 }
 
 func splitSegments(p string) []string {

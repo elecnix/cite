@@ -45,8 +45,22 @@ func TestMatchUsesTheDocumentedDialect(t *testing.T) {
 		// Brace expansion is not part of the dialect.
 		{"{a,b}.md", "a.md", false},
 
-		// An empty pattern matches nothing.
+		// An empty pattern matches nothing, and so does every spelling
+		// that normalises to the repository root.
 		{"", "a.md", false},
+		{"", "", false},
+		{"/", "", false},
+		{"//", "", false},
+		{"./", "", false},
+		{".", "", false},
+		{"/", "README.md", false},
+		{"//", "README.md", false},
+		{"./", "README.md", false},
+
+		// '**' still matches the root name, so it is not one of the
+		// spellings above.
+		{"**", "", true},
+		{"docs/**", "docs", true},
 	}
 	for _, c := range cases {
 		if got := Match(c.pattern, c.name); got != c.want {
@@ -90,12 +104,12 @@ func TestMatchAgreesWithScope(t *testing.T) {
 		"", "*", "*.go", "**", "**/*", "**/*.go", "docs/*.md", "docs/**",
 		"src/**", "src/**/*.ts", "cmd/?ain.go", "a/**/b", "**/**/*.go",
 		"/docs/**", "./docs/*.md", "a//b/*.go", "/**", "[abc].md",
-		"docs/[a-c]*.md", "{a,b}.md", "[.md", "./",
+		"docs/[a-c]*.md", "{a,b}.md", "[.md", "./", "/", "//", ".", "/docs",
 	}
 	names := []string{
-		"", "a.go", "main.go", "README.md", "docs/a.md", "docs/a/b.md",
-		"src/a/b.go", "src/a.ts", "cmd/main.go", "a/b", "a/x/y/b",
-		"[abc].md", "{a,b}.md", "z.md",
+		"", ".", "/", "docs", "a.go", "main.go", "README.md", "docs/a.md",
+		"docs/a/b.md", "src/a/b.go", "src/a.ts", "cmd/main.go", "a/b",
+		"a/x/y/b", "[abc].md", "{a,b}.md", "z.md",
 	}
 	for _, p := range patterns {
 		for _, n := range names {
