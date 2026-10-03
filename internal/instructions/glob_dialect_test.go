@@ -46,7 +46,8 @@ func TestMatchUsesTheDocumentedDialect(t *testing.T) {
 		{"{a,b}.md", "a.md", false},
 
 		// An empty pattern matches nothing, and so does every spelling
-		// that normalises to the repository root.
+		// that normalises to the repository root: a pattern naming no
+		// segment can never name a file.
 		{"", "a.md", false},
 		{"", "", false},
 		{"/", "", false},
@@ -57,8 +58,9 @@ func TestMatchUsesTheDocumentedDialect(t *testing.T) {
 		{"//", "README.md", false},
 		{"./", "README.md", false},
 
-		// '**' still matches the root name, so it is not one of the
-		// spellings above.
+		// '**' names zero or more segments rather than naming none,
+		// so it is not one of the spellings above and still matches
+		// the empty name.
 		{"**", "", true},
 		{"docs/**", "docs", true},
 	}

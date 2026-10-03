@@ -79,8 +79,9 @@ func TestMatchDialect(t *testing.T) {
 		{"", "a.md", false},
 		{"", "", false},
 
-		// A pattern that names at least one segment still matches the
-		// repository root name, which is what an empty name normalises to.
+		// A root pattern names no segment, so there is nothing for it to
+		// match. '**' is not a root pattern: it names zero or more
+		// segments, so it still matches the zero-segment name.
 		{"**", "", true},
 		{"**/*.gen.go", "", false},
 		{"docs/**", "", false},
@@ -112,6 +113,15 @@ func TestMatchNeverCrossesASegment(t *testing.T) {
 // normalisation turned "/", "//" and "./" back into the root pattern, which
 // matched the root name — Match("/", "") was true while the documentation
 // said an empty pattern matches nothing.
+//
+// "matches nothing" here means the pattern names no segment at all, so it can
+// never name a file. It is not a statement about '**', which also has no
+// literal segment but explicitly stands for zero or more of them, and which
+// still matches every name. The two spellings are different rules, not
+// competing ones: see TestMatchRootPatternDoesNotSwallowTheDialect.
+//
+// Both callers pass a real repository-relative path, never an empty name, so
+// this class is pinned as dialect rather than as production behaviour.
 func TestMatchRootPatternMatchesNothing(t *testing.T) {
 	for _, pattern := range []string{"", "/", "//", "///", "./", ".", ".//", "/./"} {
 		for _, name := range []string{"", ".", "/", "README.md", "docs/a.md"} {
@@ -125,8 +135,12 @@ func TestMatchRootPatternMatchesNothing(t *testing.T) {
 // TestMatchRootPatternDoesNotSwallowTheDialect is the guard against
 // over-correcting the root case. Deciding emptiness after normalisation must
 // not cost the dialect any pattern that genuinely matches, in particular
-// '**', which still matches every name including the root, and 'docs/**',
-// which still matches the directory itself rather than only its contents.
+// '**', which stands for zero or more segments and so matches the empty name
+// that a root pattern is rejected for, and 'docs/**', which still matches the
+// directory itself rather than only its contents. Read together with
+// TestMatchRootPatternMatchesNothing the pair states the whole rule: a pattern
+// that names no segment matches nothing, and a pattern that names segments —
+// however optionally — still matches.
 func TestMatchRootPatternDoesNotSwallowTheDialect(t *testing.T) {
 	cases := []struct {
 		pattern, name string
