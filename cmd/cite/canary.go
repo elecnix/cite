@@ -12,7 +12,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"sort"
 	"time"
 
 	"github.com/elecnix/cite/internal/config"
@@ -44,11 +43,7 @@ func canaryLegs(cfg *config.Config) []canaryLeg {
 		seen[l.name] = true
 		legs = append(legs, l)
 	}
-	providerNames := make([]string, 0, len(cfg.Providers))
-	for n := range cfg.Providers {
-		providerNames = append(providerNames, n)
-	}
-	sort.Strings(providerNames)
+	providerNames := cfg.ProviderNames()
 	for _, pn := range providerNames {
 		p := cfg.Providers[pn]
 		if len(p.Models) == 0 {
@@ -62,10 +57,10 @@ func canaryLegs(cfg *config.Config) []canaryLeg {
 		})
 	}
 	for _, ref := range cfg.Fallback {
-		pn, mid := splitModelRef(ref)
+		pn, mid, qualified := config.SplitModelRef(ref)
 		base, key := "", model.CredentialExpr("")
 		var headers map[string]string
-		if p, ok := cfg.Providers[pn]; ok && pn != "" {
+		if p, ok := cfg.Providers[pn]; ok && qualified {
 			base, key, headers = p.BaseURL, p.APIKey, p.Headers
 		} else {
 			if pn != "" {
@@ -82,16 +77,6 @@ func canaryLegs(cfg *config.Config) []canaryLeg {
 		add(canaryLeg{name: ref, baseURL: base, apiKey: key, headers: headers, modelID: mid})
 	}
 	return legs
-}
-
-// splitModelRef splits "provider/model"; a bare name returns ("", name).
-func splitModelRef(ref string) (string, string) {
-	for i := 0; i < len(ref); i++ {
-		if ref[i] == '/' {
-			return ref[:i], ref[i+1:]
-		}
-	}
-	return "", ref
 }
 
 func runCanary(args []string) error {
