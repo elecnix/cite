@@ -57,10 +57,66 @@ func TestSpanChangedAllQuotesMustSurvive(t *testing.T) {
 	}
 }
 
+// A quote that spans several lines is the ordinary shape for a multi-line
+// finding, and the head content still contains it verbatim. Normalisation
+// collapses the newlines on BOTH sides, so the span survives and nothing was
+// actioned. Normalising line by line and rejoining with a literal newline
+// made every multi-line quote unsatisfiable, which reported a fixed span for
+// code that never moved.
+func TestSpanChangedMultiLineQuoteSurvives(t *testing.T) {
+	head := []byte("func f() {\n\tif !escaped {\n\t\tel.innerHTML = user.displayName\n\t}\n}\n")
+	fs := []model.Evidence{ev(2, "if !escaped {\n\t\tel.innerHTML = user.displayName")}
+	if SpanChanged(fs, head) {
+		t.Fatal("a multi-line quote still present at head must not count as changed")
+	}
+}
+
+// The same span with the newline replaced by a space in the file: still
+// unchanged, because the normaliser collapses whitespace on both sides.
+func TestSpanChangedMultiLineQuoteReflowed(t *testing.T) {
+	head := []byte("func f() {\n\tif !escaped { el.innerHTML = user.displayName }\n}\n")
+	fs := []model.Evidence{ev(2, "if !escaped {\n\t\tel.innerHTML = user.displayName")}
+	if SpanChanged(fs, head) {
+		t.Fatal("a reflowed multi-line span is whitespace drift, not a change")
+	}
+}
+
 // Empty evidence cannot be verified either way; it must never claim action.
 func TestSpanChangedEmptyEvidence(t *testing.T) {
 	if SpanChanged(nil, []byte("code")) {
 		t.Fatal("no evidence ⇒ no actioned verdict")
+	}
+	if SpanChanged([]model.Evidence{}, []byte("code")) {
+		t.Fatal("an empty evidence slice ⇒ no actioned verdict")
+	}
+	if !SpanChanged([]model.Evidence{ev(1, "anything")}, []byte{}) {
+		t.Fatal("an empty head file holds no quoted span, so it is changed")
+	}
+}
+
+// The unverifiable-quote rule is the one place the two callers differ from
+// each other, so it is pinned here rather than left to a reader to infer.
+//
+// One owner cannot serve both callers unchanged here. The thread predicate on
+// main returned false the moment it met a quote that normalises to nothing,
+// so it had to fail toward keeping. This metric skipped such a quote with
+// `continue` and kept counting the readable ones, which meant a finding whose
+// quotes were partly punctuation still counted as fixed. Reading both through
+// scope makes the unverifiable quote block the verdict in either direction, so
+// the metric now fails toward not claiming a fix. Undercounting a fix is the
+// safe direction for this instrument: it never promotes a finding Cite could
+// not actually read.
+func TestSpanChangedUnverifiableQuoteBlocksTheVerdict(t *testing.T) {
+	head := []byte("something else entirely\n")
+	if SpanChanged([]model.Evidence{ev(1, "old line")}, head) != true {
+		t.Fatal("a readable quote that vanished is a change")
+	}
+	unreadable := []model.Evidence{ev(1, "***"), ev(2, "old line")}
+	if SpanChanged(unreadable, head) {
+		t.Fatal("an unreadable quote must block the verdict, not ride along with the others")
+	}
+	if SpanChanged(unreadable, []byte("old line\n")) {
+		t.Fatal("an unreadable quote must block the verdict even when nothing vanished")
 	}
 }
 
