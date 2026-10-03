@@ -86,6 +86,38 @@ func TestSpanChangedEmptyEvidence(t *testing.T) {
 	if SpanChanged(nil, []byte("code")) {
 		t.Fatal("no evidence ⇒ no actioned verdict")
 	}
+	if SpanChanged([]model.Evidence{}, []byte("code")) {
+		t.Fatal("an empty evidence slice ⇒ no actioned verdict")
+	}
+	if !SpanChanged([]model.Evidence{ev(1, "anything")}, []byte{}) {
+		t.Fatal("an empty head file holds no quoted span, so it is changed")
+	}
+}
+
+// The unverifiable-quote rule is the one place the two callers differ from
+// each other, so it is pinned here rather than left to a reader to infer.
+//
+// One owner cannot serve both callers unchanged here. The thread predicate on
+// main returned false the moment it met a quote that normalises to nothing,
+// so it had to fail toward keeping. This metric skipped such a quote with
+// `continue` and kept counting the readable ones, which meant a finding whose
+// quotes were partly punctuation still counted as fixed. Reading both through
+// scope makes the unverifiable quote block the verdict in either direction, so
+// the metric now fails toward not claiming a fix. Undercounting a fix is the
+// safe direction for this instrument: it never promotes a finding Cite could
+// not actually read.
+func TestSpanChangedUnverifiableQuoteBlocksTheVerdict(t *testing.T) {
+	head := []byte("something else entirely\n")
+	if SpanChanged([]model.Evidence{ev(1, "old line")}, head) != true {
+		t.Fatal("a readable quote that vanished is a change")
+	}
+	unreadable := []model.Evidence{ev(1, "***"), ev(2, "old line")}
+	if SpanChanged(unreadable, head) {
+		t.Fatal("an unreadable quote must block the verdict, not ride along with the others")
+	}
+	if SpanChanged(unreadable, []byte("old line\n")) {
+		t.Fatal("an unreadable quote must block the verdict even when nothing vanished")
+	}
 }
 
 func fi(fp, path string, evidence ...model.Evidence) Finding {
