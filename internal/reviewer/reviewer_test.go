@@ -68,12 +68,12 @@ func (v *fakeVerifier) SymbolExists(s string) bool { return v.symbols[s] }
 
 // fakeDisc implements DiscriminativeVerifier with one canned answer.
 type fakeDisc struct {
-	res   string
+	res   VerifierVerdict
 	err   error
 	calls int
 }
 
-func (d *fakeDisc) Verify(_ context.Context, _ string, _ model.Finding) (string, error) {
+func (d *fakeDisc) Verify(_ context.Context, _ string, _ model.Finding) (VerifierVerdict, error) {
 	d.calls++
 	return d.res, d.err
 }
