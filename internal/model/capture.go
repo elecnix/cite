@@ -635,10 +635,22 @@ func maskResponseHeaders(h CapturedHeaders, secrets []string, red *CaptureRedact
 }
 
 // isCredentialHeader reports whether a header's value is replaced wholesale.
+//
+// Both lists are consulted. maskedHeaderNames is the list the document records
+// as masked, so a name on it that the fragments fail to match produced a
+// capture that told the reader it had masked a value it had written out in
+// full: openai-organization-key is on maskedHeaderNames and matches no
+// fragment. The document's claim is the promise, so it is the list that
+// decides.
 func isCredentialHeader(name string) bool {
 	n := strings.ToLower(strings.TrimSpace(name))
 	for _, f := range credentialHeaderFragments {
 		if strings.Contains(n, f) {
+			return true
+		}
+	}
+	for _, m := range maskedHeaderNames {
+		if n == strings.ToLower(m) {
 			return true
 		}
 	}

@@ -777,3 +777,33 @@ func TestCaptureManifestSurvivesConcurrentCalls(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryMaskedHeaderNameIsActuallyMasked holds the document's promise. A
+// capture records maskedHeaderNames so a reader can tell which values were
+// redacted, which only means anything if every one of those names is redacted.
+// openai-organization-key was on the list and matched no fragment in
+// credentialHeaderFragments, so a provider returning it had its value written
+// into the capture while the document said it had been masked.
+func TestEveryMaskedHeaderNameIsActuallyMasked(t *testing.T) {
+	for _, name := range maskedHeaderNames {
+		if !isCredentialHeader(name) {
+			t.Errorf("%s is recorded as masked but isCredentialHeader does not mask it", name)
+		}
+	}
+}
+
+// The same gap, end to end: a provider that echoes the header back must not
+// have its value survive into the capture.
+func TestResponseHeaderOnTheMaskedListIsRedacted(t *testing.T) {
+	red := &CaptureRedaction{}
+	out := maskResponseHeaders(CapturedHeaders{
+		"openai-organization-key": "org-abc123secret",
+		"content-type":            "application/json",
+	}, nil, red)
+	if got := out["openai-organization-key"]; got != Redacted {
+		t.Errorf("openai-organization-key = %q, want %q: a header on maskedHeaderNames must not reach the capture intact", got, Redacted)
+	}
+	if got := out["content-type"]; got != "application/json" {
+		t.Errorf("content-type = %q, want it untouched: the mask must not widen past the credential names", got)
+	}
+}
