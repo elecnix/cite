@@ -326,9 +326,13 @@ func (w chatCompletionsUsage) toUsage() Usage {
 // to 24576 grew the runaway from 96 KB to 186 KB rather than producing an
 // answer.
 //
-// The empty-answer test is load-bearing on its own; the full-budget test
+// The empty-answer test is load-bearing on its own. The full-budget test
 // guards against calling a short reply that merely happened to be cut off a
-// runaway, and is skipped when the provider reports no usage.
+// runaway; a provider that reports no usage at all reports zero output tokens,
+// which never reaches the cap, so an unreported budget is not a runaway. A
+// provider that itemises no reasoning_tokens but does report a full budget is
+// still a runaway: where the tokens went does not change that no answer came
+// back.
 func RunawayGeneration(answer string, usage Usage, maxTokens int) bool {
 	if strings.TrimSpace(answer) != "" {
 		return false
@@ -743,6 +747,8 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 			// this legible, so say plainly that they are a reasoning trace and
 			// not a half-written answer -- an operator handed 186 KB of it
 			// otherwise reads it as Cite having generated 186 KB of review.
+			// where the tokens went, since a provider that does not
+			// itemise reasoning_tokens leaves Cite nothing to name.
 			where := fmt.Sprintf("all %d output tokens were spent and no answer was written", usage.OutputTokens)
 			if usage.ReasoningTokens > 0 {
 				where = fmt.Sprintf("%d of %d output tokens went to reasoning and no answer was written",

@@ -98,12 +98,12 @@ type Reviewer struct {
 
 	runCtx context.Context // run-scoped ctx handed to the discriminative verifier
 
-	retryMu   sync.Mutex
-	retryLeft map[string]int // run-global retry token bucket, per unit type
-	reasksSpent      int // run-wide bounded re-asks spent (issue #73)
-	echoCorrections  int // responses relabeled by the echo guard (issue #73)
-	filesMu   sync.Mutex
-	finalized map[string]bool // manifest paths with a recorded terminal state
+	retryMu         sync.Mutex
+	retryLeft       map[string]int // run-global retry token bucket, per unit type
+	reasksSpent     int            // run-wide bounded re-asks spent (issue #73)
+	echoCorrections int            // responses relabeled by the echo guard (issue #73)
+	filesMu         sync.Mutex
+	finalized       map[string]bool // manifest paths with a recorded terminal state
 
 	usageMu sync.Mutex
 	usage   model.Usage // run-total of every completion response's counters (§15)
@@ -173,20 +173,21 @@ const (
 	defaultPerFileDeadlineRetries = 1
 
 	// defaultPerFileRunawayRetries is the bounded recovery for a model that
-	// never terminated. One, not more: the failure is a property of how long
-	// the model thinks on this attempt, so a second identical roll buys a
-	// coin-flip, not convergence. The one attempt is not the same request
-	// though — it bounds reasoning (see recoveryReasoningEffort), which is
-	// the only measured difference between an attempt that terminates and
-	// one that does not.
+	// never stopped. One, not more: the failure depends on how long the model
+	// thinks on a given attempt, so a second identical roll buys another coin
+	// flip rather than convergence. Where Cite can bound reasoning the retry
+	// is a genuinely different request; where the operator already holds a
+	// bound in force it is the same request again, which measurement puts at
+	// 2 attempts in 4, still better than a certain loss.
 	defaultPerFileRunawayRetries = 1
 
-	// recoveryReasoningEffort bounds the one recovery attempt's thinking. It
-	// is applied ONLY on that attempt and ONLY when the operator has not set
-	// a reasoning_effort of their own, because an explicit operator value is
-	// an instruction and Cite never overrides one — including to rescue a run
-	// from a runaway. Measured on the failing request at the same 12288 cap:
-	// unbounded reasoning terminated on 1 attempt in 4, bounded on 2 in 2.
+	// recoveryReasoningEffort holds the one recovery attempt's thinking to a
+	// fixed allowance. It applies ONLY on that attempt and ONLY when the
+	// operator has not set a reasoning_effort of their own, because an
+	// explicit operator value is an instruction and Cite never overrides one,
+	// not even to rescue a run from a runaway. Measured on the failing request
+	// at the same 12288 cap: unbounded reasoning finished on 1 attempt in 4,
+	// bounded on 2 in 2.
 	recoveryReasoningEffort = "low"
 )
 
@@ -872,23 +873,36 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 		resp, err := r.completeWithRetry(ctx, unitReview, req, timeout)
 		if err != nil {
 			if errors.Is(err, model.ErrRunaway) && runawayRetries > 0 {
-				// The model never terminated: it spent the whole output
-				// budget thinking and returned no answer. There is no finding
-				// to lose and no answer to be deterministic about, so this is
-				// recoverable where a capacity overflow is not. One bounded
-				// attempt from this file's own budget -- never the run-global
-				// one, so one pathological file cannot starve coverage for
-				// the rest -- and the bound is what makes the attempt
-				// different: an explicit reasoning allowance, applied only
-				// when the operator has not set one of their own.
+				// The model never stopped: it spent the whole output
+				// budget thinking and returned no answer. There is no
+				// finding to lose and no answer to be deterministic
+				// about, so this is recoverable where a capacity overflow
+				// is not. One attempt from this file's own budget, never
+				// the run-global one, so one pathological file cannot
+				// starve coverage for the rest.
 				runawayRetries--
 				spent++
 				r.noteReask()
+				// Bounding reasoning is what makes the retry a different
+				// request rather than a coin flip, so it is worth one.
+				// An operator who set reasoning_effort already holds that
+				// bound in force and Cite never overrides one; that retry is
+				// then the same roll measured at 2 attempts in 4, which is
+				// still better than a certain loss, and the log line says
+				// which of the two happened rather than claiming a bound
+				// this branch did not apply.
+				bound := false
 				if req.ReasoningEffort == "" {
 					req.ReasoningEffort = recoveryReasoningEffort
+					bound = true
 				}
-				r.logf("review of %s: the model never terminated (spent the output budget on reasoning, wrote no answer); re-asking once with reasoning bounded at %q, %d left — raising the output-token cap would only make the runaway larger",
-					e.Path, req.ReasoningEffort, runawayRetries)
+				if bound {
+					r.logf("review of %s: the model never stopped (it spent the output budget thinking and wrote no answer); re-asking once with reasoning bounded at %q, %d left, because raising the output-token cap would only make the runaway larger",
+						e.Path, req.ReasoningEffort, runawayRetries)
+				} else {
+					r.logf("review of %s: the model never stopped (it spent the output budget thinking and wrote no answer); your reasoning_effort=%q is already in force, so this retry repeats the request unchanged, %d left",
+						e.Path, req.ReasoningEffort, runawayRetries)
+				}
 				continue
 			}
 			if errors.Is(err, model.ErrDeadline) && deadlineRetries > 0 {

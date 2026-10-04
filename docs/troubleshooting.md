@@ -122,10 +122,10 @@ summary names the cause:
   schema violation or a wrong-path echo is not retried, because re-asking
   invites a matching quote for the same wrong claim.
 - **`output truncated at token cap (finish_reason=length)`.** The review of that
-  file did not fit in the output budget. Content came back and was cut off, so
-  this is deterministic and it is not retried: it would truncate identically.
-  Raise `roles.review.max_output_tokens`, or declare the model's real
-  `max_tokens` under its provider entry; see
+  file did not fit in the output budget. The model wrote an answer and Cite cut
+  it off, so the failure repeats and Cite does not retry. Raise
+  `roles.review.max_output_tokens`, or declare the model's real `max_tokens`
+  under its provider entry; see
   [the output cap](configuration.md#the-output-cap). A truncated review is
   always reported as an error, never accepted as a short clean one. The partial
   output is always captured to a file: cite writes the raw response body to
@@ -177,30 +177,30 @@ can spend the whole output budget thinking and never call the tool. The
 omits the field, and `low`, `medium` or `high` pass through to a provider that
 accepts them.
 
-### The model never terminates and I get COULD_NOT_EVALUATE
+### The model never stops and I get COULD_NOT_EVALUATE
 
-**`the model never terminated`** in a file's reason, and a `runaway generation`
-error naming no tokens spent on an answer. The provider consumed the whole
-`roles.review.max_output_tokens` budget as reasoning tokens and returned no
-answer at all — the captured response has an empty `content` and every output
-token accounted to `reasoning_tokens`. The captured file is a **reasoning
-trace, not a half-written review**, so its size tells you how long the model
-thought, not how much it said.
+**`the model never stops`** appears in a file's reason, alongside a
+`runaway generation` error that reports how the output tokens went. The provider
+turned the whole `roles.review.max_output_tokens` budget into reasoning tokens
+and gave back no answer. The captured response has an empty `content`, and every
+output token is accounted for. What Cite writes to the capture file is a
+**reasoning trace**, so the file's size measures how long the model thought
+rather than how much it said.
 
-**Raising the cap makes this worse, not better.** The budget is shared: reasoning
-tokens come out of the same `max_tokens` the answer would have used. Measured on
-one request, doubling the cap from 12288 to 24576 grew the runaway from a 96 KB
-trace to a 186 KB trace and produced no answer at either size.
+**Raising the cap makes this worse.** One budget covers thinking and answering,
+so reasoning tokens come out of the same `max_tokens` an answer would have used.
+On one measured request, doubling the cap from 12288 to 24576 grew the trace
+from 96 KB to 186 KB. Both runs ended with an empty answer.
 
-Cite treats this differently from a capacity overflow for that reason: it is not
-deterministic, so the file's review gets **one** retry with reasoning explicitly
-bounded (unless you set `reasoning_effort` yourself, which is never overridden).
-If that retry also runs away, the file is recorded as errored
-(`runaway_generation`) and the gate concludes `COULD_NOT_EVALUATE` — the run
-never silently passes on a review that was never produced. The durable remedy
-for a model that runs away on every attempt is to pin a `reasoning_effort` in
-your `.github/cite.yml` or the Action's `reasoning_effort` input, so every call
-is bounded rather than only the recovery.
+Cite handles this differently from a real overflow, because the failure does not
+repeat. The file's review gets **one** retry, with reasoning held to a fixed
+allowance. Setting `reasoning_effort` yourself keeps your own value, since Cite
+never overrides it. If that retry also runs long, Cite records the file as
+errored (`runaway_generation`) and the gate concludes `COULD_NOT_EVALUATE`, so a
+run never passes on a review that never happened. For a model that runs long
+every time, pin a `reasoning_effort` in your `.github/cite.yml` or in the
+Action's `reasoning_effort` input. That bound then applies to every call, not
+only to the retry.
 
 ### My tool failures block the merge and I want them not to
 

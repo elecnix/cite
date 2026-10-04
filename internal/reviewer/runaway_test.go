@@ -2,6 +2,7 @@ package reviewer
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -37,9 +38,10 @@ func (p *runawayProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.calls = append(p.calls, req.MaxTokens)
 	p.efforts = append(p.efforts, req.ReasoningEffort)
 	body := "{}"
-	if i < len(p.bodies) {
+	switch {
+	case i < len(p.bodies):
 		body = p.bodies[i]
-	} else {
+	case len(p.bodies) > 0:
 		body = p.bodies[len(p.bodies)-1]
 	}
 	p.mu.Unlock()
@@ -147,6 +149,8 @@ func TestRunawayRecoveryRespectsExplicitOperatorReasoningEffort(t *testing.T) {
 	c := &model.OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
 	o := baseOptions(c)
 	o.ReasoningEffort = "high"
+	var logs strings.Builder
+	o.Logger = func(f string, a ...any) { logs.WriteString(fmt.Sprintf(f, a...) + "\n") }
 	rec, err := runOnce(t, baseInputs(), o)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -162,6 +166,15 @@ func TestRunawayRecoveryRespectsExplicitOperatorReasoningEffort(t *testing.T) {
 	}
 	if len(p.efforts) != 3 {
 		t.Fatalf("provider calls = %d (%v), want 3", len(p.efforts), p.efforts)
+	}
+	// The retry repeated the request, so the log must not claim a bound this
+	// branch never applied. An operator reading "bounded at high" would
+	// conclude Cite had done something it did not.
+	if !strings.Contains(logs.String(), "already in force") {
+		t.Fatalf("log must say the operator's bound was already in force, got:\n%s", logs.String())
+	}
+	if strings.Contains(logs.String(), "bounded at") {
+		t.Fatalf("log claims a bound was applied when none was, got:\n%s", logs.String())
 	}
 }
 
