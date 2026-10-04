@@ -333,6 +333,15 @@ func (w chatCompletionsUsage) toUsage() Usage {
 // provider that itemises no reasoning_tokens but does report a full budget is
 // still a runaway: where the tokens went does not change that no answer came
 // back.
+//
+// A provider that refuses or filters a request also returns an empty answer,
+// and the caller cannot tell that case from a runaway without a second signal.
+// The cost of guessing wrong is bounded and stated here so the choice is
+// visible rather than implicit: one extra call from the file's own budget,
+// followed by the same fail-closed outcome either way. Note also that the only
+// caller runs inside its finish_reason == "length" branch, and a refusal
+// normally ends with finish_reason == "stop" instead, which never reaches here
+// at all.
 func RunawayGeneration(answer string, usage Usage, maxTokens int) bool {
 	if strings.TrimSpace(answer) != "" {
 		return false
