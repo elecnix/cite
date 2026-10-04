@@ -206,6 +206,12 @@ func TestRunawayMessageNamesTheObservedReasoningTrace(t *testing.T) {
 		t.Fatalf("runaway message must name the %d characters of reasoning the provider actually returned, got: %v",
 			len(trace), err)
 	}
+	// The bare number is not enough: the fixture reports completion_tokens at
+	// the cap, so a trace of exactly that length would satisfy the check above
+	// against a message naming only the budget. Require the unit too.
+	if !strings.Contains(err.Error(), "characters") {
+		t.Fatalf("runaway message must report the trace in characters rather than as the budget, got: %v", err)
+	}
 }
 
 // The reverse guard on the same change: a response with no reasoning trace
@@ -213,20 +219,60 @@ func TestRunawayMessageNamesTheObservedReasoningTrace(t *testing.T) {
 // characters of reasoning and zero of content, and a caller that reports no
 // reasoning at all is a different shape with a different remedy.
 func TestRunawayMessageInventsNoReasoningTrace(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"no reasoning field", `{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":"length"}],"usage":{"prompt_tokens":100,"completion_tokens":4096}}`},
+		{"empty reasoning field", `{"choices":[{"message":{"role":"assistant","content":"","reasoning":""},"finish_reason":"length"}],"usage":{"prompt_tokens":100,"completion_tokens":4096}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
 
-	h := &runawayHandler{body: `{"choices":[{"message":{"role":"assistant","content":""},` +
-		`"finish_reason":"length"}],"usage":{"prompt_tokens":100,"completion_tokens":4096}}`}
-	ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
-	defer ts.Close()
-	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+			h := &runawayHandler{body: tc.body}
+			ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
+			defer ts.Close()
+			c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
 
-	_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 4096})
-	if !errors.Is(err, ErrRunaway) {
-		t.Fatalf("err = %v, want ErrRunaway", err)
+			_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 4096})
+			if !errors.Is(err, ErrRunaway) {
+				t.Fatalf("err = %v, want ErrRunaway", err)
+			}
+			if strings.Contains(err.Error(), "characters") {
+				t.Fatalf("runaway message reported a reasoning trace the provider never sent: %v", err)
+			}
+		})
 	}
-	if strings.Contains(err.Error(), "characters") {
-		t.Fatalf("runaway message reported a reasoning trace the provider never sent: %v", err)
+}
+
+// A provider that sends message.reasoning as anything other than a string must
+// not cost a valid review. Decoding the field into a plain Go string makes
+// json.Unmarshal reject the entire response, and a well-formed review goes
+// with it as a deterministic malformed provider response. The sibling
+// diagnostic field Provider is raw for the same reason.
+func TestCompleteSurvivesANonStringReasoningField(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"array", `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}","reasoning":["a","b"]},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":200}}`},
+		{"object", `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}","reasoning":{"steps":[]}},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":200}}`},
+		{"number", `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}","reasoning":42},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":200}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &runawayHandler{body: tc.body}
+			ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
+			defer ts.Close()
+			c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+
+			resp, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 4096})
+			if err != nil {
+				t.Fatalf("a non-string reasoning field must not reject a valid review: %v", err)
+			}
+			if resp.Text != `{"ok":true}` {
+				t.Fatalf("Text = %q, want the provider's answer", resp.Text)
+			}
+		})
 	}
 }

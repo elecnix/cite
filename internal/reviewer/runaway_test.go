@@ -219,6 +219,14 @@ func TestRunawayBoundDoesNotLeakIntoLaterReasks(t *testing.T) {
 	// The output budget is the other half of the bound, and it is bounded the
 	// same way: to the one recovery call, never to the request the loop
 	// reuses.
+	//
+	// Both halves of each assertion are stated, because one alone is not a
+	// regression test. Comparing a later call to calls[1] alone passes
+	// vacuously whenever the recovery budget equals the operator's, which is
+	// what every call did before this bound existed, so a leak would have
+	// gone unnoticed. Comparing against calls[2] is what makes the check
+	// bite: a leak makes a later re-ask equal the recovery's budget, and
+	// nothing else.
 	calls, _ := p.snapshot()
 	if calls[2] >= calls[1] {
 		t.Fatalf("recovery asked for max_tokens=%d against the failed attempt's %d; the budget bound is not in force",
@@ -226,8 +234,12 @@ func TestRunawayBoundDoesNotLeakIntoLaterReasks(t *testing.T) {
 	}
 	for i, tk := range calls[3:] {
 		if tk != calls[1] {
-			t.Fatalf("call %d asked for max_tokens=%d, want the operator's %d; the recovery budget leaked into a later re-ask",
+			t.Fatalf("call %d asked for max_tokens=%d, want the operator's %d; a later re-ask went out with something the operator never configured",
 				i+3, tk, calls[1])
+		}
+		if tk == calls[2] {
+			t.Fatalf("call %d asked for max_tokens=%d, the recovery budget; the recovery bound leaked into a later re-ask",
+				i+3, tk)
 		}
 	}
 }

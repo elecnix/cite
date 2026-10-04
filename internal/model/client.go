@@ -701,8 +701,14 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 				// 173631 characters of reasoning beside an empty content
 				// string, and the usage object carried no split at all, so
 				// the only number available to report was the cap.
-				Reasoning string     `json:"reasoning"`
-				ToolCalls []ToolCall `json:"tool_calls"`
+				//
+				// Raw, like Provider beside it, because a field of an
+				// unexpected type must not fail a call whose review is fine.
+				// A plain string here would make json.Unmarshal reject the
+				// whole response whenever a provider sends reasoning as an
+				// array or an object, throwing away a valid review.
+				Reasoning json.RawMessage `json:"reasoning"`
+				ToolCalls []ToolCall      `json:"tool_calls"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -781,7 +787,7 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 			if usage.ReasoningTokens > 0 {
 				where = fmt.Sprintf("%d of %d output tokens went to reasoning and no answer was written",
 					usage.ReasoningTokens, usage.OutputTokens)
-			} else if n := len(ch.Message.Reasoning); n > 0 {
+			} else if n := reasoningChars(ch.Message.Reasoning); n > 0 {
 				where = fmt.Sprintf("the whole %d-token output cap was spent and no answer was written, and every one of the %d characters the provider returned is reasoning",
 					req.MaxOutputTokens, n)
 			}
@@ -821,6 +827,19 @@ func toolArguments(calls []ToolCall, want string) (string, bool) {
 		return c.Function.Arguments, true
 	}
 	return "", false
+}
+
+// reasoningChars returns the length of a provider's reasoning trace when it
+// is a JSON string, and 0 for any other shape including none at all. The
+// field stays raw on the wire for the same reason Provider does: an
+// unexpected type must not fail a call whose review is fine, and here the
+// only thing at stake is a number in a diagnostic sentence.
+func reasoningChars(raw json.RawMessage) int {
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return 0
+	}
+	return len(s)
 }
 
 // upstreamProvider reads a router's upstream provider label, which
