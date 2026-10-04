@@ -46,23 +46,26 @@
 # (fenced blocks, single-quoted keys, stray bytes) — an endpoint dropping
 # response_format. require_parameters makes the router refuse such endpoints;
 # a clean routing error costs nothing, degraded output fails the file.
+# No `roles:` block, deliberately. There was a `roles.review.max_output_tokens`
+# pin at 65536, left over from PR #41 when the built-in default was 32768 — and
+# the default has since been raised to 131072, so the pin had quietly become a
+# ceiling *below* the repository's own default. That is where the dogfood
+# reviews of #133 and #152 died: internal/model/client.go produced 253 KB of
+# review text and internal/config/config.go produced 208 KB, both right at the
+# pin, both ending at finish_reason=length with the file recorded as never
+# evaluated. Raising the built-in default from 32768 to 131072 had already
+# fixed this exact failure for big scenario-style files; the pin then undid it
+# here. Removing the key restores the default rather than raising anything
+# further, and the deadline derives from the cap — 60s + tokens/128, so 18
+# minutes at 131072, against no workflow timeout to collide with.
+#
+# Timeouts were unpinned here for a separate reason. The explicit review: 600s /
+# triage: 120s pins predate the 15-minute defaults and terminal (never-retried)
+# deadlines: once a deadline became terminal the pins stopped costing retries
+# and started costing whole files — a deepseek-v4-flash call that needed more
+# than the pin died with no second chance (dogfooding on the parallel-head-review
+# PR lost three files at 600s). The defaults now sit at 15 minutes for every
+# role, generous because a hung call is rare while a slow-but-correct one is
+# common, and an explicit roles.<role>.timeout still wins whenever this
+# repository needs one again.
 require_parameters: true
-
-roles:
-  review:
-    # Dogfooding on PR #41: reviewing a large diff (cmd/cite/review.go) hit
-    # finish_reason=length at the then-built-in 32768-token cap. Raise it so
-    # big diffs get complete reviews. (The built-in default has since been
-    # raised to 131072; this explicit pin is kept as the operator-set value
-    # and wins over the default either way.)
-    max_output_tokens: 65536
-  # Timeouts are deliberately NOT pinned here any more. The explicit
-  # review: 600s / triage: 120s pins predate the 15-minute defaults and
-  # terminal (never-retried) deadlines: once a deadline became terminal the
-  # pins stopped costing retries and started costing whole files — a
-  # deepseek-v4-flash call that needed more than the pin died with no second
-  # chance (dogfooding on the parallel-head-review PR lost three files at
-  # 600s). The defaults now sit at 15 minutes for every role, generous
-  # because a hung call is rare while a slow-but-correct one is common, and
-  # an explicit roles.<role>.timeout still wins whenever this repository
-  # needs one again.
