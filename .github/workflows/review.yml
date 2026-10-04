@@ -164,6 +164,10 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           CITE_REVIEWER_ID: cite-head
           CITE_RECORD_OUT: ${{ runner.temp }}/cite-head-run-record.json
+          # Where cite writes the partial response of a review that hit the token
+          # cap. Its default is /tmp, which the archive step below does not read,
+          # so without this the capture is lost when the job ends.
+          CITE_TRUNCATED_OUT: ${{ runner.temp }}/cite-truncated-response.json
           # From the event payload: this step runs under pull_request_target,
           # where GITHUB_REF is the base branch and carries no pull number.
           PR_NUMBER: ${{ github.event.pull_request.number }}
