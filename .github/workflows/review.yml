@@ -206,5 +206,14 @@ jobs:
           path: |
             ${{ runner.temp }}/cite-head-output.log
             ${{ runner.temp }}/cite-head-run-record.json
+            # The partial response is the only evidence of what a truncated
+            # review actually contained, and it lives only on the runner: the
+            # log says how many bytes it was, never what was in them. Without
+            # this line the runaway-output failure has no artifact to study
+            # once the job ends. It is a request/response exchange, so it can
+            # carry the reviewed source; it is a 14-day artifact on a pull
+            # request only, which is the same exposure the review artifact
+            # already has.
+            ${{ runner.temp }}/cite-truncated-response.json
           if-no-files-found: warn
           retention-days: 30
