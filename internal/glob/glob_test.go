@@ -1016,11 +1016,20 @@ func TestNormalize(t *testing.T) {
 	}
 }
 
-// TestNormalizeAndMatchAgree pins the invariant the Normalize doc states: a
-// "" from Normalize and a false from Match are the same condition, so a
-// pattern that normalises to the empty string matches no path, and a pattern
-// that keeps a segment can. The leading-".." cases are here because a reader
-// can reasonably expect ".." to be able to escape upward, and it cannot.
+// TestNormalizeAndMatchAgree pins the invariant the Normalize doc states.
+// It is one-directional: a pattern that normalises to the empty string
+// specifies no segment, and so it cannot match any name.
+//
+//	Normalize(pattern) == ""  =>  Match(pattern, name) == false, for any name
+//
+// The converse is deliberately not asserted and must not be. A pattern that
+// keeps a segment can still match no name, because that name may simply be
+// somewhere else: "docs" is not inert and does not match "a.go". Reading the
+// implication as an equivalence would demand that every non-inert pattern
+// match every name, which is not a property any matcher has.
+//
+// The leading-".." cases are here because a reader can reasonably expect ".."
+// to be able to escape upward, and it cannot.
 func TestNormalizeAndMatchAgree(t *testing.T) {
 	patterns := []string{"", ".", "..", "/", "//", "./", "docs/..", "../docs", "docs", "docs/**", "**", "../**"}
 	names := []string{"", "a.go", "docs", "docs/a.md", "../docs", "..", "/docs/a.md"}
@@ -1028,7 +1037,7 @@ func TestNormalizeAndMatchAgree(t *testing.T) {
 		for _, n := range names {
 			inert, matched := Normalize(p) == "", Match(p, n)
 			if inert && matched {
-				t.Errorf("Match(%q, %q) = true, but Normalize(%q) = %q, so the pattern specifies no segment", p, n, p, Normalize(p))
+				t.Errorf("Match(%q, %q) = true, but Normalize(%q) = %q, so the pattern specifies no segment and cannot match", p, n, p, Normalize(p))
 			}
 		}
 	}
