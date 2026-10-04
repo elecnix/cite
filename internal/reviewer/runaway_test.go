@@ -220,13 +220,12 @@ func TestRunawayBoundDoesNotLeakIntoLaterReasks(t *testing.T) {
 	// same way: to the one recovery call, never to the request the loop
 	// reuses.
 	//
-	// Both halves of each assertion are stated, because one alone is not a
-	// regression test. Comparing a later call to calls[1] alone passes
-	// vacuously whenever the recovery budget equals the operator's, which is
-	// what every call did before this bound existed, so a leak would have
-	// gone unnoticed. Comparing against calls[2] is what makes the check
-	// bite: a leak makes a later re-ask equal the recovery's budget, and
-	// nothing else.
+	// The bound check comes first because it is what makes the loop below
+	// mean anything. Every call shared one budget before this bound existed,
+	// so the comparison a later re-ask makes against calls[1] would have
+	// passed on a leak; it fails only because calls[2] is now strictly
+	// smaller. Comparing a later call against calls[2] as well would be
+	// unreachable, since the loop has already established it differs.
 	calls, _ = p.snapshot()
 	if calls[2] >= calls[1] {
 		t.Fatalf("recovery asked for max_tokens=%d against the failed attempt's %d; the budget bound is not in force",
@@ -236,10 +235,6 @@ func TestRunawayBoundDoesNotLeakIntoLaterReasks(t *testing.T) {
 		if tk != calls[1] {
 			t.Fatalf("call %d asked for max_tokens=%d, want the operator's %d; a later re-ask went out with something the operator never configured",
 				i+3, tk, calls[1])
-		}
-		if tk == calls[2] {
-			t.Fatalf("call %d asked for max_tokens=%d, the recovery budget; the recovery bound leaked into a later re-ask",
-				i+3, tk)
 		}
 	}
 }
@@ -353,8 +348,18 @@ func TestRunawayRecoveryBudgetRespectsTheOperatorCap(t *testing.T) {
 			if calls[1] != tc.cap {
 				t.Fatalf("call 1 sent max_tokens=%d, want the operator cap %d", calls[1], tc.cap)
 			}
-			if calls[2] > tc.cap {
-				t.Fatalf("recovery asked for max_tokens=%d, above the operator cap %d", calls[2], tc.cap)
+			// Exactly, not an upper bound. A recovery that sent the operator's
+			// cap back unchanged satisfies "no more than the cap" on every
+			// entry here, so a table of ceilings pins nothing. Above the
+			// bound the recovery must land on the bound, and at or below it
+			// the operator's own number stands.
+			want := tc.cap
+			if tc.cap > recoveryMaxOutputTokens {
+				want = recoveryMaxOutputTokens
+			}
+			if calls[2] != want {
+				t.Fatalf("recovery asked for max_tokens=%d, want %d (operator cap %d, bound %d)",
+					calls[2], want, tc.cap, recoveryMaxOutputTokens)
 			}
 		})
 	}
