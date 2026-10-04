@@ -193,7 +193,46 @@ const (
 	// same 12288 cap: unbounded reasoning finished on 1 attempt in 4, bounded
 	// on 2 in 2.
 	recoveryReasoningEffort = "low"
+
+	// recoveryMaxOutputTokens is the budget the recovery asks for. The
+	// recovery existed to be a request that could differ from the attempt
+	// that failed, and until this was added it did not: reasoning_effort went
+	// out and max_tokens came back at the operator's own cap, so the single
+	// dimension the provider provably obeys was the one thing left untouched.
+	//
+	// The cap is the right lever because a runaway's reasoning length tracks
+	// the budget it is handed rather than the task. Measured across two caps
+	// on one request, 12288 gave a 96172-byte trace and 24576 gave 185951,
+	// and the content stayed empty both times. A capture taken from CI
+	// settles the shape as well: 65536 tokens on one documentation file
+	// reached a decision by token 42912 and spent the remaining 34.5% of the
+	// budget emitting one repeated token without ever writing the review,
+	// with no repeated chunk at any of 200, 400, 800, 1600 or 3200 characters
+	// and 629 distinct lines out of 659. That is deliberation that will not
+	// stop, not a cycle, so bounding the budget is the intervention and
+	// detecting a loop would have nothing to detect.
+	//
+	// Fixed rather than a fraction of the operator's cap, because a fraction
+	// still scales with the thing that causes the failure. 8192 is above
+	// every review this repository's own runs completed in without trouble
+	// except the two largest, so it is a real answer budget and not a
+	// sentence. It is never applied above the operator's own cap: what an
+	// operator configured is the ceiling for the answer, and the recovery is
+	// not where Cite argues with it.
+	recoveryMaxOutputTokens = 8192
 )
+
+// runawayRecoveryBudget is the output budget the runaway recovery asks for:
+// recoveryMaxOutputTokens, never above the cap the file's own role resolved
+// to. A role pinned below the bound keeps the operator's number, because the
+// bound exists to make the recovery a different request and a cap smaller
+// than the bound already is one.
+func runawayRecoveryBudget(cap int) int {
+	if cap > 0 && cap < recoveryMaxOutputTokens {
+		return cap
+	}
+	return recoveryMaxOutputTokens
+}
 
 // Tool-calling structured output. A provider that ignores response_format
 // (Ollama Cloud does, silently) still honours a forced function call, so Cite
@@ -851,6 +890,7 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 		call := req
 		if boundNext {
 			call.ReasoningEffort = recoveryReasoningEffort
+			call.MaxOutputTokens = runawayRecoveryBudget(req.MaxOutputTokens)
 		}
 		boundNext = false
 		resp, err := r.completeWithRetry(ctx, unitReview, call, timeout)
@@ -865,18 +905,22 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 				// the run-global one, so one pathological file cannot
 				// starve coverage for the rest.
 				//
-				// The retry carries an explicit reasoning allowance, because
-				// that allowance is the whole difference between it and the
-				// attempt that just failed. It is applied to that one call
-				// through boundNext and never to req itself, so no later
-				// re-ask in this loop inherits a limit the operator never
-				// set.
+				// The retry carries an explicit reasoning allowance and a
+				// smaller output budget, because those are the only two
+				// things that make it a different request from the one that
+				// just failed. Reasoning alone was not enough: measured, a
+				// runaway spends the budget it is given, so re-sending the
+				// operator's own cap reproduced the failure at full size.
+				// Both are applied to that one call through boundNext and
+				// never to req itself, so no later re-ask in this loop
+				// inherits a limit the operator never set.
 				runawayRetries--
 				spent++
 				r.noteReask()
 				boundNext = true
-				r.logf("review of %s: the model never stopped (it spent the output budget thinking and wrote no answer); re-asking once with reasoning bounded at %q, %d left, because raising the output-token cap would only make the runaway larger",
-					e.Path, recoveryReasoningEffort, runawayRetries)
+				r.logf("review of %s: the model never stopped (it spent the output budget thinking and wrote no answer); re-asking once with reasoning bounded at %q and the output budget cut from %d to %d tokens, %d left, because handing the model the same budget again would only produce a larger runaway",
+					e.Path, recoveryReasoningEffort, req.MaxOutputTokens,
+					runawayRecoveryBudget(req.MaxOutputTokens), runawayRetries)
 				continue
 			}
 			if errors.Is(err, model.ErrDeadline) && deadlineRetries > 0 {

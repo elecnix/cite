@@ -174,3 +174,59 @@ func TestUsageCarriesReasoningTokens(t *testing.T) {
 		t.Fatalf("ReasoningTokens = %d, want 850", resp.Usage.ReasoningTokens)
 	}
 }
+
+// A provider that itemises no reasoning_tokens still puts the reasoning in the
+// message body, and Cite decodes that body. The captured runaway that settled
+// whether this failure is a loop arrived exactly that way: 176812 bytes of
+// response, content "", and no completion_tokens_details at all. Everything in
+// it was reasoning, and the message the operator read named only the cap.
+//
+// So the message has to be able to say how much text actually came back when
+// the provider reports no split of its own. Without that, the one number
+// available is the budget, which is precisely the number the finding says was
+// never the constraint.
+func TestRunawayMessageNamesTheObservedReasoningTrace(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+
+	const trace = "Let me review this file. Hmm. A broken anchor is plausible. Hmm. OK, I'll report it."
+	body := `{"choices":[{"message":{"role":"assistant","content":"","reasoning":"` +
+		trace + `"},"finish_reason":"length"}],` +
+		`"usage":{"prompt_tokens":12361,"completion_tokens":4096,"total_tokens":16457}}`
+	h := &runawayHandler{body: body}
+	ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+
+	_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 4096})
+	if !errors.Is(err, ErrRunaway) {
+		t.Fatalf("err = %v, want ErrRunaway", err)
+	}
+	if !strings.Contains(err.Error(), itoa(len(trace))) {
+		t.Fatalf("runaway message must name the %d characters of reasoning the provider actually returned, got: %v",
+			len(trace), err)
+	}
+}
+
+// The reverse guard on the same change: a response with no reasoning trace
+// must not have one invented for it. The captured fixture had 173631
+// characters of reasoning and zero of content, and a caller that reports no
+// reasoning at all is a different shape with a different remedy.
+func TestRunawayMessageInventsNoReasoningTrace(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+
+	h := &runawayHandler{body: `{"choices":[{"message":{"role":"assistant","content":""},` +
+		`"finish_reason":"length"}],"usage":{"prompt_tokens":100,"completion_tokens":4096}}`}
+	ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+
+	_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 4096})
+	if !errors.Is(err, ErrRunaway) {
+		t.Fatalf("err = %v, want ErrRunaway", err)
+	}
+	if strings.Contains(err.Error(), "characters") {
+		t.Fatalf("runaway message reported a reasoning trace the provider never sent: %v", err)
+	}
+}

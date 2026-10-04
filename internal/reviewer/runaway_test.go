@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/elecnix/cite/internal/config"
 	"github.com/elecnix/cite/internal/model"
 )
 
@@ -215,6 +216,20 @@ func TestRunawayBoundDoesNotLeakIntoLaterReasks(t *testing.T) {
 			t.Fatalf("call %d carried reasoning_effort=%q; the recovery bound leaked into a later re-ask", i+3, e)
 		}
 	}
+	// The output budget is the other half of the bound, and it is bounded the
+	// same way: to the one recovery call, never to the request the loop
+	// reuses.
+	calls, _ := p.snapshot()
+	if calls[2] >= calls[1] {
+		t.Fatalf("recovery asked for max_tokens=%d against the failed attempt's %d; the budget bound is not in force",
+			calls[2], calls[1])
+	}
+	for i, tk := range calls[3:] {
+		if tk != calls[1] {
+			t.Fatalf("call %d asked for max_tokens=%d, want the operator's %d; the recovery budget leaked into a later re-ask",
+				i+3, tk, calls[1])
+		}
+	}
 }
 
 // snapshot copies the recorded request attributes under the lock. The
@@ -240,4 +255,95 @@ func completion(answer string) string {
 func reviewJSON2(path string) string {
 	return `{"schema_version":1,"path":"` + path + `","outcome":"reviewed",` +
 		`"not_reviewable_reason":"","findings":[]}`
+}
+
+// The defect this pins: the runaway recovery re-sent max_tokens unchanged, so
+// it was identical to the attempt that just failed in the one dimension the
+// provider provably obeys. Measured on deepseek-v4.1-flash, a runaway's
+// reasoning length tracks the budget it was handed rather than the task: the
+// captured trace burned 65536 output tokens on one documentation file, reaching
+// its decision by token 42912 and then spending the remaining 34.5% of the
+// budget emitting a single repeated token without ever writing the review.
+//
+// A recovery that asks for the same budget again is therefore not a second
+// chance, it is the same roll. It has to ask for less.
+func TestRunawayRecoveryAsksForASmallerOutputBudget(t *testing.T) {
+	p := &runawayProvider{bodies: []string{
+		completion(triageJSON("a.go")),
+		runawayMarker,
+		completion(reviewJSON2("a.go")),
+	}}
+	ts := httptest.NewServer(p)
+	defer ts.Close()
+
+	c := &model.OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+	rec, err := runOnce(t, baseInputs(), baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rec.Files[0].State != model.FileReviewed {
+		t.Fatalf("file state = %q reason = %q; the recovery must still be able to answer",
+			rec.Files[0].State, rec.Files[0].Reason)
+	}
+	calls, _ := p.snapshot()
+	if len(calls) != 3 {
+		t.Fatalf("provider calls = %d (%v), want 3: triage, runaway, recovery", len(calls), calls)
+	}
+	if calls[1] <= 0 {
+		t.Fatalf("call 1 sent max_tokens=%d; the harness must record a real budget", calls[1])
+	}
+	if calls[2] >= calls[1] {
+		t.Fatalf("recovery asked for max_tokens=%d against the failed attempt's %d; "+
+			"a recovery that hands the model the same budget repeats the request that just ran away",
+			calls[2], calls[1])
+	}
+}
+
+// The bound must never be smaller than a review answer needs, and never larger
+// than the operator's own cap: an operator who configured 4096 has said
+// something about how big a review is, and the recovery is not the place to
+// argue with it.
+func TestRunawayRecoveryBudgetRespectsTheOperatorCap(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cap  int
+	}{
+		{"cap below the bound", 1024},
+		{"cap equal to the bound", 8192},
+		{"cap above the bound", 65536},
+		{"far above the bound", 131072},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &runawayProvider{bodies: []string{
+				completion(triageJSON("a.go")),
+				runawayMarker,
+				completion(reviewJSON2("a.go")),
+			}}
+			ts := httptest.NewServer(p)
+			defer ts.Close()
+
+			c := &model.OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+			cfg := config.Default()
+			cfg.Roles = map[model.Role]config.RoleSpec{
+				model.RoleReview: {MaxOutputTokens: tc.cap},
+			}
+			rec, err := runOnce(t, baseInputs(), Options{Cfg: cfg, Client: c})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if rec.Files[0].State != model.FileReviewed {
+				t.Fatalf("file state = %q reason = %q", rec.Files[0].State, rec.Files[0].Reason)
+			}
+			calls, _ := p.snapshot()
+			if len(calls) != 3 {
+				t.Fatalf("provider calls = %d (%v), want 3", len(calls), calls)
+			}
+			if calls[1] != tc.cap {
+				t.Fatalf("call 1 sent max_tokens=%d, want the operator cap %d", calls[1], tc.cap)
+			}
+			if calls[2] > tc.cap {
+				t.Fatalf("recovery asked for max_tokens=%d, above the operator cap %d", calls[2], tc.cap)
+			}
+		})
+	}
 }
