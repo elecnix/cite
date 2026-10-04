@@ -16,7 +16,9 @@ name: pr-body-format
 
 on:
   pull_request:
-    branches: [main]
+    # No `branches:` filter: stacked pull requests target the branch below them
+    # rather than main, and a filter on main left every layer of a stack
+    # without this check.
     types: [opened, edited, reopened, synchronize]
 
 permissions:
