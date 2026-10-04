@@ -34,6 +34,20 @@ const (
 // a truncated response truncates identically on retry (§7).
 var ErrDeterministic = errors.New("deterministic failure")
 
+// ErrRunaway is returned when the provider spent the entire output budget and
+// produced NO answer: reasoning tokens consumed the whole max_tokens and the
+// content came back empty (RunawayGeneration is the test).
+//
+// It is deliberately NOT ErrDeterministic. The terminal class rests on "a
+// truncated response truncates identically on retry", and measurement refutes
+// that premise for this shape. Against deepseek/deepseek-v4-flash-0731, one
+// identical request at one identical 12288 cap and temperature 0 exhausted the
+// whole budget in reasoning on two attempts out of four and terminated cleanly
+// on the other two. Nothing about the request made the failure repeat, so
+// treating it as deterministic turned a recoverable miss into a
+// COULD_NOT_EVALUATE for the entire run.
+var ErrRunaway = errors.New("runaway generation")
+
 // ErrDeadline is a per-request deadline expiry. Errors wrapping it name the
 // per-call deadline VALUE, so a failure log says what timeout actually
 // applied — a bare "deadline exceeded" gives an operator nothing to compare
@@ -247,12 +261,18 @@ type CompletionRequest struct {
 // CostReported tells a billed $0, such as a free model, apart from a provider
 // that reports no cost at all.
 type Usage struct {
-	InputTokens      int     `json:"input_tokens"`
-	OutputTokens     int     `json:"output_tokens"`
-	CacheReadTokens  int     `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens int     `json:"cache_write_tokens,omitempty"`
-	CostUSD          float64 `json:"cost_usd,omitempty"`
-	CostReported     bool    `json:"cost_reported,omitempty"`
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+	CacheReadTokens  int `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
+	// ReasoningTokens are the part of OutputTokens the provider spent
+	// thinking rather than answering. A provider that bills reasoning
+	// against max_tokens spends this out of the SAME budget Cite sizes from
+	// the answer's worst case, so a large ReasoningTokens alongside an empty
+	// answer is a runaway generation, not a too-small cap.
+	ReasoningTokens int     `json:"reasoning_tokens,omitempty"`
+	CostUSD         float64 `json:"cost_usd,omitempty"`
+	CostReported    bool    `json:"cost_reported,omitempty"`
 }
 
 // chatCompletionsUsage is the usage object of a /chat/completions response.
@@ -266,6 +286,9 @@ type chatCompletionsUsage struct {
 		CachedTokens     int `json:"cached_tokens"`
 		CacheWriteTokens int `json:"cache_write_tokens"`
 	} `json:"prompt_tokens_details"`
+	CompletionTokensDetails *struct {
+		ReasoningTokens int `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details"`
 	Cost *float64 `json:"cost"`
 }
 
@@ -284,7 +307,33 @@ func (w chatCompletionsUsage) toUsage() Usage {
 		u.CacheReadTokens = d.CachedTokens
 		u.CacheWriteTokens = d.CacheWriteTokens
 	}
+	if d := w.CompletionTokensDetails; d != nil {
+		u.ReasoningTokens = d.ReasoningTokens
+	}
 	return u
+}
+
+// RunawayGeneration reports whether a finish_reason=length response is a
+// runaway generation rather than a capacity overflow.
+//
+// The two are told apart by what the provider actually returned, not by
+// comparing sizes. A capacity overflow means the answer was too big for the
+// cap: content came back and was cut off, and a bigger cap holds it. A runaway
+// means the cap was never the constraint: the whole budget was spent and no
+// answer was emitted, so there is nothing a bigger cap could hold either.
+// Measured at two caps on one request, content arrived null with
+// completion_tokens == max_tokens both times, and raising the cap from 12288
+// to 24576 grew the runaway from 96 KB to 186 KB rather than producing an
+// answer.
+//
+// The empty-answer test is load-bearing on its own; the full-budget test
+// guards against calling a short reply that merely happened to be cut off a
+// runaway, and is skipped when the provider reports no usage.
+func RunawayGeneration(answer string, usage Usage, maxTokens int) bool {
+	if strings.TrimSpace(answer) != "" {
+		return false
+	}
+	return maxTokens > 0 && usage.OutputTokens >= maxTokens
 }
 
 // CacheHitRate is the fraction of prompt tokens served from provider cache.
@@ -675,16 +724,37 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		}
 	}
 	if ch.FinishReason == "length" {
-		// A truncated response truncates identically on retry. Terminal.
-		// Always capture the partial content to a file first: the error
-		// discards it, and without this there is nothing to inspect after
-		// the fact. The path is overridable so a caller (the GitHub
-		// Action) can point it at a directory it archives for download.
+		// The path is overridable so a caller (the GitHub Action) can point
+		// it at a directory it archives for download.
 		capturePath := os.Getenv("CITE_TRUNCATED_OUT")
 		if capturePath == "" {
 			capturePath = "/tmp/cite-truncated-response.json"
 		}
 		_ = os.WriteFile(capturePath, raw, 0o600)
+		usage := out.Usage.toUsage()
+		if RunawayGeneration(text, usage, req.MaxOutputTokens) {
+			// A runaway generation is not the capacity overflow this branch
+			// was written for, and it is not terminal. The whole budget went
+			// to reasoning and no answer came back, so the cap was never the
+			// binding constraint and a bigger one cannot help: measured, the
+			// same request at 12288 and at 24576 came back contentless both
+			// times and the runaway merely grew with the cap (96 KB of
+			// reasoning trace -> 186 KB). The captured bytes are what makes
+			// this legible, so say plainly that they are a reasoning trace and
+			// not a half-written answer -- an operator handed 186 KB of it
+			// otherwise reads it as Cite having generated 186 KB of review.
+			where := fmt.Sprintf("all %d output tokens were spent and no answer was written", usage.OutputTokens)
+			if usage.ReasoningTokens > 0 {
+				where = fmt.Sprintf("%d of %d output tokens went to reasoning and no answer was written",
+					usage.ReasoningTokens, usage.OutputTokens)
+			}
+			fmt.Fprintf(os.Stderr, "cite: the model never terminated: %s. Captured reasoning trace at %s (%d bytes) -- raising the output-token cap makes this larger, not smaller\n", where, capturePath, len(raw))
+			return nil, fmt.Errorf("%w: %s", ErrRunaway, where)
+		}
+		// A genuine overflow: content came back and was cut off. That is
+		// terminal, because a truncated response truncates identically on
+		// retry. Always capture the partial content first: the error discards
+		// it, and without this there is nothing to inspect after the fact.
 		// The partial content is what the operator needs to see, so it
 		// always goes to stderr: a CI run that captures stderr keeps it in
 		// the job log, where it can be downloaded later.

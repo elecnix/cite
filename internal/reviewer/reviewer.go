@@ -171,6 +171,23 @@ const (
 	// until a fast red becomes a slow red.
 	defaultPerFileParseRetries    = 2
 	defaultPerFileDeadlineRetries = 1
+
+	// defaultPerFileRunawayRetries is the bounded recovery for a model that
+	// never terminated. One, not more: the failure is a property of how long
+	// the model thinks on this attempt, so a second identical roll buys a
+	// coin-flip, not convergence. The one attempt is not the same request
+	// though — it bounds reasoning (see recoveryReasoningEffort), which is
+	// the only measured difference between an attempt that terminates and
+	// one that does not.
+	defaultPerFileRunawayRetries = 1
+
+	// recoveryReasoningEffort bounds the one recovery attempt's thinking. It
+	// is applied ONLY on that attempt and ONLY when the operator has not set
+	// a reasoning_effort of their own, because an explicit operator value is
+	// an instruction and Cite never overrides one — including to rescue a run
+	// from a runaway. Measured on the failing request at the same 12288 cap:
+	// unbounded reasoning terminated on 1 attempt in 4, bounded on 2 in 2.
+	recoveryReasoningEffort = "low"
 )
 
 // Tool-calling structured output. A provider that ignores response_format
@@ -479,6 +496,18 @@ func (r *Reviewer) completeWithRetry(ctx context.Context, unit string, req model
 		}
 		if errors.Is(err, model.ErrDeterministic) {
 			return nil, err // terminal: no retry
+		}
+		if errors.Is(err, model.ErrRunaway) {
+			// A runaway generation (the provider spent the whole output budget
+			// on reasoning and wrote no answer) is not a transient provider
+			// error, so it must NOT draw on the run-global transient bucket:
+			// that bucket's contract is "the same request again", and the same
+			// request again is what produced the runaway. It is not terminal
+			// either -- measurement puts it at 2 attempts in 4 on one
+			// identical request, so the premise behind ErrDeterministic does
+			// not hold. Hand it back unretried for the per-file review caller
+			// to recover once, with reasoning bounded.
+			return nil, err
 		}
 		if errors.Is(err, model.ErrDeadline) {
 			// completeWithRetry itself never retries a deadline: the first
@@ -831,6 +860,7 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 	// a terminal outcome can name the budget it burned.
 	parseRetries := defaultPerFileParseRetries
 	deadlineRetries := defaultPerFileDeadlineRetries
+	runawayRetries := defaultPerFileRunawayRetries
 	spent := 0
 	// toolsMode carries a follow-up conversation: a rejected tool call is
 	// answered with the call, the error and a request to call it properly.
@@ -841,6 +871,26 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 		req.History = history
 		resp, err := r.completeWithRetry(ctx, unitReview, req, timeout)
 		if err != nil {
+			if errors.Is(err, model.ErrRunaway) && runawayRetries > 0 {
+				// The model never terminated: it spent the whole output
+				// budget thinking and returned no answer. There is no finding
+				// to lose and no answer to be deterministic about, so this is
+				// recoverable where a capacity overflow is not. One bounded
+				// attempt from this file's own budget -- never the run-global
+				// one, so one pathological file cannot starve coverage for
+				// the rest -- and the bound is what makes the attempt
+				// different: an explicit reasoning allowance, applied only
+				// when the operator has not set one of their own.
+				runawayRetries--
+				spent++
+				r.noteReask()
+				if req.ReasoningEffort == "" {
+					req.ReasoningEffort = recoveryReasoningEffort
+				}
+				r.logf("review of %s: the model never terminated (spent the output budget on reasoning, wrote no answer); re-asking once with reasoning bounded at %q, %d left — raising the output-token cap would only make the runaway larger",
+					e.Path, req.ReasoningEffort, runawayRetries)
+				continue
+			}
 			if errors.Is(err, model.ErrDeadline) && deadlineRetries > 0 {
 				// Issue #73: one fresh-budget re-ask for a deadline expiry —
 				// the measured CI shape where a slow-but-correct call (a
@@ -855,7 +905,15 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 				continue
 			}
 			reason := "model_error"
-			if errors.Is(err, model.ErrDeterministic) {
+			if errors.Is(err, model.ErrRunaway) {
+				// The one bounded recovery was spent and the model still
+				// would not stop. Name what happened: this is a model that
+				// does not terminate, not a cap that is too small, so the
+				// remedy must not point at the cap.
+				reason = "runaway_generation"
+				err = fmt.Errorf("%w: %v", err,
+					"the model spent the whole output budget thinking and wrote no answer, twice; this is a model that will not stop, not an output cap that is too small — raising roles.review.max_output_tokens makes the runaway larger, not smaller")
+			} else if errors.Is(err, model.ErrDeterministic) {
 				reason = "deterministic_failure"
 			} else if ctx.Err() != nil {
 				reason = "canceled"
