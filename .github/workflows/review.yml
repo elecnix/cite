@@ -164,6 +164,10 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           CITE_REVIEWER_ID: cite-head
           CITE_RECORD_OUT: ${{ runner.temp }}/cite-head-run-record.json
+          # Where cite writes the partial response of a review that hit the token
+          # cap. Its default is /tmp, which the archive step below does not read,
+          # so without this the capture is lost when the job ends.
+          CITE_TRUNCATED_OUT: ${{ runner.temp }}/cite-truncated-response.json
           # From the event payload: this step runs under pull_request_target,
           # where GITHUB_REF is the base branch and carries no pull number.
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -208,3 +212,20 @@ jobs:
             ${{ runner.temp }}/cite-head-run-record.json
           if-no-files-found: warn
           retention-days: 30
+
+      # The partial response is the only evidence of what a truncated review
+      # actually contained, and it lives only on the runner: the log says how
+      # many bytes it was, never what was in them. Without this step the
+      # runaway-output failure has no artifact to study once the job ends. It
+      # is a request/response exchange, so it can carry the reviewed source;
+      # it gets its own artifact so it keeps the same 14-day retention as the
+      # run record rather than the 30 days of the forensics bundle above. The
+      # file exists only when a review truncated, hence no warning when absent.
+      - name: Archive the truncated response on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cite-head-truncated-response-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cite-truncated-response.json
+          if-no-files-found: ignore
+          retention-days: 14
