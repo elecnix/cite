@@ -29,6 +29,10 @@
 //     next character — exactly the rules of path.Match;
 //   - neither "*" nor "?" nor a character class ever crosses a "/", so
 //     "docs/*.md" matches "docs/a.md" but not "docs/x/a.md";
+//   - "[" and "]" are metacharacters and "{" and "}" are not, so the two
+//     literal-name rows are not in tension: a class matches a single
+//     character and cannot match a name like "[abc].md", while braces are
+//     ordinary characters, so "{a,b}.md" does match a file of that name;
 //   - a malformed class matches nothing rather than panicking;
 //   - matching is case-sensitive;
 //   - an empty pattern (and ".", "/", "./", "docs/..") matches nothing. Cite
@@ -81,7 +85,9 @@ func Match(pattern, name string) bool {
 
 // Normalize returns the canonical spelling of pattern: leading "/" and "./"
 // removed, "//" collapsed, "." and ".." resolved, trailing "/" dropped. It
-// returns "" for a pattern that can never match any path.
+// returns "" exactly when the pattern specifies no segment at all (".", "/",
+// "./", "docs/.."), which is the same condition Match treats as matching no
+// path, so a "" from Normalize and a false from Match always agree.
 //
 // Callers that store a pattern the user wrote — instruction frontmatter
 // applyTo and paths — normalise at parse time, so the pattern `cite doctor`
