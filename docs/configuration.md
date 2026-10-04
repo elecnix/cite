@@ -189,6 +189,10 @@ large briefing-style inputs truncated identically at the old default
 65536 on top of it, and a roughly 100 KB briefing file still ran out of room.
 131072 gives the worst case four times the room it needs.
 
+**The cap is an ANSWER budget, and on a reasoning model it is not only that.** Providers that bill reasoning tokens against `max_tokens` spend them out of the same number, so the surplus above the answer's worst case is not spare room. It is thinking budget handed to the model. Give that surplus to a model that will not stop and it takes everything, then hands back no answer. One budget covers both halves of the job, so raising the cap enlarges that failure. Cite tells this case apart from a real overflow and spends one bounded retry on it (see
+[the model never stops](troubleshooting.md#the-model-never-stops-and-i-get-could_not_evaluate))
+rather than losing the file to a terminal deterministic failure.
+
 **If the cap is too small, the file errors and is never quietly shortened.** A
 response cut off at the cap comes back as `finish_reason=length`, which is a
 deterministic failure: coverage is incomplete because the file is recorded as

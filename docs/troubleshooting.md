@@ -122,8 +122,8 @@ summary names the cause:
   schema violation or a wrong-path echo is not retried, because re-asking
   invites a matching quote for the same wrong claim.
 - **`output truncated at token cap (finish_reason=length)`.** The review of that
-  file did not fit in the output budget. This is deterministic, so it is not
-  retried: it would truncate identically. Raise
+  file did not fit in the output budget. The model wrote an answer and Cite cut
+  it off, so the failure repeats and Cite does not retry. Raise
   `roles.review.max_output_tokens`, or declare the model's real `max_tokens`
   under its provider entry; see
   [the output cap](configuration.md#the-output-cap). A truncated review is
@@ -172,10 +172,35 @@ share one schema and one validation pipeline, so findings do not change with
 the mode.
 
 Ollama also counts reasoning tokens against `max_tokens`, so a heavy reasoner
-can spend the whole output budget thinking and never call the tool; Cite then
-reports `output truncated at token cap`. The `reasoning_effort` input defaults
-to `none` for that reason. An empty value omits the field, and `low`, `medium`
-or `high` pass through to a provider that accepts them.
+can spend the whole output budget thinking and never call the tool. The
+`reasoning_effort` input defaults to `none` for that reason. An empty value
+omits the field, and `low`, `medium` or `high` pass through to a provider that
+accepts them.
+
+### The model never stops and I get COULD_NOT_EVALUATE
+
+**`the model never stops`** appears in a file's reason, alongside a
+`runaway generation` error that reports how the output tokens went. The provider
+turned the whole `roles.review.max_output_tokens` budget into reasoning tokens
+and gave back no answer. The captured response has an empty `content`, and every
+output token is accounted for. What Cite writes to the capture file is a
+**reasoning trace**, so the file's size measures how long the model thought
+rather than how much it said.
+
+**Raising the cap makes this worse.** One budget covers thinking and answering,
+so reasoning tokens come out of the same `max_tokens` an answer would have used.
+On one measured request, doubling the cap from 12288 to 24576 grew the trace
+from 96 KB to 186 KB. Both runs ended with an empty answer.
+
+Cite handles this differently from a real overflow, because the failure does not
+repeat. The file's review gets **one** retry, with reasoning held to a fixed
+allowance. Setting `reasoning_effort` yourself keeps your own value, since Cite
+never overrides it. If that retry also runs long, Cite records the file as
+errored (`runaway_generation`) and the gate concludes `COULD_NOT_EVALUATE`, so a
+run never passes on a review that never happened. For a model that runs long
+every time, pin a `reasoning_effort` in your `.github/cite.yml` or in the
+Action's `reasoning_effort` input. That bound then applies to every call, not
+only to the retry.
 
 ### My tool failures block the merge and I want them not to
 
