@@ -34,6 +34,13 @@
 //   - an empty pattern (and ".", "/", "./", "docs/..") matches nothing. Cite
 //     has no spelling of "match every path" other than "**".
 //
+// The root rule is about the PATTERN, and it is decided after normalisation,
+// so "/" and "//" are rejected alongside "". It says nothing about the NAME,
+// which may still be empty: "**" specifies one segment even though it stands
+// for zero or more, so Match("**", "") is true while Match("/", "") is false.
+// The two rules do not compete, and a reader who carries the first across to
+// the second will conclude the matcher is broken when it is not.
+//
 // There is no brace expansion, no "**" inside a segment, and no "~" handling.
 //
 //	Match("**/*.gen.go", "c.gen.go")     == true
@@ -43,6 +50,7 @@
 //	Match("./docs/*.md",  "docs/a.md")   == true
 //	Match("**",           "")            == true
 //	Match("/",            "")            == false
+//	Match("docs/**",      "docs")        == true
 //
 // Both surfaces call Match directly. Neither internal/scope nor
 // internal/instructions keeps a wrapper of its own, because a second exported
