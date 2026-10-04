@@ -24,7 +24,7 @@ compat_profile: "2026-08"     # which snapshot of the instruction formats to hon
 | -- | -- | -- |
 | `model` | inferred from the available key | One string identifying the model for the review pass. See [Roles](#roles) when one string is not enough. |
 | `max_comments` | `10` | Upper bound on comments per review. **Hard-capped at 20 by the schema**; values above 20 are rejected by [`cite validate`](#validation), not clamped silently. The per-run budget formula in [noise.md](noise.md#the-budget) can only lower this number, never raise it. |
-| `paths_ignore` | `[]` | Extra glob patterns added to the built-in skip list (generated files, lockfiles, vendored trees, minified output, binaries). See the [glob dialect](instructions.md#glob-dialect). A skipped file is never a passed file. Every skip appears on the check summary with its reason. |
+| `paths_ignore` | `[]` | Extra glob patterns added to the built-in skip list (generated files, lockfiles, vendored trees, minified output, binaries). See the [glob dialect](instructions.md#glob-dialect) — the same dialect instruction `applyTo` uses, matched by the same one matcher (`internal/glob`), so a pattern cannot behave differently here. A skipped file is never a passed file. Every skip appears on the check summary with its reason. |
 | `nits` | `false` | Enables `convention` and `error-swallow` findings. Off by default, and they do not consume a comment budget unless enabled. `convention` findings can never block a merge in any configuration. |
 | `gate` | *(none)* | Accepted and validated, but reserved on the decision path (issue #86): `FOUND` concludes `failure` under every accepted value, so there is no shadow mode and no mode switch. The only conclusion knob is the action's `tool_failure_blocks` input, which governs `COULD_NOT_EVALUATE`. A real finding always blocks. The key exists so a config can store the value without silently dropping a future decision input. |
 | `compat_profile` | `"2026-08"` | Which dated snapshot of instruction-file behaviour Cite honours. Never auto-updates. See [CONFORMANCE.md](../CONFORMANCE.md). |
@@ -247,8 +247,13 @@ cite validate
 ```
 
 Schema-checks `.github/cite.yml`: unknown keys, bad enum values, `max_comments`
-above the hard cap, malformed globs, unresolvable credential expressions. It
+above the hard cap, unresolvable credential expressions. It
 exits non-zero on any problem and prints what it found.
+
+It does **not** check `paths_ignore` globs. A glob pattern is not a schema
+error, and a pattern that matches nothing is not detectable from the config
+file alone — it is a question about the pull request. `cite doctor` answers it
+instead, printing the canonical form of each pattern and which paths it matched.
 
 Cite provides a JSON Schema for its own config and validates against it from
 day one. A typo in a configuration key is rejected loudly; it is never silently

@@ -146,13 +146,33 @@ warns when [CONFORMANCE.md](../CONFORMANCE.md) is over 90 days old.
 ## Glob dialect
 
 The glob syntax accepted in `applyTo` and `paths_ignore` was never specified by
-any prior reader, so Cite picks one and writes it here:
+any prior reader, so Cite picks one and writes it here. It has one
+implementation, in `internal/glob`, which both `paths_ignore` (in
+`.github/cite.yml`) and instruction frontmatter call — so a pattern that works
+in one works in the other.
 
 - Patterns are **comma-separated globs in one string**: `applyTo: "**/*.ts,**/*.js"`.
 - A **YAML array is accepted as an alias** for the comma-separated form.
-- `**` crosses directory boundaries.
-- **Brace expansion (`{a,b}`) is not supported.**
+- Patterns are `/`-separated and match a whole repository-relative path.
+- **Normalisation is cosmetic, not semantic.** A leading `/`, a leading `./`,
+  repeated `//`, `.` and `..` elements and a trailing `/` are resolved before
+  matching, so `/docs/**`, `./docs/**`, `docs//**` and `docs/` all mean
+  `docs/**`.
+- `**`, as a whole segment, crosses directory boundaries and matches **zero or
+  more** of them, so `**/*.gen.go` matches `c.gen.go` too. A standalone `**`
+  matches every path.
+- Within one segment, `*`, `?`, `[...]` and `\` behave as in Go's `path.Match`,
+  and none of them crosses a `/` — `docs/*.md` does not match `docs/x/a.md`.
+- **Brace expansion (`{a,b}`) is not supported**; braces are matched literally.
+- **An empty or root-only pattern matches nothing** — `""`, `/`, `//`, `./`,
+  `docs/..`. `**` is the only spelling that means "every path"; a pattern of `.`
+  must never silently widen an instruction file to the whole repository.
 - Overlapping patterns are ordered **most-specific-first, then lexical path**.
 
-`cite validate` checks patterns at parse time; `cite doctor` shows which files
-each pattern matched.
+`applyTo` and `paths` patterns are canonicalised when they are parsed, so
+`cite doctor` prints the normalised spelling and shows which patterns matched
+each path. A pattern that matches nothing is therefore visible in that report
+rather than silently inert — which matters most for the root spellings above,
+where the difference between "matches nothing" and "matches everything" is the
+whole repository. `cite validate` checks `.github/cite.yml`; it does not
+inspect instruction globs.

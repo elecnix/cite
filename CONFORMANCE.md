@@ -39,15 +39,41 @@ its own answer as a documented behavioural change rather than a breakage.
 
 ### Glob dialect
 
-Cite's chosen dialect for `applyTo` globs and `paths_ignore`:
+Cite's chosen dialect for `applyTo` globs and `paths_ignore`. It has **one
+implementation**, in `internal/glob`, whose package doc is the normative
+description; `internal/scope` calls it for `paths_ignore` and
+`internal/instructions` calls it for `applyTo` and `paths`. Neither package
+keeps a matcher of its own, so a pattern cannot mean one thing in
+`.github/cite.yml` and another in an instruction file. The dialect is pinned
+in `internal/glob/glob_test.go`.
 
 - Patterns are **comma-separated globs in one string**:
   `applyTo: "**/*.ts,**/*.js"`.
 - A **YAML array is accepted as an alias** for the comma-separated form; both
-  parse to the same pattern list.
-- `**` crosses directory boundaries.
+  parse to the same pattern list. Both are canonicalised at parse time, so
+  `cite doctor` prints the normalised spelling rather than the one typed.
+- Patterns are `/`-separated and match a whole repository-relative path.
+- **Normalisation is cosmetic, not semantic.** A leading `/`, a leading `./`,
+  repeated `//`, `.` and `..` elements and a trailing `/` are resolved before
+  matching, so `/docs/**`, `./docs/**`, `docs//**` and `docs/` all mean
+  `docs/**`.
+- `**`, as a whole segment, **crosses directory boundaries and matches zero or
+  more of them**, so `**/*.gen.go` matches `c.gen.go` as well as
+  `a/b/c.gen.go`, and a standalone `**` matches every path.
+- Within a single segment `*`, `?`, `[...]` and `\` behave as in Go's
+  `path.Match`, and none of them ever crosses a `/` — so `docs/*.md` matches
+  `docs/a.md` but not `docs/x/a.md`. A malformed class matches nothing rather
+  than failing the run.
+- Matching is **case-sensitive**.
 - **Brace expansion (`{a,b}`) is NOT supported.** Patterns containing braces are
-  matched literally and reported by `cite validate`.
+  matched literally. Nothing reports them today — `cite validate` checks
+  `.github/cite.yml` and does not inspect instruction globs — so a brace
+  pattern is visible only through `cite doctor`, which shows which patterns
+  matched a given path.
+- **An empty or root-only pattern matches nothing.** That covers `""`, `/`,
+  `//`, `./` and `docs/..`: a pattern that names no segment cannot name a file.
+  `**` is the only spelling that means "every path", and a pattern of `.` must
+  never silently widen an instruction file to the whole repository.
 - Overlapping patterns are ordered **most-specific-first**, ties broken by
   **lexical path order**.
 
@@ -56,7 +82,8 @@ Cite's chosen dialect for `applyTo` globs and `paths_ignore`:
 - Two `*.instructions.md` files whose `applyTo` both match apply in
   most-specific-glob-first order, then lexical path.
 - `applyTo` matches against **the changed file** only.
-- `.claude/rules/*.md` `paths:` frontmatter uses the same dialect as `applyTo`.
+- `.claude/rules/*.md` `paths:` frontmatter uses the same dialect as `applyTo`,
+  through the same `internal/glob` matcher.
 
 ## Tier 3: Declared divergence
 

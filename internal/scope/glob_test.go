@@ -1,170 +1,73 @@
 package scope
 
-import "testing"
+import (
+	"testing"
 
-// TestMatchDialect pins the glob dialect that internal/scope owns. This is
-// the reference table for the whole repository: internal/instructions.Match is
-// required to agree with every row here, because CONFORMANCE.md documents one
-// dialect for both applyTo globs and paths_ignore. TestMatch in manifest_test.go
-// covers the ordinary segment cases; this file adds the normalisation and '**'
-// collapse rules that were previously pinned nowhere.
-func TestMatchDialect(t *testing.T) {
+	"github.com/elecnix/cite/internal/glob"
+)
+
+// The glob dialect — the grammar, the normalisation, the root-pattern rule and
+// the empty-name cases — is pinned once, in internal/glob. It used to be
+// duplicated here, with internal/instructions cross-checking its own answers
+// against this package's. What has to stay here is the narrower claim this
+// package actually owns: that paths_ignore reaches that one matcher, rather
+// than carrying a second implementation that could drift from it.
+
+// TestPathsIgnoreUsesTheSharedDialect proves the paths_ignore entry point is
+// glob.Match, by asserting the user-visible skip decision for the spellings
+// the two surfaces once disagreed on.
+//
+// SkipReason is the only place extraIgnores is consulted, so a normalisation
+// rule that internal/glob has and scope.SkipReason did not would show up here
+// as a missing skip.
+func TestPathsIgnoreUsesTheSharedDialect(t *testing.T) {
+	const changed = "docs/guide/page.md"
 	cases := []struct {
-		pattern, name string
-		want          bool
+		pattern string
+		want    bool // is changed ignored by this pattern?
 	}{
-		// Ordinary segment matching.
-		{"docs/*.md", "docs/a.md", true},
-		{"docs/*.md", "docs/x/a.md", false},
-		{"docs/*.md", "other/a.md", false},
-		{"*.go", "main.go", true},
-		{"cmd/?ain.go", "cmd/main.go", true},
-		{"cmd/?ain.go", "cmd/rain.go", true},
-		{"cmd/?ain.go", "cmd/two.go", false},
-		{"*.md", "README.md", true},
-		{"*.md", "docs/README.md", false},
-
-		// '**' matches zero or more whole segments.
-		{"**/*.gen.go", "a/b/c.gen.go", true},
-		{"**/*.gen.go", "c.gen.go", true},
-		{"**/*.gen.go", "a/b/c.gen", false},
-		{"**", "anything/at/all.go", true},
-		{"**", "", true},
-		{"src/**", "src/a/b.go", true},
-		{"src/**", "srcx/a/b.go", false},
-		{"src/**/*.ts", "src/a/b.ts", true},
-		{"src/**/*.ts", "src/a.ts", true},
-		{"src/**/*.ts", "lib/a.ts", false},
-		{"a/**/b", "a/b", true},
-		{"a/**/b", "a/x/y/b", true},
-		{"a/**/b", "a/x/y/c", false},
-
-		// Consecutive '**' segments collapse.
-		{"**/**/*.go", "a/b.go", true},
-		{"a/**/**/**/b", "a/b", true},
-		{"a/**/**/**/c", "a/b", false},
-
-		// Normalisation: a leading slash, a './' prefix and repeated
-		// separators are cosmetic and must not change the result.
-		{"/docs/**", "docs/a/b.md", true},
-		{"/docs/*.md", "docs/a.md", true},
-		{"./docs/*.md", "docs/a.md", true},
-		{"./docs/**", "docs/a/b.md", true},
-		{"a//b/*.go", "a/b/c.go", true},
-		{"docs//*.md", "docs/a.md", true},
-		{"/**", "a/b.md", true},
-		{"./", "README.md", false},
-		{"/", "README.md", false},
-		{"//", "README.md", false},
-		{".", "README.md", false},
-		{"/", "", false},
-		{"//", "", false},
-		{"./", "", false},
-		{".", "", false},
-		{"/docs/**", "", false},
-
-		// Character classes are supported inside a single segment.
-		{"[abc].md", "a.md", true},
-		{"[abc].md", "z.md", false},
-		{"docs/[a-c]*.md", "docs/b2.md", true},
-		{"docs/[a-c]*.md", "docs/z2.md", false},
-
-		// Brace expansion is explicitly not part of the dialect, so braces
-		// are matched literally.
-		{"{a,b}.md", "a.md", false},
-		{"{a,b}.md", "{a,b}.md", true},
-
-		// An empty pattern matches nothing, and so does every spelling that
-		// normalises to the repository root.
-		{"", "a.md", false},
-		{"", "", false},
-
-		// A root pattern names no segment, so there is nothing for it to
-		// match. '**' is not a root pattern: it names zero or more
-		// segments, so it still matches the zero-segment name.
-		{"**", "", true},
-		{"**/*.gen.go", "", false},
-		{"docs/**", "", false},
-
-		// A malformed class matches nothing rather than panicking.
-		{"[.md", "a.md", false},
+		{"docs/**", true},
+		{"/docs/**", true},
+		{"./docs/**", true},
+		{"docs//**", true},
+		{"docs/**/*.md", true},
+		{"./docs/**/*.md", true},
+		{"docs/guide/*.md", true},
+		{"docs/[a-z]*/page.md", true},
+		// 'docs/' names the directory itself, not its contents.
+		{"docs/", false},
+		// '*' never crosses a '/', so this is two segments against three.
+		{"docs/*.md", false},
+		{"docs/*.go", false},
+		{"src/**", false},
+		{"", false},
+		{".", false},
+		{"/", false},
 	}
 	for _, c := range cases {
-		if got := Match(c.pattern, c.name); got != c.want {
-			t.Errorf("Match(%q, %q) = %v, want %v", c.pattern, c.name, got, c.want)
+		reason, skipped := SkipReason(changed, nil, []string{c.pattern})
+		if skipped != c.want {
+			t.Errorf("paths_ignore %q against %q: skipped = %v, want %v", c.pattern, changed, skipped, c.want)
+			continue
+		}
+		// The decision must be the shared dialect's, not a coincidence.
+		if want := glob.Match(c.pattern, changed); want != c.want {
+			t.Errorf("paths_ignore %q and glob.Match disagree: skip = %v, glob.Match = %v", c.pattern, skipped, want)
+		}
+		if skipped && reason != SkipReasonIgnored {
+			t.Errorf("paths_ignore %q: reason = %q, want %q", c.pattern, reason, SkipReasonIgnored)
 		}
 	}
 }
 
-// TestMatchNeverCrossesASegment documents the '**' boundary that the skip
-// list depends on: a bare '*' never crosses a '/', only '**' does.
-func TestMatchNeverCrossesASegment(t *testing.T) {
-	if Match("docs/*", "docs/a/b.md") {
-		t.Error(`Match("docs/*", "docs/a/b.md") = true, want false`)
-	}
-	if !Match("docs/**", "docs/a/b.md") {
-		t.Error(`Match("docs/**", "docs/a/b.md") = false, want true`)
-	}
-}
-
-// TestMatchRootPatternMatchesNothing pins the empty-pattern rule for every
-// spelling that normalises to the repository root, not just for the empty
-// string. The guard used to test the raw pattern, so it caught "" and then
-// normalisation turned "/", "//" and "./" back into the root pattern, which
-// matched the root name — Match("/", "") was true while the documentation
-// said an empty pattern matches nothing.
-//
-// "matches nothing" here means the pattern names no segment at all, so it can
-// never name a file. It is not a statement about '**', which also has no
-// literal segment but explicitly stands for zero or more of them, and which
-// still matches every name. The two spellings are different rules, not
-// competing ones: see TestMatchRootPatternDoesNotSwallowTheDialect.
-//
-// Both callers pass a real repository-relative path, never an empty name, so
-// this class is pinned as dialect rather than as production behaviour.
-func TestMatchRootPatternMatchesNothing(t *testing.T) {
+// TestPathsIgnoreRootPatternDoesNotIgnoreEverything guards the rule that is
+// easiest to get wrong in this package: an empty or root-shaped paths_ignore
+// entry must not swallow the repository. It matches nothing, so every file
+// stays in scope.
+func TestPathsIgnoreRootPatternDoesNotIgnoreEverything(t *testing.T) {
 	for _, pattern := range []string{"", "/", "//", "///", "./", ".", ".//", "/./"} {
-		for _, name := range []string{"", ".", "/", "README.md", "docs/a.md"} {
-			if Match(pattern, name) {
-				t.Errorf("Match(%q, %q) = true, want false: a pattern that normalises to the repository root matches nothing", pattern, name)
-			}
-		}
-	}
-}
-
-// TestMatchRootPatternDoesNotSwallowTheDialect is the guard against
-// over-correcting the root case. Deciding emptiness after normalisation must
-// not cost the dialect any pattern that genuinely matches, in particular
-// '**', which stands for zero or more segments and so matches the empty name
-// that a root pattern is rejected for, and 'docs/**', which still matches the
-// directory itself rather than only its contents. Read together with
-// TestMatchRootPatternMatchesNothing the pair states the whole rule: a pattern
-// that names no segment matches nothing, and a pattern that names segments —
-// however optionally — still matches.
-func TestMatchRootPatternDoesNotSwallowTheDialect(t *testing.T) {
-	cases := []struct {
-		pattern, name string
-		want          bool
-	}{
-		{"**", "", true},
-		{"**", ".", true},
-		{"**", "/", true},
-		{"**", "README.md", true},
-		{"**", "a/b/c.go", true},
-		{"**/*.gen.go", "c.gen.go", true},
-		{"**/*.gen.go", "a/b/c.gen.go", true},
-		{"docs/**", "docs", true},
-		{"docs/**", "docs/a.md", true},
-		{"docs/**", "docs/a/b.md", true},
-		{"docs/**", "docsy/a.md", false},
-		{"/**", "a/b.md", true},
-		{"/**", "", true},
-		{"src/**", "src/a/b.go", true},
-		{"a/**/b", "a/b", true},
-	}
-	for _, c := range cases {
-		if got := Match(c.pattern, c.name); got != c.want {
-			t.Errorf("Match(%q, %q) = %v, want %v", c.pattern, c.name, got, c.want)
+		if reason, skipped := SkipReason("README.md", nil, []string{pattern}); skipped {
+			t.Errorf("paths_ignore %q ignored README.md (%s); a pattern naming no segment must ignore nothing", pattern, reason)
 		}
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"path"
 	"strings"
+
+	"github.com/elecnix/cite/internal/glob"
 )
 
 // Named skip reasons. Every skip carries a machine reason that appears in the
@@ -125,7 +127,8 @@ func DefaultSkipReason(pathname string) string {
 // SkipReason returns the named reason to skip pathname, and whether it should
 // be skipped at all. data may be nil when only path classification is wanted;
 // when present it enables binary detection. extraIgnores are paths_ignore
-// glob patterns (see Match); they add to the default list, never subtract.
+// glob patterns (see internal/glob, the one owner of the dialect); they add
+// to the default list, never subtract.
 func SkipReason(pathname string, data []byte, extraIgnores []string) (string, bool) {
 	if data != nil && IsBinary(data) {
 		return SkipReasonBinary, true
@@ -134,7 +137,7 @@ func SkipReason(pathname string, data []byte, extraIgnores []string) (string, bo
 		return r, true
 	}
 	for _, pat := range extraIgnores {
-		if Match(pat, pathname) {
+		if glob.Match(pat, pathname) {
 			return SkipReasonIgnored, true
 		}
 	}
