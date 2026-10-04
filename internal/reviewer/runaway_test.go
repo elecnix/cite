@@ -205,8 +205,8 @@ func TestRunawayBoundDoesNotLeakIntoLaterReasks(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	calls, efforts := p.snapshot()
-	if len(calls) < 4 {
-		t.Fatalf("provider calls = %d (%v), want at least 4", len(calls), calls)
+	if len(calls) < 4 || len(efforts) < 4 {
+		t.Fatalf("provider calls = %d budgets and %d efforts, want at least 4 of each", len(calls), len(efforts))
 	}
 	if efforts[2] == "" {
 		t.Fatal("the recovery attempt must carry the bound")
