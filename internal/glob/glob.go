@@ -45,6 +45,13 @@
 // The two rules do not compete, and a reader who carries the first across to
 // the second will conclude the matcher is broken when it is not.
 //
+// Normalisation never confuses a directory with the root. "docs" keeps its
+// segment, so Match("docs/**", "docs") is true, while the two names that
+// normalise to the root give false: Match("docs/**", "") and
+// Match("docs/**", "docs/.."). A leading ".." is resolved the same way and
+// cannot escape the repository root, so "../docs" is just "docs" and ".." on
+// its own is a root spelling that matches no path.
+//
 // There is no brace expansion, no "**" inside a segment, and no "~" handling.
 //
 //	Match("**/*.gen.go", "c.gen.go")     == true
@@ -55,6 +62,7 @@
 //	Match("**",           "")            == true
 //	Match("/",            "")            == false
 //	Match("docs/**",      "docs")        == true
+//	Match("docs/**",      "")            == false
 //
 // Both surfaces call Match directly. Neither internal/scope nor
 // internal/instructions keeps a wrapper of its own, because a second exported
@@ -84,10 +92,11 @@ func Match(pattern, name string) bool {
 }
 
 // Normalize returns the canonical spelling of pattern: leading "/" and "./"
-// removed, "//" collapsed, "." and ".." resolved, trailing "/" dropped. It
-// returns "" exactly when the pattern specifies no segment at all (".", "/",
-// "./", "docs/.."), which is the same condition Match treats as matching no
-// path, so a "" from Normalize and a false from Match always agree.
+// removed, "//" collapsed, "." and ".." resolved, trailing "/" dropped. A
+// leading ".." cannot escape the repository root, so "../docs" becomes "docs".
+// It returns "" exactly when the pattern specifies no segment at all (".", "..",
+// "/", "./", "docs/.."), which is the same condition Match treats as matching
+// no path, so a "" from Normalize and a false from Match always agree.
 //
 // Callers that store a pattern the user wrote — instruction frontmatter
 // applyTo and paths — normalise at parse time, so the pattern `cite doctor`

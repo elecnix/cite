@@ -996,6 +996,7 @@ func TestNormalize(t *testing.T) {
 		{"docs/x/../a.md", "docs/a.md"},
 		{"", ""},
 		{".", ""},
+		{"..", ""},
 		{"/", ""},
 		{"//", ""},
 		{"///", ""},
@@ -1003,10 +1004,51 @@ func TestNormalize(t *testing.T) {
 		{".//", ""},
 		{"/./", ""},
 		{"docs/..", ""},
+		{"/docs/..", ""},
+		{"a/../..", ""},
+		{"../docs", "docs"},
+		{".././docs", "docs"},
 	}
 	for _, c := range cases {
 		if got := Normalize(c.in); got != c.want {
 			t.Errorf("Normalize(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestNormalizeAndMatchAgree pins the invariant the Normalize doc states: a
+// "" from Normalize and a false from Match are the same condition, so a
+// pattern that normalises to the empty string matches no path, and a pattern
+// that keeps a segment can. The leading-".." cases are here because a reader
+// can reasonably expect ".." to be able to escape upward, and it cannot.
+func TestNormalizeAndMatchAgree(t *testing.T) {
+	patterns := []string{"", ".", "..", "/", "//", "./", "docs/..", "../docs", "docs", "docs/**", "**", "../**"}
+	names := []string{"", "a.go", "docs", "docs/a.md", "../docs", "..", "/docs/a.md"}
+	for _, p := range patterns {
+		for _, n := range names {
+			inert, matched := Normalize(p) == "", Match(p, n)
+			if inert && matched {
+				t.Errorf("Match(%q, %q) = true, but Normalize(%q) = %q, so the pattern specifies no segment", p, n, p, Normalize(p))
+			}
+		}
+	}
+	// The two named contrasts the package doc relies on.
+	for _, c := range []struct {
+		pattern, name string
+		want          bool
+	}{
+		{"docs/**", "docs", true},
+		{"docs/**", "", false},
+		{"docs/**", "docs/..", false},
+		// A leading ".." is resolved away, so "../docs" is "docs" and
+		// nothing more: it matches the directory itself, not its contents.
+		{"../docs", "docs", true},
+		{"../docs", "docs/a.md", false},
+		{"docs", "docs", true},
+		{"..", "a.go", false},
+	} {
+		if got := Match(c.pattern, c.name); got != c.want {
+			t.Errorf("Match(%q, %q) = %v, want %v", c.pattern, c.name, got, c.want)
 		}
 	}
 }
