@@ -691,7 +691,17 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		Provider json.RawMessage `json:"provider"`
 		Choices  []struct {
 			Message struct {
-				Content   string     `json:"content"`
+				Content string `json:"content"`
+				// Reasoning is the trace the provider returns separately from
+				// the answer. It is never part of Cite's output and never
+				// reaches a reviewer, but it is decoded for one reason: a
+				// provider that does not itemise completion_tokens_details
+				// leaves no other way to say where a spent budget went.
+				// Measured on deepseek-v4.1-flash: a runaway arrived as
+				// 173631 characters of reasoning beside an empty content
+				// string, and the usage object carried no split at all, so
+				// the only number available to report was the cap.
+				Reasoning string     `json:"reasoning"`
 				ToolCalls []ToolCall `json:"tool_calls"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
@@ -757,14 +767,23 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 			// not a half-written answer -- an operator handed 186 KB of it
 			// otherwise reads it as Cite having generated 186 KB of review.
 			//
-			// Two forms of `where`, because Cite cannot always name where the
-			// tokens went: a provider that does not itemise reasoning_tokens
-			// leaves it with nothing to report but the budget it asked
-			// for, which is the number the operator can act on.
+			// Three forms of `where`, because Cite cannot always name where
+			// the tokens went, and the middle one is the one a provider
+			// itemising nothing forces it into. A provider that reports
+			// reasoning_tokens gets the split. A provider that reports
+			// neither, but returned the trace in the message body, gets the
+			// measured size of that trace, which is the whole response and
+			// is what makes the case that no budget could have held an
+			// answer. A provider that returned no reasoning at all keeps
+			// the budget it asked for, which is the number the operator can
+			// act on.
 			where := fmt.Sprintf("the whole %d-token output cap was spent and no answer was written", req.MaxOutputTokens)
 			if usage.ReasoningTokens > 0 {
 				where = fmt.Sprintf("%d of %d output tokens went to reasoning and no answer was written",
 					usage.ReasoningTokens, usage.OutputTokens)
+			} else if n := len(ch.Message.Reasoning); n > 0 {
+				where = fmt.Sprintf("the whole %d-token output cap was spent and no answer was written, and every one of the %d characters the provider returned is reasoning",
+					req.MaxOutputTokens, n)
 			}
 			fmt.Fprintf(os.Stderr, "cite: the model never terminated: %s. Captured reasoning trace at %s (%d bytes) -- raising the output-token cap makes this larger, not smaller\n", where, capturePath, len(raw))
 			return nil, fmt.Errorf("%w: %s", ErrRunaway, where)

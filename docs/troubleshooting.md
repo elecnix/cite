@@ -185,7 +185,9 @@ turned the whole `roles.review.max_output_tokens` budget into reasoning tokens
 and gave back no answer. The captured response has an empty `content`, and every
 output token is accounted for. What Cite writes to the capture file is a
 **reasoning trace**, so the file's size measures how long the model thought
-rather than how much it said.
+rather than how much it said. Not every provider itemises a token split, and
+where one does not, Cite reports how many characters of reasoning came back, a
+figure that has covered the entire response in every measurement so far.
 
 **Raising the cap makes this worse.** One budget covers thinking and answering,
 so reasoning tokens come out of the same `max_tokens` an answer would have used.
@@ -194,13 +196,18 @@ from 96 KB to 186 KB. Both runs ended with an empty answer.
 
 Cite handles this differently from a real overflow, because the failure does not
 repeat. The file's review gets **one** retry, with reasoning held to a fixed
-allowance. Setting `reasoning_effort` yourself keeps your own value, since Cite
-never overrides it. If that retry also runs long, Cite records the file as
-errored (`runaway_generation`) and the gate concludes `COULD_NOT_EVALUATE`, so a
-run never passes on a review that never happened. For a model that runs long
-every time, pin a `reasoning_effort` in your `.github/cite.yml` or in the
-Action's `reasoning_effort` input. That bound then applies to every call, not
-only to the retry.
+allowance and the output budget cut to 8192 tokens. Cite cuts that budget so
+the retry differs from the request that failed: a runaway's reasoning length
+tracks the budget it is handed rather than the size of the task, so re-sending
+the same cap reproduces the failure at full length. Cite never asks for more
+than the budget that role resolved to, so a role pinned below 8192 keeps the
+operator's own number. Setting `reasoning_effort` yourself keeps your value,
+since Cite never overrides it. If that retry also runs long, Cite records the
+file as errored (`runaway_generation`) and the gate concludes
+`COULD_NOT_EVALUATE`, so a run never passes on a review that never happened.
+For a model that runs long every time, pin a `reasoning_effort` in your
+`.github/cite.yml` or in the Action's `reasoning_effort` input. That bound
+then applies to every call, not only to the retry.
 
 ### My tool failures block the merge and I want them not to
 
