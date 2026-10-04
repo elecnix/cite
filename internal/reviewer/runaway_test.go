@@ -204,9 +204,9 @@ func TestRunawayBoundDoesNotLeakIntoLaterReasks(t *testing.T) {
 	if _, err := runOnce(t, baseInputs(), baseOptions(c)); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	_, efforts := p.snapshot()
-	if len(efforts) < 4 {
-		t.Fatalf("provider calls = %d (%v), want at least 4", len(efforts), efforts)
+	calls, efforts := p.snapshot()
+	if len(calls) < 4 {
+		t.Fatalf("provider calls = %d (%v), want at least 4", len(calls), calls)
 	}
 	if efforts[2] == "" {
 		t.Fatal("the recovery attempt must carry the bound")
@@ -227,7 +227,7 @@ func TestRunawayBoundDoesNotLeakIntoLaterReasks(t *testing.T) {
 	// gone unnoticed. Comparing against calls[2] is what makes the check
 	// bite: a leak makes a later re-ask equal the recovery's budget, and
 	// nothing else.
-	calls, _ := p.snapshot()
+	calls, _ = p.snapshot()
 	if calls[2] >= calls[1] {
 		t.Fatalf("recovery asked for max_tokens=%d against the failed attempt's %d; the budget bound is not in force",
 			calls[2], calls[1])

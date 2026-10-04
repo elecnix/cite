@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // APIStyle enumerates the supported wire protocols.
@@ -829,17 +830,22 @@ func toolArguments(calls []ToolCall, want string) (string, bool) {
 	return "", false
 }
 
-// reasoningChars returns the length of a provider's reasoning trace when it
-// is a JSON string, and 0 for any other shape including none at all. The
-// field stays raw on the wire for the same reason Provider does: an
-// unexpected type must not fail a call whose review is fine, and here the
-// only thing at stake is a number in a diagnostic sentence.
+// reasoningChars returns the number of characters a provider's reasoning
+// trace holds when the field is a JSON string, and 0 for any other shape
+// including none at all. The field stays raw on the wire for the same reason
+// Provider does: an unexpected type must not fail a call whose review is fine,
+// and here the only thing at stake is a number in a diagnostic sentence.
+//
+// Characters, not bytes, because that is the unit the sentence reports. A
+// trace that quotes code in a non-ASCII language runs to several bytes per
+// character, and reporting its byte count under a word that says characters
+// would overstate it by the width of the alphabet in use.
 func reasoningChars(raw json.RawMessage) int {
 	var s string
 	if json.Unmarshal(raw, &s) != nil {
 		return 0
 	}
-	return len(s)
+	return utf8.RuneCountInString(s)
 }
 
 // upstreamProvider reads a router's upstream provider label, which

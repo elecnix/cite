@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // runawayHandler serves a single chat/completions response. The caller
@@ -275,4 +276,47 @@ func TestCompleteSurvivesANonStringReasoningField(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The sentence reports characters, so the number in it has to be characters.
+// A trace that quotes code in a non-ASCII language runs to several bytes per
+// character, and a byte count under the word "characters" overstates the
+// trace by the width of the alphabet in use. The fixture below is 40
+// characters and 50 bytes, so the two cannot be confused.
+func TestRunawayMessageCountsCharactersNotBytes(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+
+	const trace = "この行は added lines に +: review the anchor."
+	body := `{"choices":[{"message":{"role":"assistant","content":"","reasoning":` +
+		mustJSON(t, trace) + `},"finish_reason":"length"}],` +
+		`"usage":{"prompt_tokens":100,"completion_tokens":4096}}`
+	if n, b := utf8.RuneCountInString(trace), len(trace); n == b || n != 40 || b != 50 {
+		t.Fatalf("fixture is not a useful case: %d characters, %d bytes, want 40 and 50", n, b)
+	}
+
+	h := &runawayHandler{body: body}
+	ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+
+	_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 4096})
+	if !errors.Is(err, ErrRunaway) {
+		t.Fatalf("err = %v, want ErrRunaway", err)
+	}
+	if !strings.Contains(err.Error(), "40") {
+		t.Fatalf("runaway message must report 40 characters, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "50") {
+		t.Fatalf("runaway message reported a byte count under the word characters: %v", err)
+	}
+}
+
+func mustJSON(t *testing.T, s string) string {
+	t.Helper()
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("marshal fixture: %v", err)
+	}
+	return string(b)
 }
