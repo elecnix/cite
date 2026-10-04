@@ -104,8 +104,9 @@ func TestRunawayGenerationIsRecoveredNotTerminal(t *testing.T) {
 	if !got.Reviewed {
 		t.Fatal("file must be marked reviewed")
 	}
-	if len(p.calls) != 3 {
-		t.Fatalf("provider calls = %d (%v), want 3: triage, runaway, recovery", len(p.calls), p.calls)
+	calls, _ := p.snapshot()
+	if len(calls) != 3 {
+		t.Fatalf("provider calls = %d (%v), want 3: triage, runaway, recovery", len(calls), calls)
 	}
 }
 
@@ -124,9 +125,10 @@ func TestRunawayRecoveryIsBoundedAndFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(p.calls) != 3 {
+	calls, _ := p.snapshot()
+	if len(calls) != 3 {
 		t.Fatalf("provider calls = %d (%v), want exactly 3: triage, runaway, ONE bounded recovery",
-			len(p.calls), p.calls)
+			len(calls), calls)
 	}
 	if rec.Files[0].State != model.FileErrored {
 		t.Fatalf("file state = %q, want errored when every attempt runs away", rec.Files[0].State)
@@ -137,8 +139,10 @@ func TestRunawayRecoveryIsBoundedAndFailsClosed(t *testing.T) {
 }
 
 // An explicit operator reasoning_effort is an operator instruction and Cite
-// never overrides it, including on the recovery attempt.
-func TestRunawayRecoveryRespectsExplicitOperatorReasoningEffort(t *testing.T) {
+// never overrides it. That also means the recovery has nothing left to add,
+// so the file goes terminal on the first runaway instead of paying a second
+// full-budget call to repeat a request byte for byte.
+func TestRunawayWithOperatorReasoningEffortSpendsNoRecovery(t *testing.T) {
 	p := &runawayProvider{bodies: []string{
 		completion(triageJSON("a.go")),
 		runawayMarker,
@@ -158,34 +162,39 @@ func TestRunawayRecoveryRespectsExplicitOperatorReasoningEffort(t *testing.T) {
 	if rec.Files[0].State != model.FileErrored {
 		t.Fatalf("file state = %q, want errored", rec.Files[0].State)
 	}
-	// Every call carried the operator's own value, including the recovery.
-	for i, e := range p.efforts {
+	if rec.Files[0].Reason != "runaway_generation" {
+		t.Fatalf("reason = %q, want runaway_generation", rec.Files[0].Reason)
+	}
+	// triage plus one review. A third call would be a recovery the branch
+	// cannot make different.
+	calls, efforts := p.snapshot()
+	if len(calls) != 2 {
+		t.Fatalf("provider calls = %d (%v), want 2: no recovery is possible with an operator bound in force",
+			len(calls), calls)
+	}
+	for i, e := range efforts {
 		if e != "high" {
 			t.Fatalf("call %d sent reasoning_effort %q; an explicit operator value is never overridden", i, e)
 		}
 	}
-	if len(p.efforts) != 3 {
-		t.Fatalf("provider calls = %d (%v), want 3", len(p.efforts), p.efforts)
+	// The remedy names the knob the operator actually holds.
+	if !strings.Contains(logs.String(), `reasoning_effort="high"`) {
+		t.Fatalf("remedy must name the operator's own reasoning_effort, got:\n%s", logs.String())
 	}
-	// The retry repeated the request, so the log must not claim a bound this
-	// branch never applied. An operator reading "bounded at high" would
-	// conclude Cite had done something it did not.
-	if !strings.Contains(logs.String(), "already in force") {
-		t.Fatalf("log must say the operator's bound was already in force, got:\n%s", logs.String())
-	}
-	if strings.Contains(logs.String(), "bounded at") {
-		t.Fatalf("log claims a bound was applied when none was, got:\n%s", logs.String())
+	if strings.Contains(logs.String(), "max_output_tokens") {
+		t.Fatalf("remedy must not point at the output cap, got:\n%s", logs.String())
 	}
 }
 
-// With no operator instruction, the one bounded recovery is what makes the
-// attempt terminate: measured 2/2 with a bounded allowance versus 1/4 without
-// on identical requests.
-func TestRunawayRecoveryBoundsReasoningWhenUnset(t *testing.T) {
+// The recovery bound belongs to the recovery alone. When that attempt comes
+// back unparseable and the loop re-asks, the next request must go out exactly
+// as the operator configured it, not carrying a limit they never set.
+func TestRunawayBoundDoesNotLeakIntoLaterReasks(t *testing.T) {
 	p := &runawayProvider{bodies: []string{
 		completion(triageJSON("a.go")),
 		runawayMarker,
-		completion(reviewJSON2("a.go")),
+		completion("{not json"),         // the recovery answers unparseably
+		completion(reviewJSON2("a.go")), // a parse re-ask follows
 	}}
 	ts := httptest.NewServer(p)
 	defer ts.Close()
@@ -194,15 +203,27 @@ func TestRunawayRecoveryBoundsReasoningWhenUnset(t *testing.T) {
 	if _, err := runOnce(t, baseInputs(), baseOptions(c)); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(p.efforts) != 3 {
-		t.Fatalf("provider calls = %d, want 3", len(p.efforts))
+	_, efforts := p.snapshot()
+	if len(efforts) < 4 {
+		t.Fatalf("provider calls = %d (%v), want at least 4", len(efforts), efforts)
 	}
-	if p.efforts[0] != "" || p.efforts[1] != "" {
-		t.Fatalf("normal path must send no reasoning_effort, got %q, %q", p.efforts[0], p.efforts[1])
+	if efforts[2] == "" {
+		t.Fatal("the recovery attempt must carry the bound")
 	}
-	if p.efforts[2] == "" {
-		t.Fatal("the bounded recovery attempt must bound reasoning; without it the retry repeats the failure")
+	for i, e := range efforts[3:] {
+		if e != "" {
+			t.Fatalf("call %d carried reasoning_effort=%q; the recovery bound leaked into a later re-ask", i+3, e)
+		}
 	}
+}
+
+// snapshot copies the recorded request attributes under the lock. The
+// handler appends from the server goroutine while the test reads from the
+// test goroutine, so every read goes through here.
+func (p *runawayProvider) snapshot() (calls []int, efforts []string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]int(nil), p.calls...), append([]string(nil), p.efforts...)
 }
 
 // completion wraps answer text in the OpenAI-compatible envelope the real

@@ -175,19 +175,20 @@ const (
 	// defaultPerFileRunawayRetries is the bounded recovery for a model that
 	// never stopped. One, not more: the failure depends on how long the model
 	// thinks on a given attempt, so a second identical roll buys another coin
-	// flip rather than convergence. Where Cite can bound reasoning the retry
-	// is a genuinely different request; where the operator already holds a
-	// bound in force it is the same request again, which measurement puts at
-	// 2 attempts in 4, still better than a certain loss.
+	// flip rather than convergence. The recovery spends a call only when it can
+	// differ from the attempt that failed, which means it goes out with the
+	// allowance below; an operator who has already pinned a reasoning_effort
+	// leaves nothing for Cite to add, so that case goes terminal here rather
+	// than paying a full-budget call to repeat a request byte for byte.
 	defaultPerFileRunawayRetries = 1
 
-	// recoveryReasoningEffort holds the one recovery attempt's thinking to a
-	// fixed allowance. It applies ONLY on that attempt and ONLY when the
-	// operator has not set a reasoning_effort of their own, because an
-	// explicit operator value is an instruction and Cite never overrides one,
-	// not even to rescue a run from a runaway. Measured on the failing request
-	// at the same 12288 cap: unbounded reasoning finished on 1 attempt in 4,
-	// bounded on 2 in 2.
+	// recoveryReasoningEffort holds the recovery attempt's thinking to a
+	// fixed allowance. It reaches exactly one call, through boundNext, and
+	// never touches the request the loop reuses. Cite never overrides an
+	// explicit operator value, which is why the recovery is skipped rather
+	// than forced when one is set. Measured on the failing request at the
+	// same 12288 cap: unbounded reasoning finished on 1 attempt in 4, bounded
+	// on 2 in 2.
 	recoveryReasoningEffort = "low"
 )
 
@@ -868,11 +869,21 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 	// response_format mode keeps its historical same-request re-ask.
 	toolsMode := r.structuredOutputMode() == model.StructuredOutputTools
 	var history []model.Message
+	// boundNext is consumed by the very next call and never touches req, so
+	// the recovery's reasoning allowance cannot ride along on a later re-ask
+	// the operator never bounded.
+	boundNext := false
 	for {
 		req.History = history
-		resp, err := r.completeWithRetry(ctx, unitReview, req, timeout)
+		call := req
+		if boundNext {
+			call.ReasoningEffort = recoveryReasoningEffort
+		}
+		boundNext = false
+		resp, err := r.completeWithRetry(ctx, unitReview, call, timeout)
+		boundNext = false
 		if err != nil {
-			if errors.Is(err, model.ErrRunaway) && runawayRetries > 0 {
+			if errors.Is(err, model.ErrRunaway) && req.ReasoningEffort == "" && runawayRetries > 0 {
 				// The model never stopped: it spent the whole output
 				// budget thinking and returned no answer. There is no
 				// finding to lose and no answer to be deterministic
@@ -880,29 +891,19 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 				// is not. One attempt from this file's own budget, never
 				// the run-global one, so one pathological file cannot
 				// starve coverage for the rest.
+				//
+				// The retry carries an explicit reasoning allowance, because
+				// that allowance is the whole difference between it and the
+				// attempt that just failed. It is applied to that one call
+				// through boundNext and never to req itself, so no later
+				// re-ask in this loop inherits a limit the operator never
+				// set.
 				runawayRetries--
 				spent++
 				r.noteReask()
-				// Bounding reasoning is what makes the retry a different
-				// request rather than a coin flip, so it is worth one.
-				// An operator who set reasoning_effort already holds that
-				// bound in force and Cite never overrides one; that retry is
-				// then the same roll measured at 2 attempts in 4, which is
-				// still better than a certain loss, and the log line says
-				// which of the two happened rather than claiming a bound
-				// this branch did not apply.
-				bound := false
-				if req.ReasoningEffort == "" {
-					req.ReasoningEffort = recoveryReasoningEffort
-					bound = true
-				}
-				if bound {
-					r.logf("review of %s: the model never stopped (it spent the output budget thinking and wrote no answer); re-asking once with reasoning bounded at %q, %d left, because raising the output-token cap would only make the runaway larger",
-						e.Path, req.ReasoningEffort, runawayRetries)
-				} else {
-					r.logf("review of %s: the model never stopped (it spent the output budget thinking and wrote no answer); your reasoning_effort=%q is already in force, so this retry repeats the request unchanged, %d left",
-						e.Path, req.ReasoningEffort, runawayRetries)
-				}
+				boundNext = true
+				r.logf("review of %s: the model never stopped (it spent the output budget thinking and wrote no answer); re-asking once with reasoning bounded at %q, %d left, because raising the output-token cap would only make the runaway larger",
+					e.Path, recoveryReasoningEffort, runawayRetries)
 				continue
 			}
 			if errors.Is(err, model.ErrDeadline) && deadlineRetries > 0 {
@@ -920,14 +921,17 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 			}
 			reason := "model_error"
 			if errors.Is(err, model.ErrRunaway) {
-				// The recovery was spent and the model still would not stop.
-				// Name what happened: this is a model that does not finish,
-				// not a cap that is too small, so the remedy must not point
-				// at the cap. The remedy says "every attempt" rather than a
-				// count, because only the caller knows how many it made.
+				// No recovery was spent, because a recovery is only worth a
+				// call when it bounds reasoning and an explicit operator
+				// reasoning_effort is never overridden. Name the knob the
+				// operator actually holds, and keep pointing away from the
+				// output cap, since the cap was never the constraint.
 				reason = "runaway_generation"
-				err = fmt.Errorf("%w: %v", err,
-					"the model spent the whole output budget thinking and wrote no answer on every attempt Cite made; this is a model that will not stop, not an output cap that is too small, so raising roles.review.max_output_tokens makes the runaway larger rather than smaller")
+				remedy := "this is a model that will not stop, not an output cap that is too small, so raising roles.review.max_output_tokens makes the runaway larger rather than smaller"
+				if req.ReasoningEffort != "" {
+					remedy = fmt.Sprintf("your reasoning_effort=%q was already in force and Cite does not override it, so the only lever left is a reasoning_effort that lets the model answer sooner", req.ReasoningEffort)
+				}
+				err = fmt.Errorf("%w: the model spent the whole output budget thinking and wrote no answer (%v)", err, remedy)
 			} else if errors.Is(err, model.ErrDeterministic) {
 				reason = "deterministic_failure"
 			} else if ctx.Err() != nil {
