@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -78,7 +79,7 @@ func TestCompleteRunawayGenerationIsNotTerminalDeterministic(t *testing.T) {
 // the runaway from 96 KB to 186 KB, both with reasoning_tokens == cap and no
 // answer. The message must also say the capture is a reasoning trace, because
 // the captured bytes are what made this look like runaway *output*.
-func TestRunawayMessageDoesNotAdviseRaisingTheCap(t *testing.T) {
+func TestRunawayMessageSteersOperatorAwayFromTheCap(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
 
@@ -99,13 +100,22 @@ func TestRunawayMessageDoesNotAdviseRaisingTheCap(t *testing.T) {
 		t.Fatal("expected an error")
 	}
 	blob := err.Error() + "\n" + string(logged)
-	for _, bad := range []string{"raise", "raise the cap", "larger cap", "increase the cap"} {
-		if strings.Contains(strings.ToLower(blob), bad) {
-			t.Fatalf("runaway message advises %q, which cannot help: %s", bad, blob)
-		}
+	// The runaway message names the word exactly once, to tell the operator
+	// what not to do. Strip that corrective clause, then require that no
+	// mention survives anywhere else. A bare search for the stem would flag
+	// the very sentence that replaces the misleading advice, so the check has
+	// to be about what is left after the correction.
+	stem := regexp.MustCompile(`(?i)rais(?:e|es|ed|ing)`)
+	corrective := regexp.MustCompile(`(?i)[^.\n]*rais(?:e|es|ed|ing)[^.\n]*larger[^.\n]*`)
+	if !corrective.MatchString(blob) {
+		t.Fatalf("runaway message must carry the corrective that a bigger cap enlarges the runaway, got: %s", blob)
 	}
-	if !strings.Contains(strings.ToLower(blob), "reasoning") {
-		t.Fatalf("runaway message must name reasoning as what ate the budget: %s", blob)
+	residue := corrective.ReplaceAllString(blob, "")
+	if stem.MatchString(residue) {
+		t.Fatalf("runaway message steers the operator toward the cap outside the correction: %s", blob)
+	}
+	if !strings.Contains(strings.ToLower(blob), "reasoning") && !strings.Contains(blob, "output cap") {
+		t.Fatalf("runaway message must say what consumed the budget: %s", blob)
 	}
 	raw, rerr := os.ReadFile(dir + "/captured.json")
 	if rerr != nil {

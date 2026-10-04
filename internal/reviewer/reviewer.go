@@ -920,13 +920,14 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 			}
 			reason := "model_error"
 			if errors.Is(err, model.ErrRunaway) {
-				// The one bounded recovery was spent and the model still
-				// would not stop. Name what happened: this is a model that
-				// does not terminate, not a cap that is too small, so the
-				// remedy must not point at the cap.
+				// The recovery was spent and the model still would not stop.
+				// Name what happened: this is a model that does not finish,
+				// not a cap that is too small, so the remedy must not point
+				// at the cap. The remedy says "every attempt" rather than a
+				// count, because only the caller knows how many it made.
 				reason = "runaway_generation"
 				err = fmt.Errorf("%w: %v", err,
-					"the model spent the whole output budget thinking and wrote no answer, twice; this is a model that will not stop, not an output cap that is too small — raising roles.review.max_output_tokens makes the runaway larger, not smaller")
+					"the model spent the whole output budget thinking and wrote no answer on every attempt Cite made; this is a model that will not stop, not an output cap that is too small, so raising roles.review.max_output_tokens makes the runaway larger rather than smaller")
 			} else if errors.Is(err, model.ErrDeterministic) {
 				reason = "deterministic_failure"
 			} else if ctx.Err() != nil {

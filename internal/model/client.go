@@ -756,9 +756,12 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 			// this legible, so say plainly that they are a reasoning trace and
 			// not a half-written answer -- an operator handed 186 KB of it
 			// otherwise reads it as Cite having generated 186 KB of review.
-			// where the tokens went, since a provider that does not
-			// itemise reasoning_tokens leaves Cite nothing to name.
-			where := fmt.Sprintf("all %d output tokens were spent and no answer was written", usage.OutputTokens)
+			//
+			// Two forms of `where`, because Cite cannot always name where the
+			// tokens went: a provider that does not itemise reasoning_tokens
+			// leaves it with nothing to report but the budget it asked
+			// for, which is the number the operator can act on.
+			where := fmt.Sprintf("the whole %d-token output cap was spent and no answer was written", req.MaxOutputTokens)
 			if usage.ReasoningTokens > 0 {
 				where = fmt.Sprintf("%d of %d output tokens went to reasoning and no answer was written",
 					usage.ReasoningTokens, usage.OutputTokens)
