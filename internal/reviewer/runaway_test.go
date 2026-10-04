@@ -200,8 +200,16 @@ func TestRunawayBoundDoesNotLeakIntoLaterReasks(t *testing.T) {
 	ts := httptest.NewServer(p)
 	defer ts.Close()
 
+	// A configured cap rather than the built-in default, so that every budget
+	// this test compares against has one unambiguous source. The operator
+	// asked for 40000 here, and nothing else in this test may produce 40000.
+	const operatorCap = 40000
 	c := &model.OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
-	if _, err := runOnce(t, baseInputs(), baseOptions(c)); err != nil {
+	cfg := config.Default()
+	cfg.Roles = map[model.Role]config.RoleSpec{
+		model.RoleReview: {MaxOutputTokens: operatorCap},
+	}
+	if _, err := runOnce(t, baseInputs(), Options{Cfg: cfg, Client: c}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	calls, efforts := p.snapshot()
@@ -220,21 +228,23 @@ func TestRunawayBoundDoesNotLeakIntoLaterReasks(t *testing.T) {
 	// same way: to the one recovery call, never to the request the loop
 	// reuses.
 	//
-	// The bound check comes first because it is what makes the loop below
-	// mean anything. Every call shared one budget before this bound existed,
-	// so the comparison a later re-ask makes against calls[1] would have
-	// passed on a leak; it fails only because calls[2] is now strictly
-	// smaller. Comparing a later call against calls[2] as well would be
+	// Every later re-ask must go out at the cap the operator configured. The
+	// bound check comes first because it is what makes that comparison bite:
+	// before this bound every call shared one budget, so a leak onto the
+	// reused request was indistinguishable from correct behaviour. Comparing
+	// a later call against the recovery's own budget as well would be
 	// unreachable, since the loop has already established it differs.
-	calls, _ = p.snapshot()
 	if calls[2] >= calls[1] {
 		t.Fatalf("recovery asked for max_tokens=%d against the failed attempt's %d; the budget bound is not in force",
 			calls[2], calls[1])
 	}
+	if calls[1] != operatorCap {
+		t.Fatalf("call 1 sent max_tokens=%d, want the operator's configured %d", calls[1], operatorCap)
+	}
 	for i, tk := range calls[3:] {
-		if tk != calls[1] {
-			t.Fatalf("call %d asked for max_tokens=%d, want the operator's %d; a later re-ask went out with something the operator never configured",
-				i+3, tk, calls[1])
+		if tk != operatorCap {
+			t.Fatalf("call %d asked for max_tokens=%d, want the operator's configured %d; a later re-ask went out with something the operator never configured",
+				i+3, tk, operatorCap)
 		}
 	}
 }
