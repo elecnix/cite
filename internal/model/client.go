@@ -35,9 +35,18 @@ const (
 // a truncated response truncates identically on retry (§7).
 var ErrDeterministic = errors.New("deterministic failure")
 
-// ErrRunaway is returned when the provider spent the entire output budget and
-// produced NO answer: reasoning tokens consumed the whole max_tokens and the
-// content came back empty (RunawayGeneration is the test).
+// ErrRunaway is returned when the provider produced NO answer at all: content
+// came back empty beside a reasoning trace, so the budget it was given went into
+// reasoning rather than into a review (RunawayGeneration is the test).
+//
+// The missing answer is the load-bearing half, and for this provider it is the
+// only half that discriminates. Reasoning tokens are billed against max_tokens
+// here, so "the cap was spent" describes a runaway and a capacity overflow
+// equally -- the overflow comes back with content, cut off, and a bigger cap
+// holds it. A cap comparison on its own cannot tell the two apart, which is how
+// a measured runaway once read as an overflow and lost its file. The cap
+// comparison survives only as the fallback for a provider that itemises no
+// reasoning of its own yet reports the whole budget consumed.
 //
 // It is deliberately NOT ErrDeterministic. The terminal class rests on "a
 // truncated response truncates identically on retry", and measurement refutes

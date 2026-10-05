@@ -525,12 +525,12 @@ func (r *Reviewer) completeWithRetry(ctx context.Context, unit string, req model
 			return nil, err // terminal: no retry
 		}
 		if errors.Is(err, model.ErrRunaway) {
-			// A runaway generation (the provider spent the whole output budget
-			// on reasoning and wrote no answer) is not a transient provider
-			// error, so it must NOT draw on the run-global transient bucket:
-			// that bucket's contract is "the same request again", and the same
-			// request again is what produced the runaway. It is not terminal
-			// either -- measurement puts it at 2 attempts in 4 on one
+			// A runaway generation (the provider returned no review text at all:
+			// the budget it was given went to reasoning) is not a transient
+			// provider error, so it must NOT draw on the run-global transient
+			// bucket: that bucket's contract is "the same request again", and
+			// the same request again is what produced the runaway. It is not
+			// terminal either -- measurement puts it at 2 attempts in 4 on one
 			// identical request, so the premise behind ErrDeterministic does
 			// not hold. Hand it back unretried for the per-file review caller
 			// to recover once, with reasoning bounded.
@@ -972,7 +972,7 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 				if req.ReasoningEffort != "" {
 					remedy = fmt.Sprintf("your reasoning_effort=%q was already in force and Cite does not override it, so the only lever left is a reasoning_effort that lets the model answer sooner", req.ReasoningEffort)
 				}
-				err = fmt.Errorf("%w: the model spent the whole output budget thinking and wrote no answer (%v)", err, remedy)
+				err = fmt.Errorf("%w: the model returned no review text; the output budget it was given went to reasoning (%v)", err, remedy)
 			} else if errors.Is(err, model.ErrDeterministic) {
 				reason = "deterministic_failure"
 			} else if ctx.Err() != nil {
