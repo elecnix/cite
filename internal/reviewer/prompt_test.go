@@ -2,8 +2,11 @@ package reviewer
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/elecnix/cite/internal/scope"
 )
 
 // The reviewer's instructions live in three places at once, and only one of
@@ -73,4 +76,39 @@ func readFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(b)
+}
+
+// Every section the envelope can emit is described to the model. A section
+// the prompt never mentions reaches the model with no rule for how to read
+// it (issue #168 added <prior_threads>).
+func TestPromptDescribesEverySectionTheEnvelopeEmits(t *testing.T) {
+	file := &scope.EnvelopeFile{
+		Path: "a.go", Status: "M",
+		Lines:   []scope.EnvelopeLine{{No: 1, Content: "x", Added: true}},
+		Removed: []scope.RemovedLine{{OldNo: 1, Content: "y"}},
+		Prior:   []scope.PriorThread{{ID: 1, Title: "t", Replies: []scope.PriorReply{{Author: "a", Body: "b"}}}},
+	}
+	env := scope.BuildEnvelope([]scope.ManifestEntry{{Status: "M", Path: "a.go"}}, "d", "n", file)
+	open := regexp.MustCompile(`(?m)^<([a-z_]+)[ >]`)
+	prompt := systemPrompt()
+	for _, m := range open.FindAllStringSubmatch(env, -1) {
+		if !strings.Contains(prompt, "<"+m[1]+">") {
+			t.Errorf("the envelope emits <%s> but the system prompt never describes it", m[1])
+		}
+	}
+}
+
+// Issue #168: a reply is data checked against the code, as the description
+// is under RULE 1, and never a reason to drop a claim the code still bears out.
+func TestPromptRuleForPriorThreads(t *testing.T) {
+	prompt := systemPrompt()
+	for _, want := range []string{
+		"## EARLIER THREADS ON THIS FILE",
+		"check the answer against the code",
+		"quote the line that contradicts the answer",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("system prompt lacks %q", want)
+		}
+	}
 }
