@@ -349,6 +349,9 @@ func TestRunawayRecoveryBudgetRespectsTheOperatorCap(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
+			if len(rec.Files) != 1 {
+				t.Fatalf("Files = %+v, want exactly one", rec.Files)
+			}
 			if rec.Files[0].State != model.FileReviewed {
 				t.Fatalf("file state = %q reason = %q", rec.Files[0].State, rec.Files[0].Reason)
 			}

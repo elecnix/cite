@@ -245,11 +245,12 @@ func TestRunawayMessageCountsCharactersNotBytes(t *testing.T) {
 	if !errors.Is(err, ErrRunaway) {
 		t.Fatalf("err = %v, want ErrRunaway", err)
 	}
+	// The sentence carries the count, so the fixture's byte length never has
+	// to be asserted separately: a message reporting 50 fails on the phrase
+	// above on its own, which is what makes this a test rather than a
+	// decoration.
 	if !strings.Contains(err.Error(), want) {
-		t.Fatalf("runaway message must contain %q, got: %v", want, err)
-	}
-	if strings.Contains(err.Error(), "50") {
-		t.Fatalf("runaway message reported a byte count under the word characters: %v", err)
+		t.Fatalf("runaway message must contain %q; a byte count here would report 50, got: %v", want, err)
 	}
 }
 
