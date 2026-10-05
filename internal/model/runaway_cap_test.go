@@ -150,6 +150,32 @@ func TestRunawayMessageNamesTheReasoningItActuallyHas(t *testing.T) {
 	_ = logged
 }
 
+// The stronger form of the same shape: the provider reports no reasoning at
+// all AND reports the whole requested budget spent. Withholding only the
+// reasoning from the runaway predicate would not help here -- the
+// full-budget fallback would still fire -- so the guard has to be on the
+// predicate itself. This is the case Cite's reviewer caught on PR #166.
+func TestCompleteTruncatedToolCallWithFullBudgetStaysOverflow(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+
+	body := `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1",` +
+		`"type":"function","function":{"name":"submit_review","arguments":""}}]},` +
+		`"finish_reason":"length"}],"usage":{"prompt_tokens":100,"completion_tokens":4096}}`
+	h := &runawayHandler{body: body}
+	ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+
+	_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 4096})
+	if errors.Is(err, ErrRunaway) {
+		t.Fatalf("a tool call the cap cut mid-arguments is an answer, not a runaway: %v", err)
+	}
+	if !errors.Is(err, ErrDeterministic) {
+		t.Fatalf("truncated tool call must stay a capacity overflow, got %v", err)
+	}
+}
+
 // The reasoning has to survive decoding, or the predicate above cannot see it.
 func TestCompletionResponseCarriesReasoning(t *testing.T) {
 	h := &runawayHandler{body: `{"choices":[{"message":{"role":"assistant","content":"ok","reasoning":"thought about it"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":900}}`}

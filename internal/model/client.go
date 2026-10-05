@@ -338,9 +338,9 @@ func (w chatCompletionsUsage) toUsage() Usage {
 //
 // answer is the usable answer -- the forced tool call's arguments in tools
 // mode, otherwise the content. reasoning is the reasoning trace the response
-// carries, or "" when the caller has decided the response contains an answer
-// (a tool call). maxTokens is the request Cite made and is only consulted when
-// the response carries no reasoning at all.
+// carries. maxTokens is the request Cite made and is only consulted when the
+// response carries no reasoning at all. A response carrying a tool call never
+// reaches here: the caller treats it as an answer being truncated.
 //
 // The empty-answer test is load-bearing on its own. The reasoning test is the
 // one that decides the measured case, and it exists because the cap
@@ -366,11 +366,12 @@ func (w chatCompletionsUsage) toUsage() Usage {
 // meaningful rejects the exact response this fix exists for.
 //
 // A tool call the cap cut in half is an answer being truncated, not a
-// runaway, so the caller passes no reasoning when the response carries one.
-// Reasoning presence is a model property, not a runaway property: a gateway
-// that puts the whole answer in the reasoning field and reports empty content
-// will be re-asked once and then reported as runaway_generation. That is a
-// bounded, non-terminal cost, and it was the terminal overflow before.
+// runaway, so a response carrying one never reaches this predicate; the
+// caller checks for it first. Reasoning presence is a model property, not a
+// runaway property: a gateway that puts the whole answer in the reasoning
+// field and reports empty content will be re-asked once and then reported as
+// runaway_generation. That is a bounded, non-terminal cost, and it was the
+// terminal overflow before.
 //
 // A provider that refuses or filters a request also returns an empty answer,
 // and the caller cannot tell that case from a runaway without a second signal.
@@ -807,15 +808,12 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		usage := out.Usage.toUsage()
 		// A tool call is an answer being written, even when the cap cut its
 		// arguments in half: the model stopped thinking and started
-		// emitting the response, which is where the cap bit. Treating that
-		// as a runaway would throw away a real truncated answer on the
-		// theory that no answer exists, so the reasoning is withheld here
-		// and the full-budget comparison decides it alone.
-		runawayReasoning := reasoning
-		if len(ch.Message.ToolCalls) > 0 {
-			runawayReasoning = ""
-		}
-		if RunawayGeneration(text, runawayReasoning, usage, req.MaxOutputTokens) {
+		// emitting the response, which is where the cap bit. So the whole
+		// runaway branch is skipped for one -- withholding only the
+		// reasoning would still let a response with no reasoning field and a
+		// full budget fall through to the full-budget test and call a
+		// truncated answer a runaway.
+		if len(ch.Message.ToolCalls) == 0 && RunawayGeneration(text, reasoning, usage, req.MaxOutputTokens) {
 			// A runaway generation is not the capacity overflow this branch
 			// was written for, and it is not terminal. The whole budget went
 			// to reasoning and no answer came back, so the cap was never the
