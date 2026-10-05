@@ -201,7 +201,12 @@ func TestRunawayBoundDoesNotLeakIntoLaterReasks(t *testing.T) {
 	// this test compares against has one unambiguous source. The operator
 	// asked for 40000 here, and nothing else in this test may produce 40000.
 	const operatorCap = 40000
-	_, calls, efforts := runAgainstRecovery(t, operatorCap, bodies...)
+	var logs strings.Builder
+	_, calls, efforts := runAgainstRecovery(t, operatorCap, &logs, bodies...)
+	want := fmt.Sprintf("the output budget cut from %d to %d tokens", operatorCap, recoveryMaxOutputTokens)
+	if !strings.Contains(logs.String(), want) {
+		t.Fatalf("recovery log must contain %q, got:\n%s", want, logs.String())
+	}
 	// t.Fatalf ends this goroutine, so every index below is behind the guard.
 	if len(calls) < 4 || len(efforts) < 4 {
 		t.Fatalf("provider calls = %d budgets and %d efforts, want at least 4 of each", len(calls), len(efforts))
@@ -244,7 +249,7 @@ func TestRunawayBoundDoesNotLeakIntoLaterReasks(t *testing.T) {
 // provider saw. Every runaway test here needs that same three-line shape, and
 // the duplicate detector is right that spelling it out each time says nothing
 // any of them does not already say.
-func runAgainstRecovery(t *testing.T, cap int, bodies ...string) (*model.RunRecord, []int, []string) {
+func runAgainstRecovery(t *testing.T, cap int, log *strings.Builder, bodies ...string) (*model.RunRecord, []int, []string) {
 	t.Helper()
 	p := &runawayProvider{bodies: bodies}
 	ts := httptest.NewServer(p)
@@ -255,7 +260,11 @@ func runAgainstRecovery(t *testing.T, cap int, bodies ...string) (*model.RunReco
 			model.RoleReview: {MaxOutputTokens: cap},
 		}
 	}
-	rec, err := runOnce(t, baseInputs(), Options{Cfg: cfg, Client: &model.OpenAICompatClient{BaseURL: ts.URL, Model: "m"}})
+	o := Options{Cfg: cfg, Client: &model.OpenAICompatClient{BaseURL: ts.URL, Model: "m"}}
+	if log != nil {
+		o.Logger = func(f string, a ...any) { log.WriteString(fmt.Sprintf(f, a...) + "\n") }
+	}
+	rec, err := runOnce(t, baseInputs(), o)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -312,7 +321,7 @@ func reviewJSON2(path string) string {
 // A recovery that asks for the same budget again is therefore not a second
 // chance, it is the same roll. It has to ask for less.
 func TestRunawayRecoveryAsksForASmallerOutputBudget(t *testing.T) {
-	rec, calls, _ := runAgainstRecovery(t, 0,
+	rec, calls, _ := runAgainstRecovery(t, 0, nil,
 		completion(triageJSON("a.go")),
 		runawayMarker,
 		completion(reviewJSON2("a.go")))
@@ -345,7 +354,7 @@ func TestRunawayRecoveryBudgetRespectsTheOperatorCap(t *testing.T) {
 		{"far above the bound", 131072},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rec, calls, _ := runAgainstRecovery(t, tc.cap,
+			rec, calls, _ := runAgainstRecovery(t, tc.cap, nil,
 				completion(triageJSON("a.go")),
 				runawayMarker,
 				completion(reviewJSON2("a.go")))
@@ -413,15 +422,11 @@ func TestRunawayRecoveryLogNamesTheBudgetItSent(t *testing.T) {
 	ts := httptest.NewServer(p)
 	defer ts.Close()
 
-	c := &model.OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
 	var logs strings.Builder
-	o := Options{Cfg: config.Default(), Client: c,
-		Logger: func(f string, a ...any) { logs.WriteString(fmt.Sprintf(f, a...) + "\n") }}
-	if _, err := runOnce(t, baseInputs(), o); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-
-	calls, _ := p.snapshot()
+	_, calls, _ := runAgainstRecovery(t, 0, &logs,
+		completion(triageJSON("a.go")),
+		runawayMarker,
+		completion(reviewJSON2("a.go")))
 	if len(calls) != 3 {
 		t.Fatalf("provider calls = %d (%v), want 3", len(calls), calls)
 	}
@@ -430,5 +435,35 @@ func TestRunawayRecoveryLogNamesTheBudgetItSent(t *testing.T) {
 	if !strings.Contains(logs.String(), want) {
 		t.Fatalf("recovery log must contain %q, so the budget it reports is the one the provider saw, got:\n%s",
 			want, logs.String())
+	}
+}
+
+// The log must describe what the call did, not what the code would have done
+// with a different cap. A role pinned at or below the bound keeps its own cap,
+// so there is no cut to announce, and "cut from 4096 to 4096 tokens" would put
+// a change in the forensics that never happened.
+func TestRunawayRecoveryLogDoesNotClaimACutItDidNotMake(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cap  int
+		want string
+	}{
+		{"cap below the bound", 4096, "the output budget held at 4096 tokens"},
+		{"cap equal to the bound", recoveryMaxOutputTokens, fmt.Sprintf("the output budget held at %d tokens", recoveryMaxOutputTokens)},
+		{"cap above the bound", 65536, fmt.Sprintf("the output budget cut from 65536 to %d tokens", recoveryMaxOutputTokens)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs strings.Builder
+			runAgainstRecovery(t, tc.cap, &logs,
+				completion(triageJSON("a.go")),
+				runawayMarker,
+				completion(reviewJSON2("a.go")))
+			if !strings.Contains(logs.String(), tc.want) {
+				t.Fatalf("recovery log must contain %q, got:\n%s", tc.want, logs.String())
+			}
+			if strings.Contains(logs.String(), fmt.Sprintf("cut from %d to %d", tc.cap, tc.cap)) {
+				t.Fatalf("recovery log claims a cut that did not happen at cap %d, got:\n%s", tc.cap, logs.String())
+			}
+		})
 	}
 }

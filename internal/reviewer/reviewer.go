@@ -934,9 +934,17 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 				spent++
 				r.noteReask()
 				boundNext = true
-				r.logf("review of %s: the model never stopped (it spent the output budget thinking and wrote no answer); re-asking once with reasoning bounded at %q and the output budget cut from %d to %d tokens, %d left, because handing the model the same budget again would only produce a larger runaway",
-					e.Path, recoveryReasoningEffort, req.MaxOutputTokens,
-					recoveryBudget, runawayRetries)
+				// The clause has to match what the call actually does. A role
+				// pinned at or below the bound keeps its own cap, so there is
+				// no cut, and "cut from 4096 to 4096 tokens" would be a
+				// forensics line describing a change that did not happen.
+				budget := fmt.Sprintf("the output budget held at %d tokens", recoveryBudget)
+				if recoveryBudget < req.MaxOutputTokens {
+					budget = fmt.Sprintf("the output budget cut from %d to %d tokens",
+						req.MaxOutputTokens, recoveryBudget)
+				}
+				r.logf("review of %s: the model never stopped (it spent the output budget thinking and wrote no answer); re-asking once with reasoning bounded at %q and %s, %d left, because handing the model the same budget again would only produce a larger runaway",
+					e.Path, recoveryReasoningEffort, budget, runawayRetries)
 				continue
 			}
 			if errors.Is(err, model.ErrDeadline) && deadlineRetries > 0 {
