@@ -189,7 +189,12 @@ jobs:
             echo "cite-head: no pull request context (event: ${GITHUB_EVENT_NAME:-unknown}); nothing to review" >&2
             exit 0
           fi
-          ./cite-head review --pr "$GITHUB_REPOSITORY#$PR_NUM" --config .github/cite.yml 2>&1 | tee "$CITE_LOG"
+          # Same choice as the release leg's `tool_failure_blocks: false` above: a
+          # tool failure (COULD_NOT_EVALUATE) concludes neutral, a real finding
+          # still blocks. This leg drives the CLI directly, so it has to pass the
+          # flag the action would have passed; without it the two legs disagreed
+          # and the head build alone turned red on its own truncation failures.
+          ./cite-head review --pr "$GITHUB_REPOSITORY#$PR_NUM" --config .github/cite.yml --tool-failure-blocks=false 2>&1 | tee "$CITE_LOG"
 
       # The run record on every successful run too: calls[] carries the
       # per-call cache counters and upstream provider.
