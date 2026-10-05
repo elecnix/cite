@@ -397,3 +397,38 @@ func TestRunawayRecoveryBudgetNeverExceedsTheCap(t *testing.T) {
 		}
 	}
 }
+
+// The recovery log is the forensics an operator reads when a file dies of a
+// runaway, so the budget it names has to be the budget the provider was
+// actually asked for. The two were computed at separate call sites, so they
+// agreed only for as long as both expressions stayed identical. This asserts
+// the agreement rather than either expression, so it keeps holding if the
+// budget is ever derived some other way.
+func TestRunawayRecoveryLogNamesTheBudgetItSent(t *testing.T) {
+	p := &runawayProvider{bodies: []string{
+		completion(triageJSON("a.go")),
+		runawayMarker,
+		completion(reviewJSON2("a.go")),
+	}}
+	ts := httptest.NewServer(p)
+	defer ts.Close()
+
+	c := &model.OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+	var logs strings.Builder
+	o := Options{Cfg: config.Default(), Client: c,
+		Logger: func(f string, a ...any) { logs.WriteString(fmt.Sprintf(f, a...) + "\n") }}
+	if _, err := runOnce(t, baseInputs(), o); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	calls, _ := p.snapshot()
+	if len(calls) != 3 {
+		t.Fatalf("provider calls = %d (%v), want 3", len(calls), calls)
+	}
+	// "the output budget cut from 131072 to 8192 tokens"
+	want := fmt.Sprintf("the output budget cut from %d to %d tokens", calls[1], calls[2])
+	if !strings.Contains(logs.String(), want) {
+		t.Fatalf("recovery log must contain %q, so the budget it reports is the one the provider saw, got:\n%s",
+			want, logs.String())
+	}
+}

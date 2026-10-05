@@ -892,12 +892,21 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 	// the recovery's reasoning allowance cannot ride along on a later re-ask
 	// the operator never bounded.
 	boundNext := false
+	// recoveryBudget is resolved once and read by both the recovery call and
+	// the log line that announces it. Computing it at each of those two sites
+	// makes the forensics an operator reads a second, independent derivation
+	// of what the provider was asked for, and the two can drift the moment
+	// either expression changes. req.MaxOutputTokens is fixed when req is
+	// built and is never reassigned in this loop, so resolving the budget
+	// before the loop yields the same value the loop would reach on every
+	// iteration, including the first.
+	recoveryBudget := runawayRecoveryBudget(req.MaxOutputTokens)
 	for {
 		req.History = history
 		call := req
 		if boundNext {
 			call.ReasoningEffort = recoveryReasoningEffort
-			call.MaxOutputTokens = runawayRecoveryBudget(req.MaxOutputTokens)
+			call.MaxOutputTokens = recoveryBudget
 		}
 		boundNext = false
 		resp, err := r.completeWithRetry(ctx, unitReview, call, timeout)
@@ -927,7 +936,7 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 				boundNext = true
 				r.logf("review of %s: the model never stopped (it spent the output budget thinking and wrote no answer); re-asking once with reasoning bounded at %q and the output budget cut from %d to %d tokens, %d left, because handing the model the same budget again would only produce a larger runaway",
 					e.Path, recoveryReasoningEffort, req.MaxOutputTokens,
-					runawayRecoveryBudget(req.MaxOutputTokens), runawayRetries)
+					recoveryBudget, runawayRetries)
 				continue
 			}
 			if errors.Is(err, model.ErrDeadline) && deadlineRetries > 0 {
