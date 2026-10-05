@@ -414,14 +414,6 @@ func TestRunawayRecoveryBudgetNeverExceedsTheCap(t *testing.T) {
 // the agreement rather than either expression, so it keeps holding if the
 // budget is ever derived some other way.
 func TestRunawayRecoveryLogNamesTheBudgetItSent(t *testing.T) {
-	p := &runawayProvider{bodies: []string{
-		completion(triageJSON("a.go")),
-		runawayMarker,
-		completion(reviewJSON2("a.go")),
-	}}
-	ts := httptest.NewServer(p)
-	defer ts.Close()
-
 	var logs strings.Builder
 	_, calls, _ := runAgainstRecovery(t, 0, &logs,
 		completion(triageJSON("a.go")),
