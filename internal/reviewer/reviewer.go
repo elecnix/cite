@@ -91,6 +91,10 @@ type Inputs struct {
 	PostImage     map[string][]byte // path -> full post-change file content
 	PRDescription string
 	Nonce         string // per-run nonce protecting untrusted blocks (§7)
+	// PriorThreads maps a path to the earlier Cite threads on that file
+	// and their replies (issue #168). Each file's review call carries only
+	// its own entry.
+	PriorThreads map[string][]scope.PriorThread
 }
 
 // Reviewer executes one review pass per Run call.
@@ -808,7 +812,7 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 	// Per-file payload: exactly one code artifact (§7). It is derived from
 	// scope.BuildEnvelope output so the rendering lives in one place: the
 	// envelope minus its manifest+pr_description prefix is precisely the
-	// <file_under_review>/<removed_lines> sections. Those go AFTER the
+	// <file_under_review>/<removed_lines>/<prior_threads> sections. Those go AFTER the
 	// cache-breakpoint marker; segment B (r.segB) carries the manifest,
 	// the nonce-carrying PR description and the repo instructions and is
 	// byte-identical for every call in this run.
