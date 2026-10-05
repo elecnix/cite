@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -176,6 +177,29 @@ func TestUsageCarriesReasoningTokens(t *testing.T) {
 	}
 }
 
+// The three tests below share one shape: stand up a server that answers with a
+// fixed body, call Complete once, and read what came back. The helper is here
+// so a fourth does not repeat the block a third time.
+
+// runawayWithReasoning is the captured shape: an empty answer beside a
+// reasoning trace, at finish_reason=length, with no token split in the usage.
+func runawayWithReasoning(trace string) string {
+	v, _ := json.Marshal(trace) // a Go string always marshals
+	return `{"choices":[{"message":{"role":"assistant","content":"","reasoning":` + string(v) +
+		`},"finish_reason":"length"}],"usage":{"prompt_tokens":12361,"completion_tokens":4096}}`
+}
+
+// completeAgainst serves body once and returns whatever Complete produced.
+func completeAgainst(t *testing.T, body string) (*CompletionResponse, error) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+	ts := newTestServer(http.HandlerFunc((&runawayHandler{body: body}).ServeHTTP))
+	t.Cleanup(ts.Close)
+	return (&OpenAICompatClient{BaseURL: ts.URL, Model: "m"}).
+		Complete(context.Background(), CompletionRequest{MaxOutputTokens: 4096})
+}
+
 // A provider that itemises no reasoning_tokens still puts the reasoning in the
 // message body, and Cite decodes that body. The captured runaway that settled
 // whether this failure is a loop arrived exactly that way: 176812 bytes of
@@ -186,32 +210,46 @@ func TestUsageCarriesReasoningTokens(t *testing.T) {
 // the provider reports no split of its own. Without that, the one number
 // available is the budget, which is precisely the number the finding says was
 // never the constraint.
+//
+// The assertion is on the whole sentence rather than on a number or a word. A
+// fixture reporting completion_tokens at the cap makes any bare-digit check
+// satisfiable by the budget alone.
 func TestRunawayMessageNamesTheObservedReasoningTrace(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
-
 	const trace = "Let me review this file. Hmm. A broken anchor is plausible. Hmm. OK, I'll report it."
-	body := `{"choices":[{"message":{"role":"assistant","content":"","reasoning":"` +
-		trace + `"},"finish_reason":"length"}],` +
-		`"usage":{"prompt_tokens":12361,"completion_tokens":4096,"total_tokens":16457}}`
-	h := &runawayHandler{body: body}
-	ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
-	defer ts.Close()
-	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+	want := fmt.Sprintf("every one of the %d characters the provider returned is reasoning", len(trace))
 
-	_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 4096})
+	_, err := completeAgainst(t, runawayWithReasoning(trace))
 	if !errors.Is(err, ErrRunaway) {
 		t.Fatalf("err = %v, want ErrRunaway", err)
 	}
-	if !strings.Contains(err.Error(), itoa(len(trace))) {
-		t.Fatalf("runaway message must name the %d characters of reasoning the provider actually returned, got: %v",
-			len(trace), err)
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("runaway message must contain %q, got: %v", want, err)
 	}
-	// The bare number is not enough: the fixture reports completion_tokens at
-	// the cap, so a trace of exactly that length would satisfy the check above
-	// against a message naming only the budget. Require the unit too.
-	if !strings.Contains(err.Error(), "characters") {
-		t.Fatalf("runaway message must report the trace in characters rather than as the budget, got: %v", err)
+}
+
+// The sentence reports characters, so the number in it has to be characters.
+// A trace that quotes code in a non-ASCII language runs to several bytes per
+// character, and a byte count under the word "characters" overstates the
+// trace by the width of the alphabet in use. The fixture is 40 characters and
+// 50 bytes, and the two numbers appear nowhere else in the response, so a
+// message naming either one is distinguishable from a message naming the
+// other.
+func TestRunawayMessageCountsCharactersNotBytes(t *testing.T) {
+	const trace = "この行は added lines に +: review the anchor."
+	if n, b := utf8.RuneCountInString(trace), len(trace); n != 40 || b != 50 {
+		t.Fatalf("fixture is not a useful case: %d characters, %d bytes, want 40 and 50", n, b)
+	}
+	want := fmt.Sprintf("every one of the %d characters the provider returned is reasoning", 40)
+
+	_, err := completeAgainst(t, runawayWithReasoning(trace))
+	if !errors.Is(err, ErrRunaway) {
+		t.Fatalf("err = %v, want ErrRunaway", err)
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("runaway message must contain %q, got: %v", want, err)
+	}
+	if strings.Contains(err.Error(), "50") {
+		t.Fatalf("runaway message reported a byte count under the word characters: %v", err)
 	}
 }
 
@@ -220,23 +258,12 @@ func TestRunawayMessageNamesTheObservedReasoningTrace(t *testing.T) {
 // characters of reasoning and zero of content, and a caller that reports no
 // reasoning at all is a different shape with a different remedy.
 func TestRunawayMessageInventsNoReasoningTrace(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		body string
-	}{
+	for _, tc := range []struct{ name, body string }{
 		{"no reasoning field", `{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":"length"}],"usage":{"prompt_tokens":100,"completion_tokens":4096}}`},
 		{"empty reasoning field", `{"choices":[{"message":{"role":"assistant","content":"","reasoning":""},"finish_reason":"length"}],"usage":{"prompt_tokens":100,"completion_tokens":4096}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
-
-			h := &runawayHandler{body: tc.body}
-			ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
-			defer ts.Close()
-			c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
-
-			_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 4096})
+			_, err := completeAgainst(t, tc.body)
 			if !errors.Is(err, ErrRunaway) {
 				t.Fatalf("err = %v, want ErrRunaway", err)
 			}
@@ -253,70 +280,23 @@ func TestRunawayMessageInventsNoReasoningTrace(t *testing.T) {
 // with it as a deterministic malformed provider response. The sibling
 // diagnostic field Provider is raw for the same reason.
 func TestCompleteSurvivesANonStringReasoningField(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		body string
-	}{
-		{"array", `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}","reasoning":["a","b"]},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":200}}`},
-		{"object", `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}","reasoning":{"steps":[]}},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":200}}`},
-		{"number", `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}","reasoning":42},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":200}}`},
+	const answer = `{"ok":true}`
+	for _, tc := range []struct{ name, reasoning string }{
+		{"array", `["a","b"]`},
+		{"object", `{"steps":[]}`},
+		{"number", `42`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := &runawayHandler{body: tc.body}
-			ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
-			defer ts.Close()
-			c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
-
-			resp, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 4096})
+			body := `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}",` +
+				`"reasoning":` + tc.reasoning + `},"finish_reason":"stop"}],` +
+				`"usage":{"prompt_tokens":100,"completion_tokens":200}}`
+			resp, err := completeAgainst(t, body)
 			if err != nil {
 				t.Fatalf("a non-string reasoning field must not reject a valid review: %v", err)
 			}
-			if resp.Text != `{"ok":true}` {
-				t.Fatalf("Text = %q, want the provider's answer", resp.Text)
+			if resp.Text != answer {
+				t.Fatalf("Text = %q, want %q", resp.Text, answer)
 			}
 		})
 	}
-}
-
-// The sentence reports characters, so the number in it has to be characters.
-// A trace that quotes code in a non-ASCII language runs to several bytes per
-// character, and a byte count under the word "characters" overstates the
-// trace by the width of the alphabet in use. The fixture below is 40
-// characters and 50 bytes, so the two cannot be confused.
-func TestRunawayMessageCountsCharactersNotBytes(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
-
-	const trace = "この行は added lines に +: review the anchor."
-	body := `{"choices":[{"message":{"role":"assistant","content":"","reasoning":` +
-		mustJSON(t, trace) + `},"finish_reason":"length"}],` +
-		`"usage":{"prompt_tokens":100,"completion_tokens":4096}}`
-	if n, b := utf8.RuneCountInString(trace), len(trace); n == b || n != 40 || b != 50 {
-		t.Fatalf("fixture is not a useful case: %d characters, %d bytes, want 40 and 50", n, b)
-	}
-
-	h := &runawayHandler{body: body}
-	ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
-	defer ts.Close()
-	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
-
-	_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 4096})
-	if !errors.Is(err, ErrRunaway) {
-		t.Fatalf("err = %v, want ErrRunaway", err)
-	}
-	if !strings.Contains(err.Error(), "40") {
-		t.Fatalf("runaway message must report 40 characters, got: %v", err)
-	}
-	if strings.Contains(err.Error(), "50") {
-		t.Fatalf("runaway message reported a byte count under the word characters: %v", err)
-	}
-}
-
-func mustJSON(t *testing.T, s string) string {
-	t.Helper()
-	b, err := json.Marshal(s)
-	if err != nil {
-		t.Fatalf("marshal fixture: %v", err)
-	}
-	return string(b)
 }

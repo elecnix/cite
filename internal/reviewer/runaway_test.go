@@ -212,6 +212,7 @@ func TestRunawayBoundDoesNotLeakIntoLaterReasks(t *testing.T) {
 	if _, err := runOnce(t, baseInputs(), Options{Cfg: cfg, Client: c}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	// t.Fatalf ends this goroutine, so every index below is behind the guard.
 	calls, efforts := p.snapshot()
 	if len(calls) < 4 || len(efforts) < 4 {
 		t.Fatalf("provider calls = %d budgets and %d efforts, want at least 4 of each", len(calls), len(efforts))
@@ -372,5 +373,30 @@ func TestRunawayRecoveryBudgetRespectsTheOperatorCap(t *testing.T) {
 					calls[2], want, tc.cap, recoveryMaxOutputTokens)
 			}
 		})
+	}
+}
+
+// The bound applies to every cap an operator can configure, and to nothing
+// else. A cap below the bound stands, a cap above it comes down to the bound,
+// and a non-positive cap is not a budget at all: it passes through, so the
+// recovery never carries a number the caller did not hold.
+func TestRunawayRecoveryBudgetNeverExceedsTheCap(t *testing.T) {
+	for _, tc := range []struct {
+		cap  int
+		want int
+	}{
+		{-1, -1},
+		{0, 0},
+		{1, 1},
+		{1024, 1024},
+		{recoveryMaxOutputTokens - 1, recoveryMaxOutputTokens - 1},
+		{recoveryMaxOutputTokens, recoveryMaxOutputTokens},
+		{recoveryMaxOutputTokens + 1, recoveryMaxOutputTokens},
+		{65536, recoveryMaxOutputTokens},
+		{131072, recoveryMaxOutputTokens},
+	} {
+		if got := runawayRecoveryBudget(tc.cap); got != tc.want {
+			t.Errorf("runawayRecoveryBudget(%d) = %d, want %d", tc.cap, got, tc.want)
+		}
 	}
 }

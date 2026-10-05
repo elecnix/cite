@@ -227,8 +227,15 @@ const (
 // to. A role pinned below the bound keeps the operator's number, because the
 // bound exists to make the recovery a different request and a cap smaller
 // than the bound already is one.
+//
+// A non-positive cap passes through unchanged. It reads as "unset" here, and
+// the resolved cap never is: roleSettings only takes a configured value when
+// it is above zero and otherwise falls back to the built-in default. Treating
+// it as unbounded would make the recovery the one call in the loop carrying a
+// budget nobody chose, and a zero in place of the caller's own number is a
+// state the provider resolves rather than one Cite resolves on its behalf.
 func runawayRecoveryBudget(cap int) int {
-	if cap > 0 && cap < recoveryMaxOutputTokens {
+	if cap <= 0 || cap < recoveryMaxOutputTokens {
 		return cap
 	}
 	return recoveryMaxOutputTokens
