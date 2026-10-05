@@ -191,29 +191,18 @@ func TestRunawayWithOperatorReasoningEffortSpendsNoRecovery(t *testing.T) {
 // back unparseable and the loop re-asks, the next request must go out exactly
 // as the operator configured it, not carrying a limit they never set.
 func TestRunawayBoundDoesNotLeakIntoLaterReasks(t *testing.T) {
-	p := &runawayProvider{bodies: []string{
+	bodies := []string{
 		completion(triageJSON("a.go")),
 		runawayMarker,
 		completion("{not json"),         // the recovery answers unparseably
 		completion(reviewJSON2("a.go")), // a parse re-ask follows
-	}}
-	ts := httptest.NewServer(p)
-	defer ts.Close()
-
+	}
 	// A configured cap rather than the built-in default, so that every budget
 	// this test compares against has one unambiguous source. The operator
 	// asked for 40000 here, and nothing else in this test may produce 40000.
 	const operatorCap = 40000
-	c := &model.OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
-	cfg := config.Default()
-	cfg.Roles = map[model.Role]config.RoleSpec{
-		model.RoleReview: {MaxOutputTokens: operatorCap},
-	}
-	if _, err := runOnce(t, baseInputs(), Options{Cfg: cfg, Client: c}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	_, calls, efforts := runAgainstRecovery(t, operatorCap, bodies...)
 	// t.Fatalf ends this goroutine, so every index below is behind the guard.
-	calls, efforts := p.snapshot()
 	if len(calls) < 4 || len(efforts) < 4 {
 		t.Fatalf("provider calls = %d budgets and %d efforts, want at least 4 of each", len(calls), len(efforts))
 	}
@@ -247,6 +236,43 @@ func TestRunawayBoundDoesNotLeakIntoLaterReasks(t *testing.T) {
 			t.Fatalf("call %d asked for max_tokens=%d, want the operator's configured %d; a later re-ask went out with something the operator never configured",
 				i+3, tk, operatorCap)
 		}
+	}
+}
+
+// runAgainstRecovery serves the given bodies, runs one review of a.go through
+// the reviewer, and returns the record with the budgets and efforts the
+// provider saw. Every runaway test here needs that same three-line shape, and
+// the duplicate detector is right that spelling it out each time says nothing
+// any of them does not already say.
+func runAgainstRecovery(t *testing.T, cap int, bodies ...string) (*model.RunRecord, []int, []string) {
+	t.Helper()
+	p := &runawayProvider{bodies: bodies}
+	ts := httptest.NewServer(p)
+	t.Cleanup(ts.Close)
+	cfg := config.Default()
+	if cap > 0 {
+		cfg.Roles = map[model.Role]config.RoleSpec{
+			model.RoleReview: {MaxOutputTokens: cap},
+		}
+	}
+	rec, err := runOnce(t, baseInputs(), Options{Cfg: cfg, Client: &model.OpenAICompatClient{BaseURL: ts.URL, Model: "m"}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	calls, efforts := p.snapshot()
+	return rec, calls, efforts
+}
+
+// wantOneReviewed fails unless the run recorded exactly one file and evaluated
+// it, which every test below needs before it may read Files[0].
+func wantOneReviewed(t *testing.T, rec *model.RunRecord) {
+	t.Helper()
+	if len(rec.Files) != 1 {
+		t.Fatalf("Files = %+v, want exactly one", rec.Files)
+	}
+	if rec.Files[0].State != model.FileReviewed {
+		t.Fatalf("file state = %q reason = %q; the recovery must still be able to answer",
+			rec.Files[0].State, rec.Files[0].Reason)
 	}
 }
 
@@ -286,24 +312,11 @@ func reviewJSON2(path string) string {
 // A recovery that asks for the same budget again is therefore not a second
 // chance, it is the same roll. It has to ask for less.
 func TestRunawayRecoveryAsksForASmallerOutputBudget(t *testing.T) {
-	p := &runawayProvider{bodies: []string{
+	rec, calls, _ := runAgainstRecovery(t, 0,
 		completion(triageJSON("a.go")),
 		runawayMarker,
-		completion(reviewJSON2("a.go")),
-	}}
-	ts := httptest.NewServer(p)
-	defer ts.Close()
-
-	c := &model.OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
-	rec, err := runOnce(t, baseInputs(), baseOptions(c))
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if rec.Files[0].State != model.FileReviewed {
-		t.Fatalf("file state = %q reason = %q; the recovery must still be able to answer",
-			rec.Files[0].State, rec.Files[0].Reason)
-	}
-	calls, _ := p.snapshot()
+		completion(reviewJSON2("a.go")))
+	wantOneReviewed(t, rec)
 	if len(calls) != 3 {
 		t.Fatalf("provider calls = %d (%v), want 3: triage, runaway, recovery", len(calls), calls)
 	}
@@ -332,30 +345,11 @@ func TestRunawayRecoveryBudgetRespectsTheOperatorCap(t *testing.T) {
 		{"far above the bound", 131072},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p := &runawayProvider{bodies: []string{
+			rec, calls, _ := runAgainstRecovery(t, tc.cap,
 				completion(triageJSON("a.go")),
 				runawayMarker,
-				completion(reviewJSON2("a.go")),
-			}}
-			ts := httptest.NewServer(p)
-			defer ts.Close()
-
-			c := &model.OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
-			cfg := config.Default()
-			cfg.Roles = map[model.Role]config.RoleSpec{
-				model.RoleReview: {MaxOutputTokens: tc.cap},
-			}
-			rec, err := runOnce(t, baseInputs(), Options{Cfg: cfg, Client: c})
-			if err != nil {
-				t.Fatalf("Run: %v", err)
-			}
-			if len(rec.Files) != 1 {
-				t.Fatalf("Files = %+v, want exactly one", rec.Files)
-			}
-			if rec.Files[0].State != model.FileReviewed {
-				t.Fatalf("file state = %q reason = %q", rec.Files[0].State, rec.Files[0].Reason)
-			}
-			calls, _ := p.snapshot()
+				completion(reviewJSON2("a.go")))
+			wantOneReviewed(t, rec)
 			if len(calls) != 3 {
 				t.Fatalf("provider calls = %d (%v), want 3", len(calls), calls)
 			}
