@@ -214,9 +214,18 @@ func completeAgainst(t *testing.T, body string) (*CompletionResponse, error) {
 // The assertion is on the whole sentence rather than on a number or a word. A
 // fixture reporting completion_tokens at the cap makes any bare-digit check
 // satisfiable by the budget alone.
+//
+// The expected count comes from utf8.RuneCountInString, which is the quantity
+// the message claims to report, and not from len, which is bytes. On an ASCII
+// fixture the two agree and the choice would be invisible, so the fixture
+// carries one multi-byte character and a guard fails if it ever loses it.
 func TestRunawayMessageNamesTheObservedReasoningTrace(t *testing.T) {
-	const trace = "Let me review this file. Hmm. A broken anchor is plausible. Hmm. OK, I'll report it."
-	want := fmt.Sprintf("every one of the %d characters the provider returned is reasoning", len(trace))
+	const trace = "Let me review this file. Hmm. A broken anchor is plausible — that is what I will report."
+	want := fmt.Sprintf("every one of the %d characters the provider returned is reasoning",
+		utf8.RuneCountInString(trace))
+	if utf8.RuneCountInString(trace) == len(trace) {
+		t.Fatalf("fixture must contain a multi-byte character or the rune count is the byte count: %q", trace)
+	}
 
 	_, err := completeAgainst(t, runawayWithReasoning(trace))
 	if !errors.Is(err, ErrRunaway) {
