@@ -166,6 +166,10 @@ func renderRemovedLines(path string, removed []RemovedLine) string {
 	return b.String()
 }
 
+// priorReplyIndent sets a reply's lines under its "reply by" line, after
+// the "| " prefix.
+const priorReplyIndent = "  "
+
 // renderPriorThreads prefixes every line with "| ", as renderPRDescription
 // does, so a forged close tag inside a reply stays quoted data.
 func renderPriorThreads(path string, prior []PriorThread, nonce string) string {
@@ -176,8 +180,10 @@ func renderPriorThreads(path string, prior []PriorThread, nonce string) string {
 		b.WriteString("| claim: " + oneLine(t.Title) + "\n")
 		for _, r := range t.Replies {
 			b.WriteString("| reply by @" + oneLine(r.Author) + ":\n")
+			// Each reply line, empty ones included, gets the "| " prefix,
+			// then an indent that sets it under its "reply by" line.
 			for _, l := range strings.Split(strings.TrimRight(r.Body, "\n"), "\n") {
-				b.WriteString("|   " + strings.TrimSuffix(l, "\r") + "\n")
+				b.WriteString("| " + priorReplyIndent + strings.TrimSuffix(l, "\r") + "\n")
 			}
 		}
 	}
