@@ -607,7 +607,11 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 			SpanGone:        spanGone,
 			ReReviewedFresh: func(t publisher.LiveThread) bool { return reviewedOK[t.Path] },
 			BlobSHAs:        curSHAs,
+			SameClaim:       newSameClaimMatcher(ctx, modelClient, threadData, sameClaimMaxCalls),
 		})
+		if n := len(plan.MatchedResolved); n > 0 {
+			logToStderr("%d finding(s) restate the claim of a resolved thread whose code still stands; not re-filed, gate unchanged (issue #168)", n)
+		}
 	}
 
 	applyCost(rec, cfg)

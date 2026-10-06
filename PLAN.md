@@ -875,6 +875,14 @@ duplicate comment rather than a silent carry-forward loss. Repeated identical fi
 an occurrence ordinal, and reconciliation is a greedy matching problem rather than an equality
 lookup.
 
+A re-raised claim can also change its title, its quote and its category at once, and then neither
+pass matches it. A third pass asks a small model, one bounded call per candidate thread on the same
+file, whether the two comments make the same claim about the same code. Every failure answers no,
+so the finding posts. This pass also considers a thread a human resolved, while that thread's
+quoted span still stands in the file: the human resolved it looking at that code. The finding is
+not re-filed, the thread stays as the human left it, and the gate verdict is unchanged. Once the
+span is gone, a re-raise may be a genuine new occurrence, and it posts.
+
 The invariant test is worth more than the argument: replay the same pull request twice and assert
 **zero new threads**.
 

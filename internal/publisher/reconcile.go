@@ -4,7 +4,8 @@
 // The fingerprint is content-addressed, not line-addressed, so it survives a
 // rebase. Path is a locator, not part of the fingerprint — otherwise a rename
 // re-raises every finding in the file. Exact match first, then a fuzzy
-// fallback on (category, title) with span similarity above 0.6. Two identical
+// fallback on (category, title) with span similarity above 0.6, then a claim
+// match by a bounded model call (issue #168). Two identical
 // findings in one file get an occurrence ordinal, and reconciliation is a
 // greedy matching problem rather than an equality lookup.
 package publisher
@@ -54,6 +55,10 @@ type ReconciliationPlan struct {
 	// appear here so the gate verdict is unchanged — a dismissal never clears
 	// the current gate (§12).
 	SuppressedByLedger []model.ValidatedFinding
+	// MatchedResolved: findings that make the claim of a human-resolved
+	// thread whose quoted span still stands (issue #168). They are not
+	// re-raised, and they appear here so the gate verdict is unchanged.
+	MatchedResolved []model.ValidatedFinding
 }
 
 // ReconcileOptions carries the caller-supplied facts Reconcile must not guess.
@@ -64,8 +69,9 @@ type ReconcileOptions struct {
 	// time.Now at call time.
 	Now time.Time
 	// SpanGone reports whether the quoted span of a live thread is verified
-	// gone from the new file content. It is called only for threads whose
-	// fingerprint no current finding matches. Nil means "cannot verify":
+	// gone from the new file content. It is called for open threads that no
+	// current finding matches, and for human-resolved threads a finding
+	// might match (pass 3). Nil means "cannot verify":
 	// no thread is ever resolved on an unverifiable basis (fail toward
 	// keeping the thread, never toward clearing it).
 	SpanGone func(LiveThread) bool
@@ -84,6 +90,12 @@ type ReconcileOptions struct {
 	// means unknown: resolved-entry suppression then does not require a
 	// blob match.
 	BlobSHAs map[string]string
+	// SameClaim reports whether a finding makes the same claim about the
+	// same code as a thread, whatever the wording or category (issue #168).
+	// Reconcile asks only about threads on the finding's own path, after
+	// exact and fuzzy matching left the finding unmatched. Nil skips the
+	// question. An error inside it must answer false, so the finding posts.
+	SameClaim func(model.ValidatedFinding, LiveThread) bool
 }
 
 // Reconcile computes the plan. Matching is greedy and documented:
@@ -92,10 +104,21 @@ type ReconcileOptions struct {
 //     orphan a thread, so path is a preference, never a requirement).
 //     Identical findings in one file are paired with identical threads in
 //     thread-ID order — the occurrence ordinal.
+//
 //  2. Fuzzy fallback among the leftovers: same category and token-Jaccard
 //     similarity of (evidence quotes + title) above FuzzyMatchThreshold,
 //     highest score first, ties preferring the same path then the lowest
 //     thread ID.
+//
+//  3. Claim matching among the leftovers (issue #168), against threads on
+//     the finding's own path in thread-ID order: an exact fingerprint on a
+//     human-resolved thread, then SameClaim on open and human-resolved
+//     threads. A human-resolved thread is eligible only while its quoted
+//     span is verified to stand (SpanGone answers false): the human
+//     resolved it looking at that code. Once the span is gone, a re-raise
+//     may be a genuine new occurrence and posts (issue #48). A match on a
+//     human-resolved thread lands in MatchedResolved, and the thread is
+//     never touched.
 //
 // Unmatched current findings then split: ledger-dismissed fingerprints go to
 // SuppressedByLedger (not re-raised, gate unchanged); everything else is new
@@ -207,9 +230,68 @@ func Reconcile(current []model.ValidatedFinding, live []LiveThread, ledger Dismi
 		}
 	}
 
+	// --- pass 3: claim matching (issue #168) ---------------------------
+	byID := make([]int, len(live))
+	for j := range live {
+		byID[j] = j
+	}
+	sort.SliceStable(byID, func(a, b int) bool { return live[byID[a]].ID < live[byID[b]].ID })
+	standing := map[int]bool{}
+	spanStands := func(j int) bool {
+		if v, ok := standing[j]; ok {
+			return v
+		}
+		v := opts.SpanGone != nil && !opts.SpanGone(live[j])
+		standing[j] = v
+		return v
+	}
+	matchedResolved := make([]bool, len(current))
+	for i, f := range current {
+		if matched[i] {
+			continue
+		}
+		fp := fingerprintOf(f)
+		for _, j := range byID {
+			t := live[j]
+			if t.ResolvedByHuman && t.Path == f.Path && t.Fingerprint == fp && spanStands(j) {
+				matchedResolved[i] = true
+				break
+			}
+		}
+		if matchedResolved[i] || opts.SameClaim == nil {
+			continue
+		}
+		for _, j := range byID {
+			t := live[j]
+			if t.Path != f.Path {
+				continue
+			}
+			if t.ResolvedByHuman {
+				if !spanStands(j) || !opts.SameClaim(f, t) {
+					continue
+				}
+				matchedResolved[i] = true
+				break
+			}
+			if used[j] || !opts.SameClaim(f, t) {
+				continue
+			}
+			matched[i] = true
+			used[j] = true
+			if t.IsOutdated {
+				plan.ThreadsToMinimise = append(plan.ThreadsToMinimise, t.ID)
+			}
+			break
+		}
+	}
+
 	// --- split the unmatched findings ------------------------------------
 	for i, f := range current {
 		if matched[i] {
+			continue
+		}
+		if matchedResolved[i] {
+			plan.MatchedResolved = append(plan.MatchedResolved, f)
 			continue
 		}
 		fp := fingerprintOf(f)
