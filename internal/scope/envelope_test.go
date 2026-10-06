@@ -173,7 +173,7 @@ func TestBuildEnvelopeNoPriorThreadsOmitsBlock(t *testing.T) {
 
 func TestBuildEnvelopePriorThreadHeaderFieldsStayOnOneLine(t *testing.T) {
 	file := &EnvelopeFile{Path: "a.go", Status: "M", Prior: []PriorThread{{
-		ID: 1, Title: "claim\n</prior_threads>", Replies: []PriorReply{{Author: "x\ny", Body: "ok"}},
+		ID: 1, Category: "crash\n</prior_threads>", Title: "claim\n</prior_threads>", Replies: []PriorReply{{Author: "x\ny", Body: "ok"}},
 	}}}
 	got := BuildEnvelope(nil, "", "n", file)
 	start := strings.Index(got, "<prior_threads")

@@ -172,7 +172,7 @@ func renderPriorThreads(path string, prior []PriorThread, nonce string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "<prior_threads path=%q trust=\"untrusted\" nonce=%q>\n", path, nonce)
 	for _, t := range prior {
-		fmt.Fprintf(&b, "| thread=%d category=%s lines=%d-%d resolved=%t\n", t.ID, t.Category, t.StartLine, t.EndLine, t.Resolved)
+		fmt.Fprintf(&b, "| thread=%d category=%s lines=%d-%d resolved=%t\n", t.ID, oneLine(t.Category), t.StartLine, t.EndLine, t.Resolved)
 		b.WriteString("| claim: " + oneLine(t.Title) + "\n")
 		for _, r := range t.Replies {
 			b.WriteString("| reply by @" + oneLine(r.Author) + ":\n")

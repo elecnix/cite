@@ -496,7 +496,8 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 	// Issue #168: each file's review call carries the earlier Cite threads
 	// on that file and the replies under them. A failed fetch only costs
 	// that context, so it warns. Reconciliation below fetches the threads
-	// again, after the review, and fails the run on its own error.
+	// again, after the review, and fails the run on its own error. Report
+	// mode reads no live threads anywhere, so its prompts carry none.
 	var prior map[string][]scope.PriorThread
 	if !reportMode {
 		if gthreads, terr := c.ListReviewThreads(ctx, num); terr != nil {
