@@ -881,7 +881,8 @@ to a small model, which answers whether the two comments make the same claim abo
 A provider error or an unparseable answer counts as a mismatch, so the finding posts. This pass also considers a thread a human resolved, while that thread's
 quoted span still stands in the file: the human resolved it looking at that code. The finding is
 not re-filed, the thread stays as the human left it, and the gate verdict is unchanged. Once the
-span is gone, a re-raise may be a real new occurrence, and it posts.
+span is gone, a re-raise may be a real new occurrence, and it posts. Open threads are compared
+before resolved ones, so a claim that matches both stays on its open thread.
 
 The invariant test is worth more than the argument: replay the same pull request twice and assert
 **zero new threads**.

@@ -94,3 +94,20 @@ func TestSameClaimAskedOnlyOnTheSamePath(t *testing.T) {
 		t.Fatalf("a finding no thread claims must post, got %d", len(plan.CommentsToPost))
 	}
 }
+
+// A claim that matches an open thread and an older resolved one keeps the
+// open thread. Matching the resolved one first would leave the open thread
+// unused, and the resolve pass would close it while the claim still stands.
+func TestSameClaimPrefersTheOpenThread(t *testing.T) {
+	open := LiveThread{ID: 41, Fingerprint: "fp-open", Path: "a.go"}
+	same := func(model.ValidatedFinding, LiveThread) bool { return true }
+	plan := Reconcile([]model.ValidatedFinding{reworded()}, []LiveThread{resolvedThread(), open}, DismissalLedger{},
+		ReconcileOptions{Repository: "o/r", SpanGone: spanStands, SameClaim: same,
+			ReReviewedFresh: func(LiveThread) bool { return true }})
+	if len(plan.ThreadsToResolve) != 0 {
+		t.Fatalf("the open thread was resolved while its claim stands: %v", plan.ThreadsToResolve)
+	}
+	if len(plan.CommentsToPost) != 0 || len(plan.MatchedResolved) != 0 {
+		t.Fatalf("post=%d matchedResolved=%d, want the finding kept on the open thread", len(plan.CommentsToPost), len(plan.MatchedResolved))
+	}
+}

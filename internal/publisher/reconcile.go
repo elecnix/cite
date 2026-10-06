@@ -261,19 +261,11 @@ func Reconcile(current []model.ValidatedFinding, live []LiveThread, ledger Dismi
 		if matchedResolved[i] || opts.SameClaim == nil {
 			continue
 		}
+		// Open threads first: a claim that also matches a resolved thread
+		// keeps its open one, which the resolve pass would otherwise close.
 		for _, j := range byID {
 			t := live[j]
-			if t.Path != f.Path {
-				continue
-			}
-			if t.ResolvedByHuman {
-				if !spanStands(j) || !opts.SameClaim(f, t) {
-					continue
-				}
-				matchedResolved[i] = true
-				break
-			}
-			if used[j] || !opts.SameClaim(f, t) {
+			if t.Path != f.Path || t.ResolvedByHuman || used[j] || !opts.SameClaim(f, t) {
 				continue
 			}
 			matched[i] = true
@@ -281,6 +273,17 @@ func Reconcile(current []model.ValidatedFinding, live []LiveThread, ledger Dismi
 			if t.IsOutdated {
 				plan.ThreadsToMinimise = append(plan.ThreadsToMinimise, t.ID)
 			}
+			break
+		}
+		if matched[i] {
+			continue
+		}
+		for _, j := range byID {
+			t := live[j]
+			if t.Path != f.Path || !t.ResolvedByHuman || !spanStands(j) || !opts.SameClaim(f, t) {
+				continue
+			}
+			matchedResolved[i] = true
 			break
 		}
 	}
