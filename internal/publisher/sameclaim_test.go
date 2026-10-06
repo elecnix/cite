@@ -111,3 +111,22 @@ func TestSameClaimPrefersTheOpenThread(t *testing.T) {
 		t.Fatalf("post=%d matchedResolved=%d, want the finding kept on the open thread", len(plan.CommentsToPost), len(plan.MatchedResolved))
 	}
 }
+
+// The same holds when the finding's fingerprint equals the resolved
+// thread's exactly: the reworded open thread still keeps the claim.
+func TestExactResolvedMatchStillPrefersTheOpenThread(t *testing.T) {
+	f := reworded()
+	resolved := resolvedThread()
+	resolved.Fingerprint = f.Fingerprint
+	open := LiveThread{ID: 41, Fingerprint: "fp-open", Path: "a.go"}
+	same := func(model.ValidatedFinding, LiveThread) bool { return true }
+	plan := Reconcile([]model.ValidatedFinding{f}, []LiveThread{resolved, open}, DismissalLedger{},
+		ReconcileOptions{Repository: "o/r", SpanGone: spanStands, SameClaim: same,
+			ReReviewedFresh: func(LiveThread) bool { return true }})
+	if len(plan.ThreadsToResolve) != 0 {
+		t.Fatalf("the open thread was resolved while its claim stands: %v", plan.ThreadsToResolve)
+	}
+	if len(plan.CommentsToPost) != 0 || len(plan.MatchedResolved) != 0 {
+		t.Fatalf("post=%d matchedResolved=%d, want the finding kept on the open thread", len(plan.CommentsToPost), len(plan.MatchedResolved))
+	}
+}

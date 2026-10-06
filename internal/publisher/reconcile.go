@@ -250,32 +250,37 @@ func Reconcile(current []model.ValidatedFinding, live []LiveThread, ledger Dismi
 		if matched[i] {
 			continue
 		}
+		// Open threads first: a claim that also matches a resolved thread
+		// keeps its open one, which the resolve pass would otherwise close.
+		if opts.SameClaim != nil {
+			for _, j := range byID {
+				t := live[j]
+				if t.Path != f.Path || t.ResolvedByHuman || used[j] || !opts.SameClaim(f, t) {
+					continue
+				}
+				matched[i] = true
+				used[j] = true
+				if t.IsOutdated {
+					plan.ThreadsToMinimise = append(plan.ThreadsToMinimise, t.ID)
+				}
+				break
+			}
+			if matched[i] {
+				continue
+			}
+		}
+		// Then resolved threads whose span stands: an exact fingerprint
+		// needs no model call.
 		fp := fingerprintOf(f)
 		for _, j := range byID {
 			t := live[j]
-			if t.ResolvedByHuman && t.Path == f.Path && t.Fingerprint == fp && spanStands(j) {
-				matchedResolved[i] = true
-				break
-			}
-		}
-		if matchedResolved[i] || opts.SameClaim == nil {
-			continue
-		}
-		// Open threads first: a claim that also matches a resolved thread
-		// keeps its open one, which the resolve pass would otherwise close.
-		for _, j := range byID {
-			t := live[j]
-			if t.Path != f.Path || t.ResolvedByHuman || used[j] || !opts.SameClaim(f, t) {
+			if t.Path != f.Path || !t.ResolvedByHuman || !spanStands(j) || t.Fingerprint != fp {
 				continue
 			}
-			matched[i] = true
-			used[j] = true
-			if t.IsOutdated {
-				plan.ThreadsToMinimise = append(plan.ThreadsToMinimise, t.ID)
-			}
+			matchedResolved[i] = true
 			break
 		}
-		if matched[i] {
+		if matchedResolved[i] || opts.SameClaim == nil {
 			continue
 		}
 		for _, j := range byID {
