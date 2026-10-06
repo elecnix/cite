@@ -104,8 +104,8 @@ func TestPromptRuleForPriorThreads(t *testing.T) {
 	prompt := systemPrompt()
 	for _, want := range []string{
 		"## EARLIER THREADS ON THIS FILE",
-		"check the answer against the code",
-		"quote the line that contradicts the answer",
+		"check the reply against the code",
+		"quote the contradicting line",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("system prompt lacks %q", want)
