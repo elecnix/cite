@@ -10,6 +10,8 @@ import (
 	"github.com/elecnix/cite/internal/publisher"
 )
 
+// scriptedClient returns its answers in order, one per call, and an error
+// once they run out.
 type scriptedClient struct {
 	answers []string
 	err     error
@@ -25,9 +27,7 @@ func (c *scriptedClient) Complete(_ context.Context, req model.CompletionRequest
 		return nil, errors.New("scriptedClient: no answer scripted")
 	}
 	a := c.answers[0]
-	if len(c.answers) > 1 {
-		c.answers = c.answers[1:]
-	}
+	c.answers = c.answers[1:]
 	return &model.CompletionResponse{Text: a}, nil
 }
 
@@ -125,7 +125,7 @@ func TestSameClaimMatcherFailsTowardPosting(t *testing.T) {
 // The call budget bounds the run's spend: past it, the answer is false.
 func TestSameClaimMatcherStopsAtItsBudget(t *testing.T) {
 	f, th, data := sameClaimFixture()
-	c := &scriptedClient{answers: []string{`{"same": true}`}}
+	c := &scriptedClient{answers: []string{`{"same": true}`, `{"same": true}`, `{"same": true}`}}
 	m := newSameClaimMatcher(context.Background(), c, data, 2)
 	got := []bool{m(f, th), m(f, th), m(f, th)}
 	if !got[0] || !got[1] || got[2] || len(c.reqs) != 2 {
