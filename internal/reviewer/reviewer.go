@@ -46,16 +46,15 @@ type Verifier interface {
 	SymbolExists(symbol string) bool
 }
 
-// DiscriminativeVerifier is the short discriminative call run on blocking
-// candidates only (§8, "The verifier pass"). It must return
-// VerifierSupported, VerifierUnsupported or
-// VerifierNeedsContextNotProvided. It must NOT be framed as a judge arguing
-// a finding is real: models are strong advocates and weak skeptics.
-//
-// No adapter is wired in cmd/cite yet, so the pass this interface gates does
-// not run outside tests. See issue #139.
+// DiscriminativeVerifier is the short discriminative call run on every
+// finding that survived validation, convention questions aside (§8, "The
+// verifier pass"). It must return VerifierSupported, VerifierUnsupported or
+// VerifierNeedsContextNotProvided, with a one-sentence reason. It must NOT
+// be framed as a judge arguing a finding is real: models are strong
+// advocates and weak skeptics, so the production one (modelVerifier) asks
+// for a trace and accepts a refutation only with a quoted line.
 type DiscriminativeVerifier interface {
-	Verify(ctx context.Context, path string, f model.Finding) (VerifierVerdict, error)
+	Verify(in VerifyInput) (VerifierVerdict, string, error)
 }
 
 // Options configures a Reviewer. Cfg and Client are required.
@@ -65,6 +64,9 @@ type Options struct {
 	Instr        *instructions.ResolvedInstructions
 	Verifier     Verifier
 	DiscVerifier DiscriminativeVerifier
+	// Verify installs the production verifier (modelVerifier) when
+	// DiscVerifier is nil: one call per surviving finding, on Client.
+	Verify bool
 	Logger       func(format string, args ...any)
 	// StructuredOutput selects how the model is asked for schema-shaped JSON:
 	// response_format (empty/default) or a forced function tool. It is wired
@@ -155,7 +157,7 @@ func New(o Options) *Reviewer {
 	for _, c := range cats {
 		set[c] = true
 	}
-	return &Reviewer{
+	r := &Reviewer{
 		o:           o,
 		blockingSet: set,
 		retryLeft: map[string]int{
@@ -165,6 +167,10 @@ func New(o Options) *Reviewer {
 		},
 		finalized: map[string]bool{},
 	}
+	if r.o.DiscVerifier == nil && r.o.Verify {
+		r.o.DiscVerifier = &modelVerifier{r: r}
+	}
+	return r
 }
 
 const (

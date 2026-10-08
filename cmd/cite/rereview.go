@@ -245,6 +245,7 @@ func rereviewMerged(ctx context.Context, c *githubclient.Client, cfg *config.Con
 		StructuredOutput:  structuredOutput,
 		ReasoningEffort:   reasoningEffort,
 		RequireParameters: requireParameters,
+		Verify:            verifyEnabled(),
 	})
 	rec, err := r.Run(ctx, reviewer.Inputs{
 		Manifest:      entries,

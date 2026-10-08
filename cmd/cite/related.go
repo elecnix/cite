@@ -61,3 +61,13 @@ func relatedFromAPI(ctx context.Context, c *githubclient.Client, owner, repo, sh
 	}
 	return xref.NewIndex(xref.MapSnapshot(files), xref.Limits{})
 }
+
+// verifyEnabled turns the verifier pass on unless CITE_VERIFY says off; an
+// evaluation sets it to 0 to measure what the pass buys.
+func verifyEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("CITE_VERIFY"))) {
+	case "0", "false", "off", "no":
+		return false
+	}
+	return true
+}
