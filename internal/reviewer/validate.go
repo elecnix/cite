@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/elecnix/cite/internal/model"
 	"github.com/elecnix/cite/internal/scope"
@@ -204,34 +205,22 @@ findingsLoop:
 			continue
 		}
 
-		// Self-negating findings (issue #65): a finding whose own impact
-		// field opens by disclaiming any defect contradicts itself — a
-		// statement that there is nothing to be confident about must not
-		// carry certain confidence and block the gate. Checked only on
-		// findings that would otherwise be blocking candidates (right
-		// category, matching evidence, added-line anchor, verified claims,
-		// certain confidence) and only when the impact field OPENS with the
-		// disclaimer, so an ordinary sentence that merely contains "no" or
-		// "impact" is never caught. The narrower the rule, the lower the
-		// recall cost: a genuine finding is never dropped for its wording.
-		// Runs AFTER the negative-claims check so a finding that both
-		// fabricates a claim about the file and disclaims impact is
-		// recorded under the stronger reason, negative_claim_falsified.
-		if model.BlocksOnEvidence(model.BlockInputs{
-			Category:          f.Category,
-			BlockingSet:       r.blockingSet,
-			EvidenceMatches:   evidenceOK,
-			AnchorOnAddedLine: anchorHasAddedLine(f.Anchor, fc.added),
-			Confidence:        f.Confidence,
-		}) {
-			imp := strings.ToLower(strings.TrimSpace(f.Impact))
-			for _, pre := range []string{"no impact", "no defect", "no mismatch"} {
-				if strings.HasPrefix(imp, pre) {
-					drop(f, model.DropSelfNegating,
-						fmt.Sprintf("impact field disclaims a defect: %q", model.SanitizeText(f.Impact)))
-					continue findingsLoop
-				}
-			}
+		// Self-negating findings (issue #65): a finding that says there is
+		// nothing wrong contradicts itself. Across the user's repositories
+		// such findings were posted as comments at every confidence, about
+		// one in fifty ("Impact: None.", "No defect in new-line rule"), and
+		// each one costs a reader the time to establish that it says
+		// nothing. So the rule covers every finding, not only blocking
+		// candidates. It stays narrow in what it reads: the impact field
+		// must OPEN with the disclaimer, and the title must open or close
+		// with one, so a sentence that merely contains "no" or "impact" or
+		// "correct" is never caught. Runs AFTER the negative-claims check so
+		// a finding that both fabricates a claim about the file and
+		// disclaims impact is recorded under the stronger reason,
+		// negative_claim_falsified.
+		if why := selfNegation(f); why != "" {
+			drop(f, model.DropSelfNegating, why)
+			continue findingsLoop
 		}
 
 		// Blocking formula (§8), computed exactly as written and spelled
@@ -471,4 +460,58 @@ func sortStrings(s []string) {
 			s[j], s[j-1] = s[j-1], s[j]
 		}
 	}
+}
+
+// impactDisclaimers open an impact field that says the finding has none.
+var impactDisclaimers = []string{
+	"no impact", "no defect", "no mismatch", "no functional", "no runtime", "no behavioral",
+	"no behavioural", "no user-visible", "no observable", "no practical", "not a defect", "not a bug",
+	"no wrong outcome", "no incorrect", "nothing breaks", "nothing is wrong",
+}
+
+// titleDisclaimerPrefixes and titleDisclaimerSuffixes bound a title that
+// says the code is fine.
+var (
+	titleDisclaimerPrefixes = []string{"no defect", "no issue", "no bug", "no problem", "no mismatch", "not a defect", "not a bug"} // plurals share the prefix
+	titleDisclaimerSuffixes = []string{" is correct", " are correct", " is fine", " are fine", " works as intended", " no change needed"}
+)
+
+// selfNegation returns why f disclaims its own defect, or "" when it does
+// not. "None" counts only as the whole first clause, so "None of the
+// retries run" is still an impact, and a disclaimer that the impact goes on
+// to contradict ("No impact on the caller, but the retry budget is now
+// shared") keeps the finding.
+func selfNegation(f *model.Finding) string {
+	imp := strings.ToLower(strings.TrimLeft(strings.TrimSpace(f.Impact), "*_ "))
+	if strings.Contains(imp, " but ") || strings.Contains(imp, " however") {
+		return titleNegation(f)
+	}
+	for _, pre := range impactDisclaimers {
+		if strings.HasPrefix(imp, pre) {
+			return fmt.Sprintf("impact field disclaims a defect: %q", model.SanitizeText(f.Impact))
+		}
+	}
+	for _, bare := range []string{"none", "n/a"} {
+		rest, ok := strings.CutPrefix(imp, bare)
+		if ok && (rest == "" || !unicode.IsLetter([]rune(rest)[0]) && rest[0] != ' ' || strings.HasPrefix(rest, " —") || strings.HasPrefix(rest, " -")) {
+			return fmt.Sprintf("impact field disclaims a defect: %q", model.SanitizeText(f.Impact))
+		}
+	}
+	return titleNegation(f)
+}
+
+// titleNegation is the title half of selfNegation.
+func titleNegation(f *model.Finding) string {
+	title := strings.ToLower(strings.TrimRight(strings.TrimSpace(f.Title), ".!"))
+	for _, pre := range titleDisclaimerPrefixes {
+		if strings.HasPrefix(title, pre) {
+			return fmt.Sprintf("title disclaims a defect: %q", model.SanitizeText(f.Title))
+		}
+	}
+	for _, suf := range titleDisclaimerSuffixes {
+		if strings.HasSuffix(title, suf) {
+			return fmt.Sprintf("title disclaims a defect: %q", model.SanitizeText(f.Title))
+		}
+	}
+	return ""
 }

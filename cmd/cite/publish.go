@@ -221,7 +221,14 @@ func renderComment(f model.ValidatedFinding) string {
 			fmt.Fprintf(&sb, "> ```\n> %d | %s\n> ```\n", ev.Line, ev.Quote)
 		}
 	}
-	if f.Confidence != model.ConfidenceCertain {
+	switch f.Confidence {
+	case model.ConfidenceCertain:
+	case model.ConfidenceLikely:
+		// Likely is an assertion with one step the reviewer could not quote
+		// from this file; calling it a question contradicted every likely
+		// finding's own wording.
+		sb.WriteString("\nConfidence: likely — one step rests on code outside this file; check that step before acting.\n")
+	default:
 		fmt.Fprintf(&sb, "\nConfidence: %s — this is a question, not an assertion.\n", f.Confidence)
 	}
 	if data, err := json.Marshal(map[string]any{
