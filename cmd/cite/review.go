@@ -257,11 +257,11 @@ func reviewLocal(diffPath, cfgPath string, structuredOutput model.StructuredOutp
 	if err != nil {
 		return err
 	}
-	manifest := scope.ParseNameStatus(string(raw))
 	diff, err := scope.ParseUnifiedDiff(string(raw))
 	if err != nil {
 		return fmt.Errorf("parsing diff: %w", err)
 	}
+	manifest := scope.ManifestFromDiff(diff)
 	diffs := map[string]*scope.DiffFile{}
 	for _, df := range diff.Files {
 		diffs[df.Path] = df

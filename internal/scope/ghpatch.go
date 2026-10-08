@@ -33,5 +33,6 @@ func ParseFilePatch(path, status, patch string) (*DiffFile, error) {
 	if len(d.Files) == 0 {
 		return nil, errors.New("scope: patch parsed to no files")
 	}
+	d.Files[0].Status = status // the synthesized headers carry no status
 	return d.Files[0], nil
 }
