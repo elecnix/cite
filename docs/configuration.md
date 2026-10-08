@@ -231,6 +231,11 @@ provider serves several models:
     fallback_model_ids: glm-5.2,kimi-k2.6
 ```
 
+A leg with another leg behind it gets at most 32768 output tokens, and the last
+leg gets the full cap. A runaway spends its whole budget before it can fail over,
+so the smaller first budget ends it four times sooner. The rare review that
+needs more overflows and fails over as well.
+
 For a merge gate, provider outage is the first operational failure you will
 hit, so the chain is first-class configuration rather than an afterthought.
 

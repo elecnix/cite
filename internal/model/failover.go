@@ -24,7 +24,19 @@ type FailoverClient struct {
 	// Logf, when set, is told about every failover, so the run log says
 	// which model served a call that the primary could not.
 	Logf func(format string, args ...any)
+	// LegCap, when positive, bounds the output budget of every leg but the
+	// last. A runaway spends whatever it is given before it fails over, so
+	// a smaller first budget ends it sooner; the rare answer that needs
+	// more overflows and fails over too. The last leg keeps the full budget.
+	LegCap int
 }
+
+// DefaultLegCap is the output budget of a leg that has a fallback behind
+// it. Measured on 123 successful deepseek-v4.1-flash file reviews, the 95th
+// percentile spent 30482 output tokens and the median 5396, while a runaway
+// spent the whole 131072: capping at 32768 ends a runaway four times sooner
+// and fails over about one review in twenty that would have fitted.
+const DefaultLegCap = 32768
 
 // NewFailoverClient returns primary alone when there is no fallback, so a
 // run without a chain behaves exactly as before.
@@ -32,7 +44,7 @@ func NewFailoverClient(primary Client, fallback []Client, logf func(string, ...a
 	if len(fallback) == 0 {
 		return primary
 	}
-	return &FailoverClient{Legs: append([]Client{primary}, fallback...), Logf: logf}
+	return &FailoverClient{Legs: append([]Client{primary}, fallback...), Logf: logf, LegCap: DefaultLegCap}
 }
 
 // ModelID is the primary's: it is the model the run is configured for.
@@ -42,7 +54,11 @@ func (f *FailoverClient) ModelID() string { return f.Legs[0].ModelID() }
 func (f *FailoverClient) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	var lastErr error
 	for i, leg := range f.Legs {
-		resp, err := leg.Complete(ctx, req)
+		call := req
+		if f.LegCap > 0 && i < len(f.Legs)-1 && (call.MaxOutputTokens <= 0 || call.MaxOutputTokens > f.LegCap) {
+			call.MaxOutputTokens = f.LegCap
+		}
+		resp, err := leg.Complete(ctx, call)
 		if err == nil {
 			if resp != nil && resp.Model == "" {
 				resp.Model = leg.ModelID()
