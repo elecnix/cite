@@ -312,6 +312,7 @@ func reviewLocal(diffPath, descPath, cfgPath string, structuredOutput model.Stru
 		StructuredOutput:  structuredOutput,
 		ReasoningEffort:   reasoningEffort,
 		RequireParameters: requireParameters,
+		Verify:            verifyEnabled(),
 	})
 	rec, err := r.Run(context.Background(), reviewer.Inputs{
 		Manifest:      manifest,
@@ -503,6 +504,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 		StructuredOutput:  structuredOutput,
 		ReasoningEffort:   reasoningEffort,
 		RequireParameters: requireParameters,
+		Verify:            verifyEnabled(),
 	})
 
 	// Issue #168: each file's review call carries the earlier Cite threads

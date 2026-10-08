@@ -73,9 +73,9 @@ type fakeDisc struct {
 	calls int
 }
 
-func (d *fakeDisc) Verify(_ context.Context, _ string, _ model.Finding) (VerifierVerdict, error) {
+func (d *fakeDisc) Verify(VerifyInput) (VerifierVerdict, string, error) {
 	d.calls++
-	return d.res, d.err
+	return d.res, "fake", d.err
 }
 
 // --- builders ---------------------------------------------------------------
@@ -451,14 +451,16 @@ func TestBlockingRequiresCertainAddedLineAndSupport(t *testing.T) {
 		t.Errorf("VerifierResult = %q", rec.Findings[0].VerifierResult)
 	}
 
-	// likely confidence → never blocks, verifier not even consulted.
+	// likely confidence → never blocks, even when the verifier supports it.
+	// The verifier is still consulted: it checks every finding a reader
+	// would see, not only blocking candidates.
 	dNone := &fakeDisc{res: "supported"}
 	rec, d := build("likely", 2, dNone)
 	if len(rec.Findings) != 1 || rec.Findings[0].Blocks {
 		t.Fatalf("likely must not block: %+v", rec.Findings)
 	}
-	if d.calls != 0 {
-		t.Errorf("verifier called %d times for non-candidate", d.calls)
+	if d.calls != 1 {
+		t.Errorf("verifier called %d times for a note, want 1", d.calls)
 	}
 
 	// anchor on context-only lines → valid note, never blocks.

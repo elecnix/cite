@@ -31,6 +31,7 @@ type fileContext struct {
 	anchorable map[int]bool // post-change lines present in the hunks (added or context)
 	added      map[int]bool // post-change lines this change added
 	norm       *normalizer
+	related    []scope.RelatedSnippet // what the review call was shown from other files
 }
 
 // validateFindings runs the full pipeline over one parsed FileReview and
@@ -240,10 +241,8 @@ findingsLoop:
 		// only asked about a finding that could block at all.
 		//
 		// It also costs a call, which is why it stays out of the expression.
-		// When no DiscriminativeVerifier is configured the conjunct is not
-		// applied at all, and nothing in the record says so: the interface's
-		// only implementation is a test fake, so the pass this comment
-		// describes does not run in production. Recorded in #139.
+		// With no DiscriminativeVerifier (CITE_VERIFY=0) the conjunct is
+		// not applied, and each finding's verifier_result stays empty.
 		blocks := model.BlockingCandidate(model.BlockInputs{
 			Category:               f.Category,
 			BlockingSet:            r.blockingSet,
@@ -262,21 +261,28 @@ findingsLoop:
 		vf.Path = fc.path
 		vf.EvidenceLevel = level
 
-		if blocks && r.o.DiscVerifier != nil {
-			res, err := r.o.DiscVerifier.Verify(r.runCtx, fc.path, vf.Finding)
+		// The verifier pass runs on every finding a reader would see, not
+		// only on blocking candidates: a wrong note costs a reader the same
+		// time as a wrong block, and half the notes people replied to were
+		// wrong. Convention findings are questions about the repository's
+		// own rules, which no trace through the code can settle.
+		if r.o.DiscVerifier != nil && f.Category != model.CategoryConvention {
+			res, why, err := r.o.DiscVerifier.Verify(VerifyInput{
+				Path: fc.path, Finding: vf.Finding, Lines: fc.lines, Added: fc.added, Related: fc.related,
+			})
 			if err != nil {
 				// Verifier failure fails open to a note, never to a block:
 				// an unverifiable verdict must not become a merge blocker.
 				vf.VerifierResult = string(VerifierError)
 				blocks = false
-				r.logf("discriminative verifier error for %s/%s: %v", fc.path, f.ID, err)
+				r.logf("verifier error for %s/%s: %v", fc.path, f.ID, err)
 			} else {
 				vf.VerifierResult = string(res)
 				switch res {
 				case VerifierSupported:
-					// blocks stays true
+					// blocks stays as computed
 				case VerifierUnsupported:
-					drop(&vf.Finding, model.DropVerifierUnsupported, "discriminative verifier returned unsupported")
+					drop(&vf.Finding, model.DropVerifierUnsupported, model.SanitizeText(why))
 					continue
 				default:
 					// VerifierNeedsContextNotProvided (and any other
@@ -377,6 +383,7 @@ func buildFileContext(e scope.ManifestEntry, in *Inputs) (*fileContext, *scope.E
 		env.Context = "partial"
 	}
 	return &fileContext{
+		related:    env.Related,
 		path:       e.Path,
 		lines:      lines,
 		partial:    partial,
