@@ -31,7 +31,7 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - uses: elecnix/cite@dd49586e9858a8af211a1535909b95ea5e79b7f5  # v0.11.4
+      - uses: elecnix/cite@fcb313d419570c5fb23ea668a7870e305ae51451  # v0.12.0
         env:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
 ```

@@ -216,7 +216,7 @@ primary's own endpoint ahead of this list, which is the short form when one
 provider serves several models:
 
 ```yaml
-- uses: elecnix/cite@dd49586e9858a8af211a1535909b95ea5e79b7f5  # v0.11.4
+- uses: elecnix/cite@fcb313d419570c5fb23ea668a7870e305ae51451  # v0.12.0
   with:
     model_id: deepseek-v4.1-flash
     fallback_model_ids: glm-5.2,kimi-k2.6

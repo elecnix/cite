@@ -68,7 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Review this pull request with Cite
-        uses: elecnix/cite@dd49586e9858a8af211a1535909b95ea5e79b7f5  # v0.11.4
+        uses: elecnix/cite@fcb313d419570c5fb23ea668a7870e305ae51451  # v0.12.0
         with:
           tool_failure_blocks: false
           # Ollama Cloud is the default provider; set the CITE_PROVIDER
@@ -80,6 +80,10 @@ jobs:
           model_api_key: ${{ vars.CITE_PROVIDER == 'openrouter' && secrets.MODEL_API_KEY || secrets.OLLAMA_API_KEY }}
           model_base_url: ${{ vars.CITE_PROVIDER == 'openrouter' && 'https://openrouter.ai/api/v1' || 'https://ollama.com/v1' }}
           model_id: ${{ vars.CITE_PROVIDER == 'openrouter' && 'deepseek/deepseek-v4-flash-0731' || 'deepseek-v4.1-flash' }}
+          # The same chain as the head leg below: on Ollama Cloud, the calls
+          # deepseek-v4.1-flash cannot answer (a runaway) move to glm-5.2,
+          # then kimi-k2.6.
+          fallback_model_ids: ${{ vars.CITE_PROVIDER != 'openrouter' && 'glm-5.2,kimi-k2.6' || '' }}
           # Scope: this repository's own choice, not a recommendation to
           # consumers (our reviewer is also the product under review, so the
           # config here is read from the base ref of every PR we open).
@@ -88,7 +92,7 @@ jobs:
           # truthfully as COULD_NOT_EVALUATE), the check run concludes
           # "neutral" instead of "failure", so silence from a broken judge
           # does not veto the merge. A real finding (FOUND) always concludes
-          # failure and blocks, unchanged. The pin above is v0.11.4. The first
+          # failure and blocks, unchanged. The pin above is v0.12.0. The first
           # release carrying the tool_failure_blocks input was v0.8.0 (issue
           # #59 landed on main after v0.6.0), so the input takes effect as
           # written.
