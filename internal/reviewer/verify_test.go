@@ -114,3 +114,19 @@ func relatedSnippetFixture() scope.RelatedSnippet {
 	return scope.RelatedSnippet{Path: "lib/p.go", Symbol: "P", Kind: "definition", StartLine: 10,
 		Lines: []string{"func P(s string) {", `	if s == "" {`, "		return", "	}"}}
 }
+
+// A fragment found in nearly every line ("if", "return") is not a quote of
+// the line and cannot drop a finding.
+func TestRefutationNeedsASubstantialQuote(t *testing.T) {
+	in := VerifyInput{Path: "a.go", Lines: []string{`	if len(calls) < 4 || len(efforts) < 4 { // guard`}}
+	for q, want := range map[string]bool{
+		"if": false,
+		"return": false,
+		"if len(calls) < 4 || len(efforts) < 4 {": true,
+		"len(calls) < 4 || len(efforts) < 4": true,
+	} {
+		if got := refutationQuoted(in, verdictAnswer{RefutingLine: 1, RefutingQuote: q}); got != want {
+			t.Errorf("quote %q: %v, want %v", q, got, want)
+		}
+	}
+}

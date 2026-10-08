@@ -118,25 +118,34 @@ func (v *modelVerifier) Verify(in VerifyInput) (VerifierVerdict, string, error) 
 
 // refutationQuoted reports whether the answer's refuting quote is the text
 // of the line it names, in the file under review or in a related excerpt.
-// Whitespace at either end is forgiven; anything else is not.
+// The quote may leave out the line's indentation and a trailing comment, but
+// it must cover most of the code: a fragment such as "if" or "return" is in
+// nearly every line and proves nothing.
 func refutationQuoted(in VerifyInput, a verdictAnswer) bool {
 	q := strings.TrimSpace(a.RefutingQuote)
 	if q == "" || a.RefutingLine <= 0 {
 		return false
 	}
 	if a.RefutingPath == "" || a.RefutingPath == in.Path {
-		return a.RefutingLine <= len(in.Lines) && strings.Contains(in.Lines[a.RefutingLine-1], q)
+		return a.RefutingLine <= len(in.Lines) && quotes(in.Lines[a.RefutingLine-1], q)
 	}
 	for _, s := range in.Related {
 		if s.Path != a.RefutingPath {
 			continue
 		}
 		i := a.RefutingLine - s.StartLine
-		if i >= 0 && i < len(s.Lines) && strings.Contains(s.Lines[i], q) {
+		if i >= 0 && i < len(s.Lines) && quotes(s.Lines[i], q) {
 			return true
 		}
 	}
 	return false
+}
+
+// quotes reports whether q is a substantial quote of line: contained in it
+// and at least half its trimmed length, or the whole of a short line.
+func quotes(line, q string) bool {
+	t := strings.TrimSpace(line)
+	return strings.Contains(t, q) && (len(q)*2 >= len(t) || len(q) >= 40)
 }
 
 // renderVerifyRequest lays out the file, the related excerpts and the claim
