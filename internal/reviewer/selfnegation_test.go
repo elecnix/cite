@@ -25,6 +25,12 @@ func TestSelfNegationAtEveryConfidence(t *testing.T) {
 		{"none of is an impact", "Retries never run", "None of the three retries runs after the first 429.", false},
 		{"correct mid-title is a claim", "Correct token dropped from the child env", "The child loses its credential and every call fails.", false},
 		{"ordinary impact", "Index panic on short input", "An input shorter than four bytes panics the handler.", false},
+		{"impact None bang", "Guard ordering", "None!", true},
+		{"impact no wrong outcome", "Call site updated", "No wrong outcome: the test compiles against the new signature.", true},
+		{"disclaimer then a real impact", "Retry budget now shared", "No impact on the caller, but the retry budget is now shared across files.", false},
+		{"plural title", "No defects in the new-line rule", "The rule fires once per line.", true},
+		{"nonexistent is not none", "Lookup of a nonexistent key", "Nonexistent keys return the zero value and the caller writes it back.", false},
+		{"is correct mid-title", "The retry loop is correct to bail on nil", "A nil response ends the loop before the decode.", false},
 	}
 	for _, conf := range []string{"question", "likely"} {
 		for _, tc := range cases {

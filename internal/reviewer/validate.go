@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/elecnix/cite/internal/model"
 	"github.com/elecnix/cite/internal/scope"
@@ -465,30 +466,42 @@ func sortStrings(s []string) {
 var impactDisclaimers = []string{
 	"no impact", "no defect", "no mismatch", "no functional", "no runtime", "no behavioral",
 	"no behavioural", "no user-visible", "no observable", "no practical", "not a defect", "not a bug",
+	"no wrong outcome", "no incorrect", "nothing breaks", "nothing is wrong",
 }
 
 // titleDisclaimerPrefixes and titleDisclaimerSuffixes bound a title that
 // says the code is fine.
 var (
-	titleDisclaimerPrefixes = []string{"no defect", "no issue", "no bug", "no problem", "no mismatch", "not a defect", "not a bug"}
+	titleDisclaimerPrefixes = []string{"no defect", "no issue", "no bug", "no problem", "no mismatch", "not a defect", "not a bug"} // plurals share the prefix
 	titleDisclaimerSuffixes = []string{" is correct", " are correct", " is fine", " are fine", " works as intended", " no change needed"}
 )
 
 // selfNegation returns why f disclaims its own defect, or "" when it does
 // not. "None" counts only as the whole first clause, so "None of the
-// retries run" is still an impact.
+// retries run" is still an impact, and a disclaimer that the impact goes on
+// to contradict ("No impact on the caller, but the retry budget is now
+// shared") keeps the finding.
 func selfNegation(f *model.Finding) string {
 	imp := strings.ToLower(strings.TrimLeft(strings.TrimSpace(f.Impact), "*_ "))
+	if strings.Contains(imp, " but ") || strings.Contains(imp, " however") {
+		return titleNegation(f)
+	}
 	for _, pre := range impactDisclaimers {
 		if strings.HasPrefix(imp, pre) {
 			return fmt.Sprintf("impact field disclaims a defect: %q", model.SanitizeText(f.Impact))
 		}
 	}
-	if imp == "none" || imp == "n/a" || strings.HasPrefix(imp, "none.") || strings.HasPrefix(imp, "none;") ||
-		strings.HasPrefix(imp, "none,") || strings.HasPrefix(imp, "none:") || strings.HasPrefix(imp, "none —") ||
-		strings.HasPrefix(imp, "none -") {
-		return fmt.Sprintf("impact field disclaims a defect: %q", model.SanitizeText(f.Impact))
+	for _, bare := range []string{"none", "n/a"} {
+		rest, ok := strings.CutPrefix(imp, bare)
+		if ok && (rest == "" || !unicode.IsLetter([]rune(rest)[0]) && rest[0] != ' ' || strings.HasPrefix(rest, " —") || strings.HasPrefix(rest, " -")) {
+			return fmt.Sprintf("impact field disclaims a defect: %q", model.SanitizeText(f.Impact))
+		}
 	}
+	return titleNegation(f)
+}
+
+// titleNegation is the title half of selfNegation.
+func titleNegation(f *model.Finding) string {
 	title := strings.ToLower(strings.TrimRight(strings.TrimSpace(f.Title), ".!"))
 	for _, pre := range titleDisclaimerPrefixes {
 		if strings.HasPrefix(title, pre) {
