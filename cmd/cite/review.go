@@ -368,6 +368,11 @@ type threadFinding struct {
 	Category    model.Category   `json:"category"`
 	Title       string           `json:"title"`
 	Evidence    []model.Evidence `json:"evidence"`
+	// Blocks records the §8 verdict the finding had when it was posted:
+	// the full formula, confidence and verifier included. A carried finding
+	// can only keep a block it earned (issue #153); a state written before
+	// this field existed reads false, so it carries as a note.
+	Blocks bool `json:"blocks,omitempty"`
 }
 
 func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, structuredOutput model.StructuredOutputMode, reasoningEffort string, requireParameters bool, sink publisher.Sink, recordOut, reviewerID string) error {
@@ -585,7 +590,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 			for _, e := range entries {
 				manifestSet[e.Path] = true
 			}
-			carryIntoRecord(rec, prevState, toReview, manifestSet, diffs)
+			carryIntoRecord(rec, prevState, toReview, manifestSet, diffs, carryBlockingSet(cfg))
 		}
 
 		var err error
@@ -808,7 +813,7 @@ func rankForBudget(fs []model.ValidatedFinding) []model.ValidatedFinding {
 // and the repository configuration to be passed in here; neither is available
 // at this call site. See cmd/cite/carry_blocking_test.go, which pins what
 // both paths agree on and names what they do not.
-func carryIntoRecord(rec *model.RunRecord, prev *stickyState, toReview []string, manifest map[string]bool, diffs map[string]*scope.DiffFile) {
+func carryIntoRecord(rec *model.RunRecord, prev *stickyState, toReview []string, manifest map[string]bool, diffs map[string]*scope.DiffFile, blockingSet map[model.Category]bool) {
 	reviewing := map[string]bool{}
 	for _, p := range toReview {
 		reviewing[p] = true
@@ -840,14 +845,17 @@ func carryIntoRecord(rec *model.RunRecord, prev *stickyState, toReview []string,
 		if dup {
 			continue
 		}
-		// Re-anchor against the current parsed diff: a carried finding blocks
-		// only if one of its quoted evidence lines is an ADDED line of this
-		// change (the same bar validateFindings applies to fresh findings).
-		// Without a parsed diff for the file — patch missing or unparsable —
-		// the intersection cannot be checked, so the finding fails closed to
-		// a note: an unverifiable anchor never grounds a block (§8).
+		// A carried finding blocks only when it blocked when posted, which
+		// is where the confidence bar and the verifier were applied (issue
+		// #153); when its category is still in this repository's blocking
+		// set; and when one of its quoted evidence lines is an ADDED line of
+		// this change (the same bar validateFindings applies to fresh
+		// findings). Without a parsed diff for the file — patch missing or
+		// unparsable — the intersection cannot be checked, so the finding
+		// fails closed to a note: an unverifiable anchor never grounds a
+		// block (§8).
 		blocks := false
-		if df := diffs[tf.Path]; df != nil && tf.Category.MayBlock() {
+		if df := diffs[tf.Path]; df != nil && tf.Blocks && tf.Category.MayBlock() && blockingSet[tf.Category] {
 			added := map[int]bool{}
 			for _, n := range df.AddedLines() {
 				added[n] = true
@@ -872,3 +880,18 @@ func carryIntoRecord(rec *model.RunRecord, prev *stickyState, toReview []string,
 }
 
 func nowClock() time.Time { return time.Now() }
+
+
+// carryBlockingSet is the repository's blocking categories as the reviewer
+// resolves them: the configured set, or the defaults when unset.
+func carryBlockingSet(cfg *config.Config) map[model.Category]bool {
+	cats := config.DefaultBlockingCategories()
+	if cfg != nil && len(cfg.BlockingCategories) > 0 {
+		cats = cfg.BlockingCategories
+	}
+	set := map[model.Category]bool{}
+	for _, c := range cats {
+		set[c] = true
+	}
+	return set
+}
