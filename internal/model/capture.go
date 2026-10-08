@@ -177,6 +177,11 @@ const minMaskableSecret = 8
 // CapturedBody is one body as it went on or came off the wire, masked and
 // capped. Bytes is the size on the wire; Text is what this file holds, which
 // can be shorter (a masked value) or shorter still (a capped body).
+//
+// SHA256 and Bytes describe the exact bytes that went on the wire, before
+// masking and before the size cap, so a document can be matched to the
+// provider's own logs of the call. Text is what the document keeps: masked,
+// and cut at the cap when Truncated says so.
 type CapturedBody struct {
 	SHA256         string `json:"sha256"`
 	Bytes          int    `json:"bytes"`
