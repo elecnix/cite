@@ -435,6 +435,7 @@ func (r *Reviewer) recordCall(unit string, attempt int, start time.Time, dur tim
 		e.CacheReadTokens = resp.Usage.CacheReadTokens
 		e.CacheWriteTokens = resp.Usage.CacheWriteTokens
 		e.Provider = resp.Provider
+		e.Model = resp.Model
 		if resp.FinishReason == "length" {
 			e.Outcome = model.CallTruncated
 		}

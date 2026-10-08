@@ -155,6 +155,12 @@ jobs:
           MODEL_API_KEY: ${{ vars.CITE_PROVIDER == 'openrouter' && secrets.MODEL_API_KEY || secrets.OLLAMA_API_KEY }}
           MODEL_BASE_URL: ${{ vars.CITE_PROVIDER == 'openrouter' && 'https://openrouter.ai/api/v1' || 'https://ollama.com/v1' }}
           MODEL_ID: ${{ vars.CITE_PROVIDER == 'openrouter' && 'deepseek/deepseek-v4-flash-0731' || 'deepseek-v4.1-flash' }}
+          # deepseek-v4.1-flash spends its whole output budget reasoning on
+          # some files at every reasoning_effort (internal/scope/diff.go of
+          # #171, every attempt); glm-5.2 and kimi-k2.6 on the same endpoint
+          # reviewed that file in one to two minutes, so they serve the calls
+          # it cannot.
+          CITE_FALLBACK_MODELS: ${{ vars.CITE_PROVIDER != 'openrouter' && 'glm-5.2,kimi-k2.6' || '' }}
           # The action leg gets these two from its own inputs; this leg drives
           # the CLI directly, so it has to say the same thing: Ollama Cloud
           # ignores response_format and reads the schema from a forced tool

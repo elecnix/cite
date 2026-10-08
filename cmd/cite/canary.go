@@ -56,25 +56,8 @@ func canaryLegs(cfg *config.Config) []canaryLeg {
 			primary: len(legs) == 0,
 		})
 	}
-	for _, ref := range cfg.Fallback {
-		pn, mid, qualified := config.SplitModelRef(ref)
-		base, key := "", model.CredentialExpr("")
-		var headers map[string]string
-		if p, ok := cfg.Providers[pn]; ok && qualified {
-			base, key, headers = p.BaseURL, p.APIKey, p.Headers
-		} else {
-			if pn != "" {
-				// Unknown provider while providers are declared: config
-				// validation rejects this earlier; skip defensively.
-				continue
-			}
-			base = os.Getenv("MODEL_BASE_URL")
-			if base == "" {
-				base = "https://api.openai.com/v1"
-			}
-			key = "$MODEL_API_KEY"
-		}
-		add(canaryLeg{name: ref, baseURL: base, apiKey: key, headers: headers, modelID: mid})
+	for _, l := range fallbackLegs(cfg) {
+		add(l)
 	}
 	return legs
 }
@@ -140,4 +123,33 @@ func runCanary(args []string) error {
 		fmt.Println("note: a fallback leg is down — an untested (or broken) fallback is not a fallback")
 	}
 	return nil
+}
+
+// fallbackLegs resolves the config's fallback chain, in order: a qualified
+// reference takes its provider's endpoint, key and headers; a bare model id
+// takes the MODEL_BASE_URL endpoint with MODEL_API_KEY. The canary pings
+// these legs and the review path walks them.
+func fallbackLegs(cfg *config.Config) []canaryLeg {
+	var legs []canaryLeg
+	for _, ref := range cfg.Fallback {
+		pn, mid, qualified := config.SplitModelRef(ref)
+		base, key := "", model.CredentialExpr("")
+		var headers map[string]string
+		if p, ok := cfg.Providers[pn]; ok && qualified {
+			base, key, headers = p.BaseURL, p.APIKey, p.Headers
+		} else {
+			if pn != "" {
+				// Unknown provider while providers are declared: config
+				// validation rejects this earlier; skip defensively.
+				continue
+			}
+			base = os.Getenv("MODEL_BASE_URL")
+			if base == "" {
+				base = "https://api.openai.com/v1"
+			}
+			key = "$MODEL_API_KEY"
+		}
+		legs = append(legs, canaryLeg{name: ref, baseURL: base, apiKey: key, headers: headers, modelID: mid})
+	}
+	return legs
 }
