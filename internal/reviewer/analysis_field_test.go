@@ -36,7 +36,11 @@ func TestReviewSchemaRequiresAnalysisBeforeFindings(t *testing.T) {
 }
 
 func TestOutputExampleShowsAnalysisBeforeFindings(t *testing.T) {
-	out := embeddedSystemPrompt[strings.Index(embeddedSystemPrompt, "## OUTPUT"):]
+	i := strings.Index(embeddedSystemPrompt, "## OUTPUT")
+	if i < 0 {
+		t.Fatal("the prompt has no ## OUTPUT section")
+	}
+	out := embeddedSystemPrompt[i:]
 	a, f := strings.Index(out, `"analysis":`), strings.Index(out, `"findings":`)
 	if a < 0 || f < 0 || a > f {
 		t.Fatalf("the OUTPUT example must show \"analysis\" before \"findings\":\n%s", out)
