@@ -32,6 +32,15 @@ compat_profile: "2026-08"     # which snapshot of the instruction formats to hon
 
 Seven keys. A v1 with more than ten has already lost.
 
+The action's inputs live in the workflow rather than in this file, and two of
+them decide what a run archives rather than how a review reads code.
+`archive_on_failure` uploads the forensics archive when the review fails, and
+`capture_wire` uploads the wire capture on every run, whether it passed or
+failed. `capture_wire` is deliberately not a key here. It is a one-run
+debugging switch, the seven keys above are already spoken for, and Cite reads
+a config file from the base ref on every run, which is the wrong place for a
+switch an operator flips while diagnosing one failure.
+
 ## Providers
 
 The configuration keys above cover almost everyone; the `providers` block

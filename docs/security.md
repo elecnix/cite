@@ -93,6 +93,23 @@ string, or the output. Echo-exfiltration becomes impossible because there is
 nothing to echo. Provider errors are mapped to typed codes before rendering,
 never shown verbatim, because verbatim text can contain an echoed header.
 
+One artifact records the exchange itself, the opt-in wire capture
+(`capture_wire`), and it follows the same rule. Its masking is allowlist-first,
+because a list of credential header names is a guess about what a provider will
+send: request headers keep their values only for the five names Cite itself
+sets, and every other request header keeps its name and loses its value.
+Response headers are the diagnosis, so a name that reads like a credential is
+replaced, and every remaining value is scrubbed. Masking by value is the part that closes the
+real gap. The key never enters a body in the first place, so the only route into
+a capture is a gateway that reflects a header into its own page. A URL is
+recorded as host and path, and an inline bearer token in a body is replaced
+too.
+
+What masking does not cover is the rest of the capture, which is the prompt,
+and so the diff under review. The input is off by default for that reason, the
+artifact expires after 7 days, and Cite never prints a capture into a job log
+([troubleshooting.md](troubleshooting.md#2c-the-wire-capture-opt-in)).
+
 ### I5: Model output is data, published through a strict schema
 
 No model-authored URL, image, `@`-mention, issue reference, or issue-closing
