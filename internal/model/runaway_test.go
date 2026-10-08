@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // runawayHandler serves a single chat/completions response. The caller
@@ -172,5 +174,139 @@ func TestUsageCarriesReasoningTokens(t *testing.T) {
 	}
 	if resp.Usage.ReasoningTokens != 850 {
 		t.Fatalf("ReasoningTokens = %d, want 850", resp.Usage.ReasoningTokens)
+	}
+}
+
+// The three tests below share one shape: stand up a server that answers with a
+// fixed body, call Complete once, and read what came back. The helper is here
+// so a fourth does not repeat the block a third time.
+
+// runawayWithReasoning is the captured shape: an empty answer beside a
+// reasoning trace, at finish_reason=length, with no token split in the usage.
+func runawayWithReasoning(trace string) string {
+	v, _ := json.Marshal(trace) // a Go string always marshals
+	return `{"choices":[{"message":{"role":"assistant","content":"","reasoning":` + string(v) +
+		`},"finish_reason":"length"}],"usage":{"prompt_tokens":12361,"completion_tokens":4096}}`
+}
+
+// completeAgainst serves body once and returns whatever Complete produced.
+func completeAgainst(t *testing.T, body string) (*CompletionResponse, error) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+	ts := newTestServer(http.HandlerFunc((&runawayHandler{body: body}).ServeHTTP))
+	t.Cleanup(ts.Close)
+	return (&OpenAICompatClient{BaseURL: ts.URL, Model: "m"}).
+		Complete(context.Background(), CompletionRequest{MaxOutputTokens: 4096})
+}
+
+// A provider that itemises no reasoning_tokens still puts the reasoning in the
+// message body, and Cite decodes that body. The captured runaway that settled
+// whether this failure is a loop arrived exactly that way: 176812 bytes of
+// response, content "", and no completion_tokens_details at all. Everything in
+// it was reasoning, and the message the operator read named only the cap.
+//
+// So the message has to be able to say how much text actually came back when
+// the provider reports no split of its own. Without that, the one number
+// available is the budget, which is precisely the number the finding says was
+// never the constraint.
+//
+// The assertion is on the whole sentence rather than on a number or a word. A
+// fixture reporting completion_tokens at the cap makes any bare-digit check
+// satisfiable by the budget alone.
+//
+// The expected count comes from utf8.RuneCountInString, which is the quantity
+// the message claims to report, and not from len, which is bytes. On an ASCII
+// fixture the two agree and the choice would be invisible, so the fixture
+// carries one multi-byte character and a guard fails if it ever loses it.
+func TestRunawayMessageNamesTheObservedReasoningTrace(t *testing.T) {
+	const trace = "Let me review this file. Hmm. A broken anchor is plausible — that is what I will report."
+	want := fmt.Sprintf("every one of the %d characters the provider returned is reasoning",
+		utf8.RuneCountInString(trace))
+	if utf8.RuneCountInString(trace) == len(trace) {
+		t.Fatalf("fixture must contain a multi-byte character or the rune count is the byte count: %q", trace)
+	}
+
+	_, err := completeAgainst(t, runawayWithReasoning(trace))
+	if !errors.Is(err, ErrRunaway) {
+		t.Fatalf("err = %v, want ErrRunaway", err)
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("runaway message must contain %q, got: %v", want, err)
+	}
+}
+
+// The sentence reports characters, so the number in it has to be characters.
+// A trace that quotes code in a non-ASCII language runs to several bytes per
+// character, and a byte count under the word "characters" overstates the
+// trace by the width of the alphabet in use. The fixture is 40 characters and
+// 50 bytes, and the two numbers appear nowhere else in the response, so a
+// message naming either one is distinguishable from a message naming the
+// other.
+func TestRunawayMessageCountsCharactersNotBytes(t *testing.T) {
+	const trace = "この行は added lines に +: review the anchor."
+	if n, b := utf8.RuneCountInString(trace), len(trace); n != 40 || b != 50 {
+		t.Fatalf("fixture is not a useful case: %d characters, %d bytes, want 40 and 50", n, b)
+	}
+	want := fmt.Sprintf("every one of the %d characters the provider returned is reasoning", 40)
+
+	_, err := completeAgainst(t, runawayWithReasoning(trace))
+	if !errors.Is(err, ErrRunaway) {
+		t.Fatalf("err = %v, want ErrRunaway", err)
+	}
+	// The sentence carries the count, so the fixture's byte length never has
+	// to be asserted separately: a message reporting 50 fails on the phrase
+	// above on its own, which is what makes this a test rather than a
+	// decoration.
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("runaway message must contain %q; a byte count here would report 50, got: %v", want, err)
+	}
+}
+
+// The reverse guard on the same change: a response with no reasoning trace
+// must not have one invented for it. The captured fixture had 173631
+// characters of reasoning and zero of content, and a caller that reports no
+// reasoning at all is a different shape with a different remedy.
+func TestRunawayMessageInventsNoReasoningTrace(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"no reasoning field", `{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":"length"}],"usage":{"prompt_tokens":100,"completion_tokens":4096}}`},
+		{"empty reasoning field", `{"choices":[{"message":{"role":"assistant","content":"","reasoning":""},"finish_reason":"length"}],"usage":{"prompt_tokens":100,"completion_tokens":4096}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := completeAgainst(t, tc.body)
+			if !errors.Is(err, ErrRunaway) {
+				t.Fatalf("err = %v, want ErrRunaway", err)
+			}
+			if strings.Contains(err.Error(), "characters") {
+				t.Fatalf("runaway message reported a reasoning trace the provider never sent: %v", err)
+			}
+		})
+	}
+}
+
+// A provider that sends message.reasoning as anything other than a string must
+// not cost a valid review. Decoding the field into a plain Go string makes
+// json.Unmarshal reject the entire response, and a well-formed review goes
+// with it as a deterministic malformed provider response. The sibling
+// diagnostic field Provider is raw for the same reason.
+func TestCompleteSurvivesANonStringReasoningField(t *testing.T) {
+	const answer = `{"ok":true}`
+	for _, tc := range []struct{ name, reasoning string }{
+		{"array", `["a","b"]`},
+		{"object", `{"steps":[]}`},
+		{"number", `42`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}",` +
+				`"reasoning":` + tc.reasoning + `},"finish_reason":"stop"}],` +
+				`"usage":{"prompt_tokens":100,"completion_tokens":200}}`
+			resp, err := completeAgainst(t, body)
+			if err != nil {
+				t.Fatalf("a non-string reasoning field must not reject a valid review: %v", err)
+			}
+			if resp.Text != answer {
+				t.Fatalf("Text = %q, want %q", resp.Text, answer)
+			}
+		})
 	}
 }

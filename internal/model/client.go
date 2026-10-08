@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // APIStyle enumerates the supported wire protocols.
@@ -34,9 +35,18 @@ const (
 // a truncated response truncates identically on retry (§7).
 var ErrDeterministic = errors.New("deterministic failure")
 
-// ErrRunaway is returned when the provider spent the entire output budget and
-// produced NO answer: reasoning tokens consumed the whole max_tokens and the
-// content came back empty (RunawayGeneration is the test).
+// ErrRunaway is returned when the provider produced NO answer at all: content
+// came back empty beside a reasoning trace, so the budget it was given went into
+// reasoning rather than into a review (RunawayGeneration is the test).
+//
+// The missing answer is the load-bearing half, and for this provider it is the
+// only half that discriminates. Reasoning tokens are billed against max_tokens
+// here, so "the cap was spent" describes a runaway and a capacity overflow
+// equally -- the overflow comes back with content, cut off, and a bigger cap
+// holds it. A cap comparison on its own cannot tell the two apart, which is how
+// a measured runaway once read as an overflow and lost its file. The cap
+// comparison survives only as the fallback for a provider that itemises no
+// reasoning of its own yet reports the whole budget consumed.
 //
 // It is deliberately NOT ErrDeterministic. The terminal class rests on "a
 // truncated response truncates identically on retry", and measurement refutes
@@ -270,6 +280,16 @@ type Usage struct {
 	// against max_tokens spends this out of the SAME budget Cite sizes from
 	// the answer's worst case, so a large ReasoningTokens alongside an empty
 	// answer is a runaway generation, not a too-small cap.
+	//
+	// Zero here means UNREPORTED as often as it means none. A provider that
+	// omits completion_tokens_details leaves this at 0 while the response
+	// still carries the trace in the message body, and the two are not the
+	// same thing: runaway is decided from the reasoning itself
+	// (RunawayGeneration), never from this number being non-zero, precisely
+	// because a missing details object cannot be told from a real zero.
+	// Nothing is estimated into this field; a character count is not a token
+	// count, and an invented number would reach CI's usage assertions and
+	// the operator string as if the provider had said it.
 	ReasoningTokens int     `json:"reasoning_tokens,omitempty"`
 	CostUSD         float64 `json:"cost_usd,omitempty"`
 	CostReported    bool    `json:"cost_reported,omitempty"`
@@ -326,13 +346,42 @@ func (w chatCompletionsUsage) toUsage() Usage {
 // to 24576 grew the runaway from 96 KB to 186 KB rather than producing an
 // answer.
 //
-// The empty-answer test is load-bearing on its own. The full-budget test
-// guards against calling a short reply that merely happened to be cut off a
-// runaway; a provider that reports no usage at all reports zero output tokens,
-// which never reaches the cap, so an unreported budget is not a runaway. A
-// provider that itemises no reasoning_tokens but does report a full budget is
-// still a runaway: where the tokens went does not change that no answer came
-// back.
+// answer is the usable answer -- the forced tool call's arguments in tools
+// mode, otherwise the content. reasoning is the reasoning trace the response
+// carries. maxTokens is the request Cite made and is only consulted when the
+// response carries no reasoning at all. A response carrying a tool call never
+// reaches here: the caller treats it as an answer being truncated.
+//
+// The empty-answer test is load-bearing on its own. The reasoning test is the
+// one that decides the measured case, and it exists because the cap
+// comparison cannot: a provider is free to stop below the max_tokens Cite
+// asked for, and then OutputTokens >= maxTokens is false no matter how the
+// generation went. Measured, the provider stopped at exactly 65536 while Cite
+// requested 131072, so every genuine runaway came back as a capacity
+// overflow and the file was lost. Reasoning presence does not depend on any
+// number Cite chose: it is in the response, and an empty answer next to a
+// reasoning trace is the shape of a model that spent its whole generation
+// thinking and never answered.
+//
+// The full-budget test is kept, not replaced. It still catches a provider
+// that itemises no reasoning at all yet reports the whole cap spent, which is
+// the same shape by another route. It is deliberately NOT the primary signal,
+// so a provider that reports no usage and no reasoning reads neither way and
+// stays the terminal overflow it was.
+//
+// A "dominance" threshold on the reasoning fraction was considered and
+// rejected on its own numbers: the measured trace is 173631 characters for
+// 65536 output tokens, which is about 0.66 of the budget at the usual
+// four-characters-per-token, so any dominance threshold tight enough to be
+// meaningful rejects the exact response this fix exists for.
+//
+// A tool call the cap cut in half is an answer being truncated, not a
+// runaway, so a response carrying one never reaches this predicate; the
+// caller checks for it first. Reasoning presence is a model property, not a
+// runaway property: a gateway that puts the whole answer in the reasoning
+// field and reports empty content will be re-asked once and then reported as
+// runaway_generation. That is a bounded, non-terminal cost, and it was the
+// terminal overflow before.
 //
 // A provider that refuses or filters a request also returns an empty answer,
 // and the caller cannot tell that case from a runaway without a second signal.
@@ -342,9 +391,12 @@ func (w chatCompletionsUsage) toUsage() Usage {
 // caller runs inside its finish_reason == "length" branch, and a refusal
 // normally ends with finish_reason == "stop" instead, which never reaches here
 // at all.
-func RunawayGeneration(answer string, usage Usage, maxTokens int) bool {
+func RunawayGeneration(answer, reasoning string, usage Usage, maxTokens int) bool {
 	if strings.TrimSpace(answer) != "" {
 		return false
+	}
+	if strings.TrimSpace(reasoning) != "" {
+		return true
 	}
 	return maxTokens > 0 && usage.OutputTokens >= maxTokens
 }
@@ -371,6 +423,14 @@ type CompletionResponse struct {
 	// that only decode Text need no change; the raw calls let a caller quote
 	// the rejected one back in a follow-up.
 	ToolCalls []ToolCall
+	// Reasoning is the reasoning trace the provider returned, when it returns
+	// one. It is empty for a provider that does not report reasoning at all,
+	// and that absence is exactly why it is carried here separately from
+	// Usage.ReasoningTokens: a provider can send 173 KB of reasoning while
+	// omitting completion_tokens_details entirely, which leaves the token
+	// counter at 0 and used to make the trace invisible to every line of
+	// Cite but the raw capture.
+	Reasoning string
 	// Provider is the upstream provider a router reported serving the call
 	// (OpenRouter's top-level "provider" field); empty when not reported.
 	Provider string
@@ -691,8 +751,27 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		Provider json.RawMessage `json:"provider"`
 		Choices  []struct {
 			Message struct {
-				Content   string     `json:"content"`
-				ToolCalls []ToolCall `json:"tool_calls"`
+				Content string `json:"content"`
+				// Reasoning and ReasoningContent are the same trace under
+				// the two names providers put it on: OpenAI-compatible
+				// gateways that expose a thought trace use "reasoning",
+				// DeepSeek's own surface uses "reasoning_content". Both
+				// are decoded and neither wins by priority -- the first
+				// non-empty does -- because this field is what tells a
+				// runaway from a capacity overflow on a provider that
+				// omits completion_tokens_details entirely.
+				//
+				// Neither is decoded into a plain string, for the same
+				// reason Provider stays raw beside them: a field of an
+				// unexpected type must not fail a call whose review is
+				// fine. Decoding reasoning into a string would make
+				// json.Unmarshal reject the whole response whenever a
+				// provider sends reasoning as an array or an object,
+				// throwing away a valid review. What is at stake here is
+				// a number in a diagnostic sentence.
+				Reasoning        json.RawMessage `json:"reasoning"`
+				ReasoningContent json.RawMessage `json:"reasoning_content"`
+				ToolCalls        []ToolCall      `json:"tool_calls"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -736,6 +815,7 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 			text = args
 		}
 	}
+	reasoning := reasoningTrace(ch.Message.Reasoning, ch.Message.ReasoningContent)
 	if ch.FinishReason == "length" {
 		// The path is overridable so a caller (the GitHub Action) can point
 		// it at a directory it archives for download.
@@ -745,7 +825,14 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		}
 		_ = os.WriteFile(capturePath, raw, 0o600)
 		usage := out.Usage.toUsage()
-		if RunawayGeneration(text, usage, req.MaxOutputTokens) {
+		// A tool call is an answer being written, even when the cap cut its
+		// arguments in half: the model stopped thinking and started
+		// emitting the response, which is where the cap bit. So the whole
+		// runaway branch is skipped for one -- withholding only the
+		// reasoning would still let a response with no reasoning field and a
+		// full budget fall through to the full-budget test and call a
+		// truncated answer a runaway.
+		if len(ch.Message.ToolCalls) == 0 && RunawayGeneration(text, reasoning, usage, req.MaxOutputTokens) {
 			// A runaway generation is not the capacity overflow this branch
 			// was written for, and it is not terminal. The whole budget went
 			// to reasoning and no answer came back, so the cap was never the
@@ -757,14 +844,48 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 			// not a half-written answer -- an operator handed 186 KB of it
 			// otherwise reads it as Cite having generated 186 KB of review.
 			//
-			// Two forms of `where`, because Cite cannot always name where the
-			// tokens went: a provider that does not itemise reasoning_tokens
-			// leaves it with nothing to report but the budget it asked
-			// for, which is the number the operator can act on.
+			// Three forms of `where`, because Cite cannot always name where
+			// the tokens went. Each has to be true of the response it is
+			// printed for: the first is the provider's own itemisation, the
+			// second is the trace Cite measured in the message body when the
+			// provider itemises nothing, and the third is the old wording and
+			// survives only on the branch where the cap really was spent.
+			// Printing the cap wording for a response that never reached the
+			// cap states a number Cite cannot verify and then tells the
+			// operator it does not matter.
 			where := fmt.Sprintf("the whole %d-token output cap was spent and no answer was written", req.MaxOutputTokens)
-			if usage.ReasoningTokens > 0 {
+			switch {
+			case usage.ReasoningTokens > 0:
 				where = fmt.Sprintf("%d of %d output tokens went to reasoning and no answer was written",
 					usage.ReasoningTokens, usage.OutputTokens)
+			case len(reasoning) > 0:
+				// The provider sent the trace and no split of it, so Cite
+				// reports the two numbers the response actually carries: the
+				// ceiling the provider stopped at, and the size of the trace.
+				//
+				// Whether the cap was spent is read from the response rather
+				// than assumed. Measured, the provider stopped at 65536 while
+				// Cite had requested 131072, and "the whole 131072-token
+				// output cap was spent" is false there.
+				//
+				// A response with no usage object reads as zero output
+				// tokens, and zero is not a ceiling anyone stopped at, so
+				// that case says the count is missing instead of quoting it.
+				spent := fmt.Sprintf("the whole %d-token output cap was spent", req.MaxOutputTokens)
+				switch {
+				case usage.OutputTokens == 0:
+					spent = fmt.Sprintf("the provider reported no output token count against the %d requested", req.MaxOutputTokens)
+				case usage.OutputTokens < req.MaxOutputTokens:
+					spent = fmt.Sprintf("the provider stopped at %d of the %d output tokens requested",
+						usage.OutputTokens, req.MaxOutputTokens)
+				}
+				// Characters, not bytes, because that is the unit this
+				// sentence claims to report. A trace quoting code in a
+				// non-ASCII language runs to several bytes per character, and
+				// a byte count under the word "characters" overstates it by
+				// the width of the alphabet in use.
+				where = fmt.Sprintf("%s and no answer was written, and every one of the %d characters the provider returned is reasoning",
+					spent, utf8.RuneCountInString(reasoning))
 			}
 			fmt.Fprintf(os.Stderr, "cite: the model never terminated: %s. Captured reasoning trace at %s (%d bytes) -- raising the output-token cap makes this larger, not smaller\n", where, capturePath, len(raw))
 			return nil, fmt.Errorf("%w: %s", ErrRunaway, where)
@@ -782,6 +903,7 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 	return &CompletionResponse{
 		Text:         text,
 		ToolCalls:    ch.Message.ToolCalls,
+		Reasoning:    reasoning,
 		Usage:        out.Usage.toUsage(),
 		FinishReason: ch.FinishReason,
 		Model:        c.Model,
@@ -802,6 +924,21 @@ func toolArguments(calls []ToolCall, want string) (string, bool) {
 		return c.Function.Arguments, true
 	}
 	return "", false
+}
+
+// reasoningTrace picks the reasoning the response carries, whichever of the
+// two wire names it arrived under, and gives "" for any other shape. The
+// fields stay raw on the wire for the reason Provider does: an unexpected type
+// must not fail a call whose review is fine, and here the only thing at stake
+// is a sentence in a diagnostic.
+func reasoningTrace(reasoning, reasoningContent json.RawMessage) string {
+	for _, raw := range []json.RawMessage{reasoning, reasoningContent} {
+		var s string
+		if json.Unmarshal(raw, &s) == nil && s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // upstreamProvider reads a router's upstream provider label, which
