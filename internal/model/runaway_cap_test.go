@@ -239,3 +239,33 @@ func TestCompleteReasoningContentSurvivesAnEmptyReasoningField(t *testing.T) {
 		t.Fatalf("Reasoning = %q, want %q", resp.Reasoning, "deep thought")
 	}
 }
+
+// A provider that sends the trace and no usage object at all leaves
+// OutputTokens at zero. Zero is a missing count, not a ceiling the provider
+// stopped at, so the message says the count is missing.
+func TestRunawayMessageWithoutUsageDoesNotQuoteZero(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+	body := `{"choices":[{"message":{"role":"assistant","content":"","reasoning":"` +
+		strings.Repeat("Hmm. ", 200) + `"},"finish_reason":"length"}]}`
+	ts := newTestServer(http.HandlerFunc((&runawayHandler{body: body}).ServeHTTP))
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+
+	old := os.Stderr
+	_, w, _ := os.Pipe()
+	os.Stderr = w
+	_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 131072})
+	os.Stderr = old
+	w.Close()
+
+	if !errors.Is(err, ErrRunaway) {
+		t.Fatalf("want a runaway, got %v", err)
+	}
+	if strings.Contains(err.Error(), "stopped at 0 of") {
+		t.Fatalf("an absent usage object was reported as stopping at 0 tokens: %q", err)
+	}
+	if !strings.Contains(err.Error(), "no output token count") {
+		t.Fatalf("message should say the count is missing: %q", err)
+	}
+}

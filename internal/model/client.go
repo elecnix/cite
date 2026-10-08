@@ -867,8 +867,15 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 				// than assumed. Measured, the provider stopped at 65536 while
 				// Cite had requested 131072, and "the whole 131072-token
 				// output cap was spent" is false there.
+				//
+				// A response with no usage object reads as zero output
+				// tokens, and zero is not a ceiling anyone stopped at, so
+				// that case says the count is missing instead of quoting it.
 				spent := fmt.Sprintf("the whole %d-token output cap was spent", req.MaxOutputTokens)
-				if usage.OutputTokens < req.MaxOutputTokens {
+				switch {
+				case usage.OutputTokens == 0:
+					spent = fmt.Sprintf("the provider reported no output token count against the %d requested", req.MaxOutputTokens)
+				case usage.OutputTokens < req.MaxOutputTokens:
 					spent = fmt.Sprintf("the provider stopped at %d of the %d output tokens requested",
 						usage.OutputTokens, req.MaxOutputTokens)
 				}
