@@ -783,6 +783,11 @@ count and the run record.
 | `ci_behavior` | impossible | note only, never blocking |
 | `convention` | impossible | note only, rendered as a question |
 
+A `symbol_exists` subject that isn't an identifier, such as a sentence about how a toolchain
+behaves, gives the definition search nothing to look for, and zero hits can't refute it. The
+harness gives that claim the `convention` disposition instead: the finding stays as a note and
+never blocks. The harness strips backticks and a trailing `()` from a name before the search.
+
 `version_behavior` is banned rather than demoted because it never gives a team anything to act on
 and the model is always confident about it. It is the class that flagged a real `actions/checkout@v5` as "no such version".
 `ci_behavior` is the class that produced the suggestion which would have silently disabled every
