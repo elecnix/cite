@@ -36,6 +36,8 @@ Standard library only, like the Go module it measures.
 
 import argparse
 import concurrent.futures
+import contextlib
+import fcntl
 import json
 import os
 import subprocess
@@ -59,6 +61,18 @@ _repo_locks = {}
 _repo_locks_guard = threading.Lock()
 
 
+@contextlib.contextmanager
+def repo_lock(cache: Path, repo: str):
+    """Serialise changes to one cached clone: the thread lock orders this
+    process's jobs, the file lock orders harness processes sharing a cache."""
+    with _repo_locks_guard:
+        lock = _repo_locks.setdefault(repo, threading.Lock())
+    cache.mkdir(parents=True, exist_ok=True)
+    with lock, open(cache / (repo.replace("/", "__") + ".lock"), "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        yield
+
+
 def ensure_repo(cache: Path, repo: str, shas) -> Path:
     """A bare clone per repository, fetched once, with the case's commits.
 
@@ -67,9 +81,7 @@ def ensure_repo(cache: Path, repo: str, shas) -> Path:
     branch since deleted) is fetched by the pull request refs, which GitHub
     keeps, and then by its full SHA. Cases name full SHAs: a fetch by an
     abbreviated one is refused."""
-    with _repo_locks_guard:
-        lock = _repo_locks.setdefault(repo, threading.Lock())
-    with lock:
+    with repo_lock(cache, repo):
         bare = cache / (repo.replace("/", "__") + ".git")
         if not bare.exists():
             cache.mkdir(parents=True, exist_ok=True)
@@ -123,7 +135,7 @@ def score(case, record, slack):
     unlabelled = [f for f in findings
                   if not any(f.get("path") == l["path"] and overlaps(finding_anchor(f), l["lines"], slack)
                              for l in must_flag + must_not)]
-    errored = [fo for fo in record.get("files") or [] if fo.get("state") == "errored"]
+    errored = [fo for fo in record.get("files") or [] if fo.get("state") in ("error", "errored")]
     return {
         "tp": len(tp), "fn": len(fn), "fp_labels": len(fp_labelled),
         "fp_findings": len(fp_any), "findings": len(findings),
@@ -144,7 +156,8 @@ def run_case(case, args, rep):
     out_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="cite-eval-") as tmp:
         wt = Path(tmp) / "wt"
-        sh(["git", "worktree", "add", "--detach", "--quiet", str(wt), case["head"]], cwd=bare)
+        with repo_lock(Path(args.cache), case["repo"]):
+            sh(["git", "worktree", "add", "--detach", "--quiet", str(wt), case["head"]], cwd=bare)
         try:
             diff = sh(["git", "diff", f"{case['base']}...{case['head']}"], cwd=wt).stdout
             diff_path = Path(tmp) / "pr.diff"
@@ -165,7 +178,8 @@ def run_case(case, args, rep):
             elapsed = time.time() - t0
             log_path.write_text(r.stdout)
         finally:
-            sh(["git", "worktree", "remove", "--force", str(wt)], cwd=bare, check=False)
+            with repo_lock(Path(args.cache), case["repo"]):
+                sh(["git", "worktree", "remove", "--force", str(wt)], cwd=bare, check=False)
     if not record_path.exists():
         return {"id": case["id"], "rep": rep, "error": "no run record", "elapsed": elapsed}
     record = json.loads(record_path.read_text()).get("run") or {}
