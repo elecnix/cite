@@ -1014,6 +1014,7 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 			r.recordFile(rec, model.FileOutcome{
 				Path: e.Path, OldPath: e.OldPath, Status: e.Status,
 				State: model.FileErrored, Reason: reason, Reasks: spent,
+				Detail: errDetail(err),
 			})
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -1151,4 +1152,21 @@ func (r *Reviewer) recordDrops(rec *model.RunRecord, ds []model.DropEntry) {
 	r.filesMu.Lock()
 	defer r.filesMu.Unlock()
 	rec.Drops = append(rec.Drops, ds...)
+}
+
+// errDetailMax bounds FileOutcome.Detail: it reaches the check summary.
+const errDetailMax = 240
+
+// errDetail is the first line of err, sanitised and bounded, for the run
+// record and the gate's reason.
+func errDetail(err error) string {
+	if err == nil {
+		return ""
+	}
+	line, _, _ := strings.Cut(err.Error(), "\n")
+	line = model.SanitizeText(strings.TrimSpace(line))
+	if r := []rune(line); len(r) > errDetailMax {
+		line = string(r[:errDetailMax]) + "…"
+	}
+	return line
 }

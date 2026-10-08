@@ -137,6 +137,11 @@ func Decide(rec *model.RunRecord, cfg *config.Config, opts Options) (model.Verdi
 	}
 	if len(errored) > 0 {
 		reason := fmt.Sprintf("%d file(s) never evaluated: %s", len(errored), strings.Join(errored, ", "))
+		if cause := sharedCause(rec.Files); cause != "" && len(errored) == cov.APIFiles {
+			// Issue #170: every file failed the same way, which is the
+			// model or its provider, not the diff. Lead with the cause.
+			reason = fmt.Sprintf("every file errored at the model: %s; %s", cause, reason)
+		}
 		if rec.ReasksSpent > 0 {
 			reason += fmt.Sprintf("; %d bounded re-ask(s) spent", rec.ReasksSpent)
 		}
@@ -291,4 +296,28 @@ func skippedAggregate(files []model.FileOutcome) map[string][]string {
 		}
 	}
 	return agg
+}
+
+// sharedCause returns the reason every errored file shares, with the first
+// detail any of them carries as its example, or "" when the reasons differ. Details are
+// not compared: a provider's message carries a per-request reference.
+func sharedCause(files []model.FileOutcome) string {
+	reason, detail, seen := "", "", false
+	for _, f := range files {
+		if f.State != model.FileErrored {
+			continue
+		}
+		if !seen {
+			reason, seen = f.Reason, true
+		} else if f.Reason != reason {
+			return ""
+		}
+		if detail == "" {
+			detail = f.Detail
+		}
+	}
+	if reason == "" || detail == "" {
+		return reason
+	}
+	return reason + " (" + detail + ")"
 }
