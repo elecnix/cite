@@ -1078,7 +1078,7 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 		if perr == nil && fr != nil && fr.Path != e.Path {
 			r.noteEchoCorrection()
 			r.logf("review of %s: response echoed path %q; relabeled by the echo guard without spending a re-ask (issue #73)", e.Path, fr.Path)
-			resp.MarkRejected(fmt.Errorf("echoed path %q, relabeled by the echo guard (issue #73)", fr.Path))
+			resp.NoteCapture(fmt.Sprintf("echoed path %q, relabeled by the echo guard and used (issue #73)", fr.Path))
 			fr.Path = e.Path
 		}
 		if perr == nil && fr != nil && fr.Path == e.Path {

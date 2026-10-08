@@ -207,12 +207,11 @@ runs:
         CITE_REASONING_EFFORT: ${{ inputs.reasoning_effort }}
         CITE_REQUIRE_PARAMETERS: ${{ inputs.require_parameters }}
         # Opt-in wire capture (default off). CITE_CAPTURE_WIRE is the switch
-        # the input sets; the directory is $RUNNER_TEMP so the upload step
-        # below can name it. CITE_CAPTURE_MAX_BYTES is left unset: the
-        # per-body ceiling has a default, and a workflow can override it in
-        # its own env without a new input.
+        # the input sets; the directory is exported in the script below.
+        # CITE_CAPTURE_MAX_BYTES is left unset: the per-body ceiling has a
+        # default, and a workflow can override it in its own env without a
+        # new input.
         CITE_CAPTURE_WIRE: ${{ inputs.capture_wire }}
-        CITE_CAPTURE_DIR: $RUNNER_TEMP/cite-wire
       run: |
         set -euo pipefail
         # PR_NUMBER is not a default runner variable. The number comes from
@@ -257,6 +256,12 @@ runs:
         # only place the pre-cap output is kept, and the stderr line names it.
         CITE_TRUNCATED="$RUNNER_TEMP/cite-truncated-response.json"
         export CITE_TRUNCATED_OUT="$CITE_TRUNCATED"
+        # The wire capture directory, under $RUNNER_TEMP so the upload step
+        # below can name it. Exported here, where the shell expands
+        # $RUNNER_TEMP: as an env: value it reached cite as the literal
+        # relative path "$RUNNER_TEMP/cite-wire", and the upload found
+        # nothing.
+        export CITE_CAPTURE_DIR="$RUNNER_TEMP/cite-wire"
         cite review $ARGS 2>&1 | tee "$CITE_LOG"
         # With tool_failure_blocks: false a COULD_NOT_EVALUATE exits zero,
         # so failure() no longer selects it; this output keeps its
