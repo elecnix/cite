@@ -1,0 +1,13 @@
+{
+  "repo": "elecnix/cite",
+  "pr": 138,
+  "base": "484aae5098851155947cd3af41a401bf0827fec5",
+  "head": "e4e21c7d2d866709d3bcd5fd8ecdbaf56a19045c",
+  "source": "https://github.com/elecnix/cite/pull/138#discussion_r4175908375",
+  "must_not_flag": [
+    {"path": "cmd/cite/rereview.go", "lines": [68, 80],
+     "why": "Posted: an empty CITE_STRUCTURED_OUTPUT fails every re-review. model.ParseStructuredOutputMode maps \"\" to response_format in its first case (internal/model/client.go), so the default applies."},
+    {"path": ".github/cite.yml", "lines": [45, 56],
+     "why": "Posted: removing the 65536 pin may lower the cap below it. The pinned release's DefaultReviewMaxOutputTokens is 131072 (internal/config/config.go), as the comment says."}
+  ]
+}

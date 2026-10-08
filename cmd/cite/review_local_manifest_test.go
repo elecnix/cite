@@ -39,7 +39,7 @@ func TestReviewLocalManifestComesFromTheDiff(t *testing.T) {
 	}
 
 	var report bytes.Buffer
-	_ = reviewLocal(diffPath, filepath.Join(dir, "absent.yml"), model.StructuredOutputResponseFormat, "", false, publisher.JSONReportSink(&report))
+	_ = reviewLocal(diffPath, "", filepath.Join(dir, "absent.yml"), model.StructuredOutputResponseFormat, "", false, publisher.JSONReportSink(&report))
 
 	var got struct {
 		Run struct {
