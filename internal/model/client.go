@@ -1015,7 +1015,7 @@ func RetryDelay(err error, attempt int) time.Duration {
 			base = 5 * time.Second
 		}
 	}
-	d := base << min(attempt, 4)
+	d := base << min(max(attempt, 0), 4)
 	d += time.Duration(rand.Int63n(int64(d)/5 + 1))
 	return min(d, maxRetryDelay)
 }
