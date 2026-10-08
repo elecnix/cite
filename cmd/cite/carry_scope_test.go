@@ -43,7 +43,7 @@ func TestCarryIntoRecordDoesNotBlockOnOutOfDiffFile(t *testing.T) {
 	toReview := []string{"changed.go"}
 	manifest := map[string]bool{"changed.go": true}
 
-	carryIntoRecord(rec, prev, toReview, manifest, nil)
+	carryIntoRecord(rec, prev, toReview, manifest, nil, carryBlockingSet(nil))
 
 	for _, f := range rec.Findings {
 		if f.Path == "docs/agent-definition.md" {
@@ -92,16 +92,18 @@ func TestCarryIntoRecordBlockingRequiresAddedLineIntersection(t *testing.T) {
 			Category:    model.CategoryCrash, // MayBlock
 			Title:       "anchored on an added line",
 			Evidence:    []model.Evidence{{Line: 2, Quote: "new logic line"}},
+			Blocks:      true,
 		},
 		{
 			Fingerprint: "bbbb2222",
 			Path:        "changed.go",
 			Category:    model.CategoryCrash,
 			Title:       "anchored on a context line only",
+			Blocks:      true,
 			Evidence:    []model.Evidence{{Line: 3, Quote: "untouched line"}},
 		},
 	}}
-	carryIntoRecord(rec, prev, nil, manifest, diffs)
+	carryIntoRecord(rec, prev, nil, manifest, diffs, carryBlockingSet(nil))
 
 	byFP := map[string]model.ValidatedFinding{}
 	for _, f := range rec.Findings {
@@ -117,7 +119,7 @@ func TestCarryIntoRecordBlockingRequiresAddedLineIntersection(t *testing.T) {
 	// Fail closed: with no parsed diff for the file the intersection cannot
 	// be checked, so the finding carries as a note, never a blocker.
 	rec2 := &model.RunRecord{}
-	carryIntoRecord(rec2, prev, nil, manifest, nil)
+	carryIntoRecord(rec2, prev, nil, manifest, nil, carryBlockingSet(nil))
 	for _, f := range rec2.Findings {
 		if f.Blocks {
 			t.Fatalf("carried finding on file without parsed diff must not block: %+v", f)

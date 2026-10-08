@@ -289,7 +289,7 @@ func writeSticky(ctx context.Context, c *githubclient.Client, prNum int, marker 
 	for _, f := range posted {
 		tfs = append(tfs, threadFinding{
 			Fingerprint: f.Fingerprint, Path: f.Path, Category: f.Category,
-			Title: f.Title, Evidence: f.Evidence,
+			Title: f.Title, Evidence: f.Evidence, Blocks: f.Blocks,
 		})
 	}
 	st := stickyState{Ledger: blob, BlobSHAs: shas, Findings: tfs}
