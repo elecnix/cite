@@ -1,0 +1,12 @@
+{
+  "repo": "elecnix/cite",
+  "pr": 0,
+  "base": "8fd5f7c28b3339f2cb796bbdc304edb4fd7bb8cd",
+  "head": "364ff24e20866ae106c9986e99e7614e65b7548d",
+  "source": "https://github.com/elecnix/cite/issues/158",
+  "description": "cite re-review walks merges within the look-back window that carry a bypass-log entry, re-runs the standard pipeline, and files one issue per blocking finding.",
+  "must_flag": [
+    {"path": "cmd/cite/rereview.go", "lines": [218, 233],
+     "rubric": "GitHub's per-file patches carry no diff --git headers, so ParseUnifiedDiff over their concatenation yields no file sections (and its error is discarded); diffs stays empty and every re-review finding fails anchor validation (issue #158)."}
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "repo": "elecnix/cite",
+  "pr": 165,
+  "base": "e74bc6141a8791dec74075c8b351ddcb9fb02603",
+  "head": "989b5ebd5280faf4723ddbf1a4c0eff769926c50",
+  "source": "https://github.com/elecnix/cite/pull/165",
+  "must_not_flag": [
+    {"path": "internal/reviewer/reviewer.go", "lines": [966, 972],
+     "why": "Posted as a blocking logic-inversion: the held-at and cut-from log branches are swapped. budget starts as held at and is overwritten with cut from exactly when recoveryBudget < req.MaxOutputTokens, so the wording matches the cut."}
+  ]
+}

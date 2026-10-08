@@ -1,0 +1,24 @@
+{
+  "repo": "elecnix/cite",
+  "pr": 171,
+  "base": "f5e55389870174e017265f92e9dc4cceb71a1830",
+  "head": "c58025460dd1da52430c80367667bf9da0d738c1",
+  "source": "https://github.com/elecnix/cite/pull/171",
+  "plant": [
+    {
+      "path": "internal/scope/diff.go",
+      "find": "case cur != nil && hunk == nil && strings.HasPrefix(line, \"new file mode \"):",
+      "replace": "case cur != nil && hunk != nil && strings.HasPrefix(line, \"new file mode \"):"
+    }
+  ],
+  "must_flag": [
+    {
+      "path": "internal/scope/diff.go",
+      "lines": [
+        146,
+        146
+      ],
+      "rubric": "The new-file header is read only inside a hunk, where it never appears, so every added file keeps status M."
+    }
+  ]
+}

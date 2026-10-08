@@ -1,0 +1,17 @@
+{
+  "repo": "PrizmalAi/prizmal-cli",
+  "pr": 13,
+  "base": "a2559dd04d632dda43155c83a8192d7b8090a492",
+  "head": "cf4a3c124da6850b088eed9f5755a64fd8cc7017",
+  "source": "https://github.com/PrizmalAi/prizmal-cli/pull/13",
+  "must_not_flag": [
+    {
+      "path": "internal/launcher/claude.go",
+      "lines": [
+        284,
+        292
+      ],
+      "why": "Posted: [logic-inversion] Inherited ANTHROPIC_AUTH_TOKEN still reaches the child \u2014 In device mode the child still receives ANTHROPIC_AUTH_TOKEN from the operator's shell. claudeInheritedModelVars is the drop list, and claudeChildEnv skips only names in it; the new entry is added unconditionally, so a shell export survives into the child and pins the session to a fixed credential, defeating the apiKeyHelper refresh the same change adds. The comment on line 270 says it must not reach the child from any source. Refuted: Claims ANTHROPIC_AUTH_TOKEN is not dropped, while quoting line 281 that adds it to the drop list and line 311 that skips drop[name]. Evidence refutes the claim."
+    }
+  ]
+}

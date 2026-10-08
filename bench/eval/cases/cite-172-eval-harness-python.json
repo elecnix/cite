@@ -1,0 +1,15 @@
+{
+  "repo": "elecnix/cite",
+  "pr": 172,
+  "base": "c58025460dd1da52430c80367667bf9da0d738c1",
+  "head": "38d36080af51caa85d1970f1bc7bc65c39c86cdb",
+  "source": "https://github.com/elecnix/cite/pull/172",
+  "must_flag": [
+    {"path": "bench/eval/run.py", "lines": [120, 121],
+     "rubric": "fp_any appends a finding once per refuted label it overlaps, so a finding near two must_not labels counts twice."}
+  ],
+  "must_not_flag": [
+    {"path": "bench/eval/run.py", "lines": [166, 170],
+     "why": "Posted twice as a crash: record_path and elapsed are unbound after the with block. Python has no block scope, and an exception before them propagates through the finally, so the return never reads an unbound name."}
+  ]
+}

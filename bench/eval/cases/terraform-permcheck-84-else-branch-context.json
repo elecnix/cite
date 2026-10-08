@@ -1,0 +1,17 @@
+{
+  "repo": "elecnix/terraform-permcheck",
+  "pr": 84,
+  "base": "a3bec9bf8835b9d2220467971203e7d3b1672f7b",
+  "head": "95d1e93662de4e09ce97ffc18b45d034a4fa5297",
+  "source": "https://github.com/elecnix/terraform-permcheck/pull/84",
+  "must_not_flag": [
+    {
+      "path": "internal/provideraws/parser.go",
+      "lines": [
+        294,
+        300
+      ],
+      "why": "Posted: [logic-inversion] Negated change guard drops the call from the report \u2014 The else branch of a change guard is walked with the pre-guard context, so a call in `if !d.HasChange(\"x\") { conn.DeleteX(...) }` is reported as unconditional. The comment on line 296 says the branch runs when the attribute did not change, but the code restores the saved context, which is exactly the context that carries no gate. The body of a negated guard is handled correctly by unwrapExpr; the else branch is not. Refuted: Title says the call is dropped from the report; impact says it is reported as unconditional (title and impact contradict). Behaviour is intended and documented in the comment at lines 292-295."
+    }
+  ]
+}

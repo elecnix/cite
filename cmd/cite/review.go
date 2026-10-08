@@ -32,6 +32,7 @@ import (
 func runReview(args []string) error {
 	fs := flag.NewFlagSet("review", flag.ContinueOnError)
 	diffPath := fs.String("diff", "", "path to a unified diff file (local mode)")
+	descPath := fs.String("description", "", "path to a file holding the pull request description (local mode; the reviewer reads it as untrusted intent)")
 	prSpec := fs.String("pr", "", "pull request as owner/repo#N (API mode)")
 	dryRun := fs.Bool("dry-run", false, "print results, post nothing")
 	cfgPath := fs.String("config", ".github/cite.yml", "config file (optional)")
@@ -88,8 +89,10 @@ func runReview(args []string) error {
 	switch {
 	case *diffPath != "" && *prSpec != "":
 		return fmt.Errorf("use --diff or --pr, not both")
+	case *descPath != "" && *diffPath == "":
+		return fmt.Errorf("review: --description requires --diff")
 	case *diffPath != "":
-		return reviewLocal(*diffPath, *cfgPath, mode, *reasoningEffort, *requireParameters, sink)
+		return reviewLocal(*diffPath, *descPath, *cfgPath, mode, *reasoningEffort, *requireParameters, sink)
 	case *prSpec != "":
 		reviewerID, err := resolveReviewerID()
 		if err != nil {
@@ -248,10 +251,18 @@ func verifierSuffix(v string) string {
 
 // --- local mode -----------------------------------------------------------
 
-func reviewLocal(diffPath, cfgPath string, structuredOutput model.StructuredOutputMode, reasoningEffort string, requireParameters bool, sink publisher.Sink) error {
+func reviewLocal(diffPath, descPath, cfgPath string, structuredOutput model.StructuredOutputMode, reasoningEffort string, requireParameters bool, sink publisher.Sink) error {
 	raw, err := os.ReadFile(diffPath)
 	if err != nil {
 		return err
+	}
+	var description string
+	if descPath != "" {
+		b, err := os.ReadFile(descPath)
+		if err != nil {
+			return err
+		}
+		description = string(b)
 	}
 	cfg, err := loadConfig(cfgPath)
 	if err != nil {
@@ -306,7 +317,7 @@ func reviewLocal(diffPath, cfgPath string, structuredOutput model.StructuredOutp
 		Manifest:      manifest,
 		Diffs:         diffs,
 		PostImage:     post,
-		PRDescription: "",
+		PRDescription: description,
 		Nonce:         newNonce(),
 	})
 	if err != nil {

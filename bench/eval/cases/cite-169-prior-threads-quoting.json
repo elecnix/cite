@@ -1,0 +1,17 @@
+{
+  "repo": "elecnix/cite",
+  "pr": 169,
+  "base": "e74bc6141a8791dec74075c8b351ddcb9fb02603",
+  "head": "8d0f843d7ebae18efae835aea8af57d36767d267",
+  "source": "https://github.com/elecnix/cite/pull/169",
+  "must_not_flag": [
+    {"path": "internal/scope/envelope.go", "lines": [177, 181],
+     "why": "Posted three times as injection: the thread header's category is not newline-sanitised or prefixed. The line quotes oneLine(t.Category) and starts with the | prefix."},
+    {"path": "internal/reviewer/prompt_test.go", "lines": [92, 97],
+     "why": "Posted: the regex ^<([a-z_]+)[ >] misses tags with attributes. The class [ >] includes the space that follows the tag name of <prior_threads path=...>."},
+    {"path": "cmd/cite/sameclaim.go", "lines": [26, 30],
+     "why": "Posted: quoted lines are not prefixed with | . The format string | %d: %s starts every quoted line with a pipe and a space."},
+    {"path": "cmd/cite/sameclaim.go", "lines": [40, 44],
+     "why": "Posted: quoted lines are not prefixed with | . The format string | %d: %s starts every quoted line with a pipe and a space."}
+  ]
+}

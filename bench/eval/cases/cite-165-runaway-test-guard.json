@@ -1,0 +1,17 @@
+{
+  "repo": "elecnix/cite",
+  "pr": 165,
+  "base": "e74bc6141a8791dec74075c8b351ddcb9fb02603",
+  "head": "7c399cbc38b65e2a6db647d8def847dd58791a61",
+  "source": "https://github.com/elecnix/cite/pull/165",
+  "must_not_flag": [
+    {
+      "path": "internal/reviewer/runaway_test.go",
+      "lines": [
+        210,
+        216
+      ],
+      "why": "Posted: [crash] Index panic when the provider records fewer than 4 calls \u2014 The guard on line 211 only checks len(calls) and len(efforts), but line 214 reads efforts[2] and line 232 reads calls[2] and calls[1]. If the run makes fewer than three provider calls, the guard passes and the test panics with an index out of range instead of reporting the failure. The removed version guarded with len(efforts) < 4 before the same reads. Refuted: Guard at line 211 is `len(calls) < 4 || len(efforts) < 4` followed by t.Fatalf; every indexed read is behind it. Model misread the guard (and t.Fatalf termination). Author reproduced: shortfall fails at the guard, no panic."
+    }
+  ]
+}

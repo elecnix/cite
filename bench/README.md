@@ -87,3 +87,26 @@ A widening gap between public and private splits is the memorisation alarm.
 
 Scores compare only within a major version. Escaped defects the tool saw and
 missed become cases: the corpus grows with each miss.
+
+## Quality evaluation: `bench/eval`
+
+Soak checks the plumbing. `bench/eval/run.py` measures the reviewer on real
+pull requests that a person labelled: the lines a finding must anchor on
+(`must_flag`) and the lines where a posted finding was wrong (`must_not_flag`).
+Each case pins a repository, a base and a head commit, so a run is
+reproducible up to the model's own sampling, which `--repeat` averages over.
+
+```
+go build -o cite ./cmd/cite
+MODEL_BASE_URL=... MODEL_ID=... MODEL_API_KEY=... \
+  bench/eval/run.py --cite ./cite --repeat 2 bench/eval/cases
+```
+
+Each case's head is checked out into a temporary worktree of a cached bare
+clone and diffed against its base. `cite review --diff` then reviews that diff
+with the case's description and configuration, and the run record is scored. The summary line
+gives recall over `must_flag`, the findings that hit a `must_not_flag` label
+(or any finding on a clean case), the blocking count, and how many runs left
+a file unevaluated. The case format is documented at the top of the script.
+Cases come from the false positives and misses that people replied to on
+pull requests. Add one whenever a reply refutes a finding.

@@ -1,0 +1,17 @@
+{
+  "repo": "elecnix/gh-monitor",
+  "pr": 157,
+  "base": "14bc66c6f4b45c674b6de606cb31ee364db1af76",
+  "head": "490f74927de1a47a6263700a25809ed71eba00f4",
+  "source": "https://github.com/elecnix/gh-monitor/pull/157",
+  "must_not_flag": [
+    {
+      "path": "internal/monitor/civerdict.go",
+      "lines": [
+        267,
+        271
+      ],
+      "why": "Posted: [logic-inversion] Empty failing suite is skipped, not reported \u2014 The comment says a suite's own conclusion is a result only when the suite carries no runs, but the condition requires the opposite: `!suiteCarriesRuns(suite)` is false whenever runs exist, so a suite that carries runs never contributes its own conclusion. A lone non-container check that concluded FAILURE and produced no runs is dropped from Failing entirely. Refuted: `!suiteCarriesRuns(suite)` is true exactly when the suite has no runs \u2014 the case the comment describes. The finding inverted the negation (\"false whenever runs exist\" is true but irrelevant) and concluded the opposite."
+    }
+  ]
+}

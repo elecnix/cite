@@ -1,0 +1,11 @@
+{
+  "repo": "elecnix/cite",
+  "pr": 171,
+  "base": "e74bc6141a8791dec74075c8b351ddcb9fb02603",
+  "head": "c05662b55b7ceb2e2bb8c57022d8b58d13c459b3",
+  "source": "https://github.com/elecnix/cite/pull/171",
+  "must_not_flag": [
+    {"path": "internal/scope/diff.go", "lines": [150, 160],
+     "why": "Posted: a similarity index before rename from yields R000. similarity = n stores the value while moveKind is 0, and the later rename header formats with it; TestManifestFromDiffReadsFileSectionsOnly covers git's order."}
+  ]
+}
