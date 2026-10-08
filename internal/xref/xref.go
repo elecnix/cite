@@ -348,7 +348,9 @@ func blockEnd(lang *language, lines []string, i, maxLines int) int {
 	}
 	depth, opened := 0, false
 	for j := i; j < limit; j++ {
-		code := stripStrings(stripComment(lang, lines[j]))
+		// Strings first: a "//" inside a string literal (a URL) is not a
+		// comment, and cutting there would hide the line's brace.
+		code := stripComment(lang, stripStrings(lines[j]))
 		for _, r := range code {
 			switch r {
 			case '{':

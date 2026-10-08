@@ -230,3 +230,14 @@ func TestLoadDirKeepsDotDirectoriesButGit(t *testing.T) {
 		t.Fatal(".git must never be indexed")
 	}
 }
+
+// A "//" inside a string is not a comment: the brace after it still opens
+// the block, so the excerpt runs to the function's real end.
+func TestBlockEndIgnoresCommentMarkersInStrings(t *testing.T) {
+	snap := MapSnapshot{"fetch.go": []byte("package p\n\nfunc Fetch() error {\n\tif _, err := http.Get(\"https://example.test/x\"); err != nil {\n\t\treturn err\n\t}\n\treturn nil\n}\n\nfunc after() {}\n")}
+	post := lines("package p\n\nfunc f() { _ = Fetch() }\n")
+	got := NewIndex(snap, Limits{}).Related("f.go", post, map[int]bool{3: true})
+	if len(got) != 1 || len(got[0].Lines) != 6 || strings.Contains(strings.Join(got[0].Lines, "\n"), "after") {
+		t.Fatalf("want the whole six-line Fetch, got %+v", got)
+	}
+}
