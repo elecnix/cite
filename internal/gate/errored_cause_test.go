@@ -60,3 +60,15 @@ func TestNothingAttemptedIsStillThePathFilterShape(t *testing.T) {
 		t.Fatalf("reason = %q, want the path-filter shape", reason)
 	}
 }
+
+// The example detail is the first one any errored file carries, so a first
+// file without one does not hide the provider's message.
+func TestSharedCauseTakesTheFirstDetailPresent(t *testing.T) {
+	got := sharedCause([]model.FileOutcome{
+		{Path: "a.go", State: model.FileErrored, Reason: "model_error"},
+		{Path: "b.go", State: model.FileErrored, Reason: "model_error", Detail: "rate_limited: HTTP 429"},
+	})
+	if got != "model_error (rate_limited: HTTP 429)" {
+		t.Fatalf("sharedCause = %q", got)
+	}
+}

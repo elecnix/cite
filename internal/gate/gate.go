@@ -299,7 +299,7 @@ func skippedAggregate(files []model.FileOutcome) map[string][]string {
 }
 
 // sharedCause returns the reason every errored file shares, with the first
-// file's detail as its example, or "" when the reasons differ. Details are
+// detail any of them carries as its example, or "" when the reasons differ. Details are
 // not compared: a provider's message carries a per-request reference.
 func sharedCause(files []model.FileOutcome) string {
 	reason, detail := "", ""
@@ -308,9 +308,12 @@ func sharedCause(files []model.FileOutcome) string {
 			continue
 		}
 		if reason == "" {
-			reason, detail = f.Reason, f.Detail
+			reason = f.Reason
 		} else if f.Reason != reason {
 			return ""
+		}
+		if detail == "" {
+			detail = f.Detail
 		}
 	}
 	if reason == "" || detail == "" {
