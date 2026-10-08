@@ -580,6 +580,17 @@ type typedError struct {
 	// provider text and is bounded on that account (I4), while a hint is
 	// written here and can be as specific as the fix requires.
 	Hint string
+	// Terminal marks a status the same request meets again (a retired
+	// model, a rejected parameter, a missing key): it unwraps to
+	// ErrDeterministic, so no retry bucket is spent on it.
+	Terminal bool
+}
+
+func (e *typedError) Unwrap() error {
+	if e.Terminal {
+		return ErrDeterministic
+	}
+	return nil
 }
 
 func (e *typedError) Error() string {
@@ -734,16 +745,27 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 			}
 		}
 		var hint string
+		terminal := false
 		switch {
 		case resp.StatusCode == http.StatusTooManyRequests:
 			code = "rate_limited"
 		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 			code = "auth"
 			hint = authHint(c)
+			terminal = true
+		case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
+			// Ollama Cloud answers 410 for a retired model; retrying it
+			// spent the run-global bucket three times on a certainty.
+			code = "model_unavailable"
+			hint = fmt.Sprintf("the endpoint at %s does not serve model %q: the model is retired or unknown there, or the base URL is not the API root (it should end in /v1 for most providers); fix model_id or model_base_url", c.BaseURL, c.Model)
+			terminal = true
+		case resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity:
+			code = "bad_request"
+			terminal = true
 		case resp.StatusCode >= 500:
 			code = "provider_unavailable"
 		}
-		return nil, &typedError{Code: code, Body: msg, Hint: hint}
+		return nil, &typedError{Code: code, Body: msg, Hint: hint, Terminal: terminal}
 	}
 	var out struct {
 		// Provider stays raw: it is a diagnostic label, and a field of
