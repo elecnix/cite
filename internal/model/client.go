@@ -14,9 +14,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -584,6 +586,8 @@ type typedError struct {
 	// model, a rejected parameter, a missing key): it unwraps to
 	// ErrDeterministic, so no retry bucket is spent on it.
 	Terminal bool
+	// RetryAfter is the provider's Retry-After, when it sent one.
+	RetryAfter time.Duration
 }
 
 func (e *typedError) Unwrap() error {
@@ -765,7 +769,7 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		case resp.StatusCode >= 500:
 			code = "provider_unavailable"
 		}
-		return nil, &typedError{Code: code, Body: msg, Hint: hint, Terminal: terminal}
+		return nil, &typedError{Code: code, Body: msg, Hint: hint, Terminal: terminal, RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"))}
 	}
 	var out struct {
 		// Provider stays raw: it is a diagnostic label, and a field of
@@ -971,4 +975,48 @@ func upstreamProvider(raw json.RawMessage) string {
 		return ""
 	}
 	return name
+}
+
+// parseRetryAfter reads a Retry-After header: delay seconds or an HTTP date.
+func parseRetryAfter(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		// Clamped before the multiplication, which overflows past ~292 years.
+		return time.Duration(min(n, 24*60*60)) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+// maxRetryDelay bounds one wait, whatever the provider asks for: a run has
+// files left to review and a deadline of its own.
+const maxRetryDelay = 60 * time.Second
+
+// RetryDelay is how long to wait before retry number attempt (0-based) of a
+// call that failed with err. A provider's Retry-After wins. Otherwise a rate
+// limit waits 5s, 10s, 20s and an outage or an unreachable endpoint 2s, 4s,
+// 8s, each with up to a fifth added at random so parallel files do not
+// retry in step. Retrying a 429 immediately, as Cite did, spent every retry
+// inside the same rate-limit window.
+func RetryDelay(err error, attempt int) time.Duration {
+	var te *typedError
+	base := 2 * time.Second
+	if errors.As(err, &te) {
+		if te.RetryAfter > 0 {
+			return min(te.RetryAfter, maxRetryDelay)
+		}
+		if te.Code == "rate_limited" {
+			base = 5 * time.Second
+		}
+	}
+	d := base << min(max(attempt, 0), 4)
+	d += time.Duration(rand.Int63n(int64(d)/5 + 1))
+	return min(d, maxRetryDelay)
 }
