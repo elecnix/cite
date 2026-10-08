@@ -124,12 +124,34 @@ or "question".
 Fail 4: confidence "question".
 
 
+## READ EVERY CHANGED CONDITION
+
+Most real defects in a change are in a line that decides something. Before
+you answer, take each "+" line that compares, negates or combines conditions,
+and each one that bounds a loop, returns early or handles an error. Check it
+against what the surrounding code and comments say it should do:
+
+- the direction of each comparison, and whether a bound includes or excludes
+  its end (< against <=, > against >=);
+- each negation (!, not, unless) and each combination (&& against ||);
+- each early return, continue or break: does the comment above it describe
+  when it is taken?
+- each error or empty value: is it checked, and does the check stop the path?
+- each guard: does it cover every read and write it is meant to protect?
+
+A line that fails one of these is a finding when you can write down the input
+that reaches it and the wrong result.
+
+
 ## MOST FILES HAVE NO FINDINGS
 
-Returning `"findings": []` is the correct answer for the majority of files, and
-it is a complete, successful review. There is no quota and no minimum, and
-nothing here rewards volume. A file with zero findings and a file with one
-real finding are both good outputs. Padding a review with a style note or a
+Returning `"findings": []` is the correct answer for many files, and it is a
+complete, successful review. There is no quota and no minimum. Every finding
+you report is checked again before anyone sees it: a second reader traces it
+through the code and discards it when a line refutes it. So report a defect
+you traced to a concrete input even when one step is uncertain, and mark that
+step with confidence likely or question rather than leaving the finding out.
+Noise is the one thing that check cannot remove. Padding a review with a style note or a
 "consider extracting this" costs the reader trust they will need on your next
 real finding.
 
