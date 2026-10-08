@@ -51,8 +51,15 @@ func setFakeModelEnv(t *testing.T, srvURL string) {
 
 func chdirTempWithPostImage(t *testing.T) {
 	t.Helper()
+	chdirTempWithFile(t, "x.txt", "hello world\n")
+}
+
+// chdirTempWithFile makes a temp dir holding one post-image file the cwd for
+// the rest of the test, and returns the dir.
+func chdirTempWithFile(t *testing.T, name, content string) string {
+	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "x.txt"), []byte("hello world\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	old, err := os.Getwd()
@@ -63,6 +70,7 @@ func chdirTempWithPostImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(old) })
+	return dir
 }
 
 func writeDiffAndConfig(t *testing.T, configYAML string) (diffPath, cfgPath string) {

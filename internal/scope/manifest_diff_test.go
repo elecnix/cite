@@ -68,3 +68,35 @@ func TestManifestFromDiffReadsFileSectionsOnly(t *testing.T) {
 		t.Fatalf("ManifestFromDiff =\n%+v\nwant\n%+v", got, want)
 	}
 }
+
+// TestRenameStatusIgnoresHeaderOrder: git prints "similarity index" before
+// "rename from", but the status must not depend on that order.
+func TestRenameStatusIgnoresHeaderOrder(t *testing.T) {
+	d, err := ParseUnifiedDiff("diff --git a/a.go b/b.go\n" +
+		"rename from a.go\n" +
+		"rename to b.go\n" +
+		"similarity index 100%\n" +
+		"diff --git a/c.go b/d.go\n" +
+		"copy from c.go\n" +
+		"copy to d.go\n" +
+		"similarity index 75%\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []string{d.Files[0].Status, d.Files[1].Status}
+	if !reflect.DeepEqual(got, []string{"R100", "C075"}) {
+		t.Fatalf("statuses = %v, want [R100 C075]", got)
+	}
+}
+
+// TestUnparsableSimilarityIsAnError: the parse is structural, so a corrupt
+// "similarity index" header fails like a corrupt hunk header does.
+func TestUnparsableSimilarityIsAnError(t *testing.T) {
+	_, err := ParseUnifiedDiff("diff --git a/a.go b/b.go\n" +
+		"similarity index ninety%\n" +
+		"rename from a.go\n" +
+		"rename to b.go\n")
+	if err == nil {
+		t.Fatal("want an error for an unparsable similarity index")
+	}
+}

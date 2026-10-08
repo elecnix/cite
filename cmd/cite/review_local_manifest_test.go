@@ -27,18 +27,7 @@ const localPlainDiff = "diff --git a/x.txt b/x.txt\n" +
 // manifest by reading name-status rows out of the diff text, so a plain diff
 // gave the reviewer one forged file, "`tool`", and never reviewed x.txt.
 func TestReviewLocalManifestComesFromTheDiff(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "x.txt"), []byte("A `tool` launch\nhello world\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	old, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(old) })
+	dir := chdirTempWithFile(t, "x.txt", "A `tool` launch\nhello world\n")
 
 	var called bool
 	srv := startFakeProvider(t, &called, cleanReviewResponse)

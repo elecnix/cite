@@ -119,7 +119,15 @@ func ParseUnifiedDiff(text string) (*Diff, error) {
 	var cur *DiffFile
 	var hunk *Hunk
 	oldNo, newNo := 0, 0
+	// A rename or copy section's status needs both its "rename/copy" header
+	// and its "similarity index" header, in whichever order they appear.
+	var moveKind byte
 	similarity := 0
+	setMoveStatus := func() {
+		if moveKind != 0 {
+			cur.Status = fmt.Sprintf("%c%03d", moveKind, similarity)
+		}
+	}
 
 	for i := 0; i < len(lines); i++ {
 		line := strings.TrimSuffix(lines[i], "\r")
@@ -130,7 +138,7 @@ func ParseUnifiedDiff(text string) (*Diff, error) {
 			cur = &DiffFile{Path: b, OldPath: a, Status: "M"}
 			d.Files = append(d.Files, cur)
 			hunk = nil
-			similarity = 0
+			moveKind, similarity = 0, 0
 
 		// Extended git headers sit between "diff --git" and the first hunk,
 		// so they are read only while no hunk is open: inside a hunk the same
@@ -142,21 +150,22 @@ func ParseUnifiedDiff(text string) (*Diff, error) {
 			cur.Status = "D"
 
 		case cur != nil && hunk == nil && strings.HasPrefix(line, "similarity index "):
-			similarity, _ = strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(line, "similarity index "), "%"))
+			n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(line, "similarity index "), "%"))
+			if err != nil || n < 0 || n > 100 {
+				return nil, fmt.Errorf("scope: malformed similarity index at line %d: %q", i+1, line)
+			}
+			similarity = n
+			setMoveStatus()
 
-		case cur != nil && hunk == nil && strings.HasPrefix(line, "rename from "):
-			cur.Status = fmt.Sprintf("R%03d", similarity)
-			cur.OldPath = strings.TrimPrefix(line, "rename from ")
-
-		case cur != nil && hunk == nil && strings.HasPrefix(line, "rename to "):
-			cur.Path = strings.TrimPrefix(line, "rename to ")
-
-		case cur != nil && hunk == nil && strings.HasPrefix(line, "copy from "):
-			cur.Status = fmt.Sprintf("C%03d", similarity)
-			cur.OldPath = strings.TrimPrefix(line, "copy from ")
-
-		case cur != nil && hunk == nil && strings.HasPrefix(line, "copy to "):
-			cur.Path = strings.TrimPrefix(line, "copy to ")
+		case cur != nil && hunk == nil && isMoveHeader(line):
+			kind, from, path := parseMoveHeader(line)
+			if from {
+				cur.OldPath = path
+			} else {
+				cur.Path = path
+			}
+			moveKind = kind
+			setMoveStatus()
 
 		case strings.HasPrefix(line, "--- "):
 			if cur != nil {
@@ -228,6 +237,35 @@ func ParseUnifiedDiff(text string) (*Diff, error) {
 		}
 	}
 	return d, nil
+}
+
+// moveHeaders are the git extended headers that state a rename or a copy,
+// with the status letter each one implies and whether it gives the source.
+var moveHeaders = []struct {
+	prefix string
+	kind   byte
+	from   bool
+}{
+	{"rename from ", 'R', true},
+	{"rename to ", 'R', false},
+	{"copy from ", 'C', true},
+	{"copy to ", 'C', false},
+}
+
+func isMoveHeader(line string) bool {
+	_, _, path := parseMoveHeader(line)
+	return path != ""
+}
+
+// parseMoveHeader reads one rename or copy header. path is empty when line is
+// not one.
+func parseMoveHeader(line string) (kind byte, from bool, path string) {
+	for _, h := range moveHeaders {
+		if strings.HasPrefix(line, h.prefix) {
+			return h.kind, h.from, strings.TrimPrefix(line, h.prefix)
+		}
+	}
+	return 0, false, ""
 }
 
 // parseGitDiffPaths extracts the two paths from "diff --git a/x b/y",
