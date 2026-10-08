@@ -221,7 +221,7 @@ func renderRelatedCode(snippets []RelatedSnippet) string {
 		}
 		fmt.Fprintf(&b, "-- %s of %s in %s\n", oneLine(s.Kind), oneLine(s.Symbol), oneLine(s.Path))
 		for j, l := range s.Lines {
-			fmt.Fprintf(&b, "%s:%d |%s\n", s.Path, s.StartLine+j, strings.TrimSuffix(l, "\r"))
+			fmt.Fprintf(&b, "%s:%d |%s\n", oneLine(s.Path), s.StartLine+j, strings.TrimSuffix(l, "\r"))
 		}
 	}
 	b.WriteString("</related_code>")

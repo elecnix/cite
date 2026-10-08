@@ -48,6 +48,7 @@ func TestTarballStripsTheTopDirectoryAndFilters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	srv.Close() // orders the handler's writes before these reads
 	if gotPath != "/repos/owner/repo/tarball/abc123" || gotAuth != "Bearer tok" {
 		t.Fatalf("request: path=%q auth=%q", gotPath, gotAuth)
 	}
