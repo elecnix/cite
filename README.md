@@ -68,7 +68,7 @@ response Cite's schema rejected is never written down anywhere. When you need
 those bytes, opt into the wire capture:
 
 ```yaml
-      - uses: elecnix/cite@dd49586e9858a8af211a1535909b95ea5e79b7f5  # v0.11.4
+      - uses: elecnix/cite@fcb313d419570c5fb23ea668a7870e305ae51451  # v0.12.0
         with:
           capture_wire: true
         env:
