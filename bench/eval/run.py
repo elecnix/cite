@@ -156,6 +156,7 @@ def run_case(case, args, rep):
     # would put the record in a directory deleted before it is read.
     out_dir = Path(args.out).resolve() / case["id"]
     out_dir.mkdir(parents=True, exist_ok=True)
+    elapsed = 0.0
     with tempfile.TemporaryDirectory(prefix="cite-eval-") as tmp:
         wt = Path(tmp) / "wt"
         with repo_lock(Path(args.cache), case["repo"]):
@@ -184,7 +185,10 @@ def run_case(case, args, rep):
                 sh(["git", "worktree", "remove", "--force", str(wt)], cwd=bare, check=False)
     if not record_path.exists():
         return {"id": case["id"], "rep": rep, "error": "no run record", "elapsed": elapsed}
-    record = json.loads(record_path.read_text()).get("run") or {}
+    try:
+        record = json.loads(record_path.read_text()).get("run") or {}
+    except (OSError, ValueError) as e:
+        return {"id": case["id"], "rep": rep, "error": f"unreadable run record: {e}", "elapsed": elapsed}
     s = score(case, record, args.slack)
     s.update({"id": case["id"], "rep": rep, "elapsed": round(elapsed, 1)})
     return s
