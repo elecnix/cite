@@ -39,6 +39,10 @@ is what your agent must be told.
 - Summarise, filter, or rank findings for display.
 - Propose a fix **as a diff for human review**, derived from the finding's
   claim, with the human approving every change.
+- Reply to a finding it believes is wrong, quoting the line that refutes it.
+  Cite shows each file's earlier threads and their replies to its next review
+  of that file. A reply that the quoted code bears out retires the claim;
+  a bare assertion that the code is correct does not.
 
 ## What agents must not do
 

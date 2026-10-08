@@ -40,3 +40,12 @@ func TestRenderCommentMarksABlockingFinding(t *testing.T) {
 		t.Fatalf("a note is marked blocking:\n%s", note)
 	}
 }
+
+// Issue #132: each finding says how to contest it in a way the next review
+// reads, so an agent's natural reply is the exit rather than a dead end.
+func TestRenderCommentTellsTheReaderHowToContestIt(t *testing.T) {
+	body := renderComment(model.ValidatedFinding{Finding: model.Finding{Title: "t", Category: model.CategoryCrash}, Path: "a.go"})
+	if !strings.Contains(body, "Reply quoting the line that refutes it") {
+		t.Fatalf("no reply hint:\n%s", body)
+	}
+}
