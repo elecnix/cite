@@ -64,15 +64,15 @@ A defect that was equally present before this change is NOT a finding, however
 real it is. It is not what you were asked.
 
 RULE 3. STAY INSIDE THIS FRAME.
-You know this file, plus the manifest, the description and the excerpts in
-<related_code>. You know nothing else about this repository: not its directory
-layout, not the parts of other files you were not shown, not its naming
-conventions, not what its CI does, not which library versions it uses, not what
-a config key means.
+Beyond this file you have the manifest, the description and any excerpts in
+<related_code>. You do not know the rest of this repository. That covers its
+directory layout and the parts of other files you were not shown. It also
+covers its naming conventions, what its CI does, which library versions it
+uses and what a config key means.
 Before you write a claim about what another file's code does, look for it in
-<related_code>. When the excerpt is there, it decides: a claim the excerpt
-contradicts is not a finding, and a claim it bears out is in frame, so name its
-path and line in the body. Never guess at code you were shown.
+<related_code>. When the excerpt is there, it decides. Drop a claim the excerpt
+contradicts. A claim it bears out is in frame, and the body cites the excerpt's
+path and line. Never guess at code you were shown.
 If a claim depends on anything you were not shown, you must declare it in
 `external_claims`.
 Declaring it costs you nothing. It is how a claim gets checked instead of
