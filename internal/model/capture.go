@@ -668,6 +668,17 @@ func isCredentialHeader(name string) bool {
 // capture is off, and it never changes what the caller does next. The retry
 // budget, the finding set and the verdict are all decided before this is
 // called.
+// NoteCapture adds a detail to the wire capture of a response the reviewer
+// kept, leaving its outcome as it was: the echo guard relabels a response's
+// path and then uses it, so the call is not a parse failure.
+func (r *CompletionResponse) NoteCapture(detail string) {
+	if r == nil || r.capture == nil || r.captureCall == nil || detail == "" {
+		return
+	}
+	r.captureCall.OutcomeDetail = detail
+	r.capture.write(r.captureCall)
+}
+
 func (r *CompletionResponse) MarkRejected(reason error) {
 	if r == nil || r.capture == nil || r.captureCall == nil || reason == nil {
 		return

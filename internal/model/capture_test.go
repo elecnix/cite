@@ -807,3 +807,24 @@ func TestResponseHeaderOnTheMaskedListIsRedacted(t *testing.T) {
 		t.Errorf("content-type = %q, want it untouched: the mask must not widen past the credential names", got)
 	}
 }
+
+// The echo guard relabels a response's path and uses it: its capture keeps
+// the ok outcome and gains a note, rather than reading as a parse failure.
+func TestCaptureNoteKeepsTheOutcome(t *testing.T) {
+	cap := captureIn(t, 0)
+	srv := newTestServer(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(completionBody(`{"schema_version":1,"path":"other.go","outcome":"reviewed","findings":[]}`)))
+	})
+	defer srv.Close()
+	c := testClient(srv.URL)
+	c.HTTP = srv.Client()
+	resp, err := c.Complete(context.Background(), CompletionRequest{System: "s", User: "u", MaxOutputTokens: 8})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	resp.NoteCapture(`echoed path "other.go", relabeled by the echo guard and used`)
+	doc := readCapture(t, cap.Dir(), 1)
+	if doc.Outcome != CaptureOutcomeOK || !strings.Contains(doc.OutcomeDetail, "relabeled by the echo guard") {
+		t.Fatalf("outcome = %q detail = %q", doc.Outcome, doc.OutcomeDetail)
+	}
+}
