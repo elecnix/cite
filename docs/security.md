@@ -175,7 +175,7 @@ jobs:
   diff:
     runs-on: ubuntu-latest
     steps:
-      - uses: elecnix/cite@dd49586e9858a8af211a1535909b95ea5e79b7f5  # v0.11.4; diff capture mode; publishes nothing
+      - uses: elecnix/cite@fcb313d419570c5fb23ea668a7870e305ae51451  # v0.12.0; diff capture mode; publishes nothing
         # no MODEL_API_KEY here — this job holds no secrets
 ```
 
@@ -199,7 +199,7 @@ jobs:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: elecnix/cite@dd49586e9858a8af211a1535909b95ea5e79b7f5  # v0.11.4
+      - uses: elecnix/cite@fcb313d419570c5fb23ea668a7870e305ae51451  # v0.12.0
         env:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
         # The pull request number is read from `github.event.workflow_run
