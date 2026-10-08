@@ -984,7 +984,8 @@ func parseRetryAfter(v string) time.Duration {
 		return 0
 	}
 	if n, err := strconv.Atoi(v); err == nil && n > 0 {
-		return time.Duration(n) * time.Second
+		// Clamped before the multiplication, which overflows past ~292 years.
+		return time.Duration(min(n, 24*60*60)) * time.Second
 	}
 	if t, err := http.ParseTime(v); err == nil {
 		if d := time.Until(t); d > 0 {
