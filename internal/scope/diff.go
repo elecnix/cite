@@ -27,7 +27,11 @@ type Diff struct {
 type DiffFile struct {
 	Path    string
 	OldPath string
-	Hunks   []*Hunk
+	// Status is the manifest status that the section's git headers state:
+	// A, M, D, R### or C### (### = similarity), and M when no header says
+	// otherwise.
+	Status string
+	Hunks  []*Hunk
 }
 
 // Hunk is one @@ -old,count +new,count @@ region.
@@ -115,6 +119,7 @@ func ParseUnifiedDiff(text string) (*Diff, error) {
 	var cur *DiffFile
 	var hunk *Hunk
 	oldNo, newNo := 0, 0
+	similarity := 0
 
 	for i := 0; i < len(lines); i++ {
 		line := strings.TrimSuffix(lines[i], "\r")
@@ -122,9 +127,36 @@ func ParseUnifiedDiff(text string) (*Diff, error) {
 		switch {
 		case strings.HasPrefix(line, "diff --git "):
 			a, b := parseGitDiffPaths(line)
-			cur = &DiffFile{Path: b, OldPath: a}
+			cur = &DiffFile{Path: b, OldPath: a, Status: "M"}
 			d.Files = append(d.Files, cur)
 			hunk = nil
+			similarity = 0
+
+		// Extended git headers sit between "diff --git" and the first hunk,
+		// so they are read only while no hunk is open: inside a hunk the same
+		// text is file content.
+		case cur != nil && hunk == nil && strings.HasPrefix(line, "new file mode "):
+			cur.Status = "A"
+
+		case cur != nil && hunk == nil && strings.HasPrefix(line, "deleted file mode "):
+			cur.Status = "D"
+
+		case cur != nil && hunk == nil && strings.HasPrefix(line, "similarity index "):
+			similarity, _ = strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(line, "similarity index "), "%"))
+
+		case cur != nil && hunk == nil && strings.HasPrefix(line, "rename from "):
+			cur.Status = fmt.Sprintf("R%03d", similarity)
+			cur.OldPath = strings.TrimPrefix(line, "rename from ")
+
+		case cur != nil && hunk == nil && strings.HasPrefix(line, "rename to "):
+			cur.Path = strings.TrimPrefix(line, "rename to ")
+
+		case cur != nil && hunk == nil && strings.HasPrefix(line, "copy from "):
+			cur.Status = fmt.Sprintf("C%03d", similarity)
+			cur.OldPath = strings.TrimPrefix(line, "copy from ")
+
+		case cur != nil && hunk == nil && strings.HasPrefix(line, "copy to "):
+			cur.Path = strings.TrimPrefix(line, "copy to ")
 
 		case strings.HasPrefix(line, "--- "):
 			if cur != nil {

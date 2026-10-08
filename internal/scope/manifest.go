@@ -3,9 +3,10 @@
 // diff parser, risk ranking above 40 flagged files, and the prompt envelope.
 //
 // The manifest is the only authority on which files exist (§7). It is built
-// either from `git diff --name-status -M -C` output or from the GitHub REST
-// "List pull request files" response; both constructors converge on
-// ManifestEntry so downstream code never sees two shapes.
+// from `git diff --name-status -M -C` output, from the file sections of a
+// unified diff, or from the GitHub REST "List pull request files" response.
+// The constructors converge on ManifestEntry so downstream code never sees
+// two shapes.
 package scope
 
 import (
@@ -36,6 +37,37 @@ func (e ManifestEntry) ExistsAtHead() bool {
 		return false
 	}
 	return true // A, M, R### target, C### target
+}
+
+// ManifestFromDiff builds the manifest from a parsed unified diff: one entry
+// per file section, with the status its git headers state and the added and
+// deleted line counts of its hunks. Local mode reads `git diff` output, which
+// has no name-status block, and a context line such as " A `tool` launch"
+// parses as a name-status row. The file sections are the only rows that diff
+// text can be trusted to state.
+func ManifestFromDiff(d *Diff) []ManifestEntry {
+	var out []ManifestEntry
+	for _, f := range d.Files {
+		e := ManifestEntry{Status: f.Status, Path: f.Path}
+		if e.Status == "" {
+			e.Status = "M"
+		}
+		if strings.HasPrefix(e.Status, "R") || strings.HasPrefix(e.Status, "C") {
+			e.OldPath = f.OldPath
+		}
+		for _, h := range f.Hunks {
+			for _, l := range h.Lines {
+				switch l.Kind {
+				case LineAdded:
+					e.Adds++
+				case LineRemoved:
+					e.Dels++
+				}
+			}
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // ParseNameStatus parses `git diff --name-status -M -C` output. Lines look
