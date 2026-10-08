@@ -113,14 +113,28 @@ Coverage failure means `COULD_NOT_EVALUATE`, which is fail-closed on purpose: a
 review that did not read everything must not look like a clean pass. The check
 summary names the cause:
 
-- **A file errored or the provider was unavailable.** Retry the run; if it
-  recurs, check the fallback configuration in
-  [configuration.md](configuration.md#fallback).
-- **`parse_failure`.** The model's response could not be decoded. Blank bodies
-  and responses that fail strict JSON decoding (truncated output, single-quoted
-  keys) are retried from the run-global bucket before giving up; a semantic
-  schema violation or a wrong-path echo is not retried, because re-asking
-  invites a matching quote for the same wrong claim.
+- **A file errored or the provider was unavailable.** Retry the run. If it
+  recurs, move the call to an endpoint that answers: the action's
+  `model_base_url` and `model_id` inputs are what the review call reads, so
+  changing them in the workflow's `with:` block and re-running switches
+  provider for every run after that. Through a router such as OpenRouter, also
+  set the action's `require_parameters` input to `'true'`: routing then refuses
+  an endpoint that drops the schema instead of answering in prose; see
+  [require parameters](configuration.md#require-parameters).
+- **`parse_failure`.** The model's answer could not be decoded, or it broke the
+  review schema. A blank body, a strict JSON decode failure (truncated output,
+  single-quoted keys) and a schema violation are all re-asked, twice per file
+  and from that file's own budget, so a file the model cannot answer spends two
+  re-asks of its own and none of the run's retry budget. The rest of the diff
+  is reviewed regardless, and the run record reports how many re-asks each
+  file spent. A wrong-path echo is not re-asked: cite relabels it in place, and
+  every finding in the relabelled answer still faces the full validation
+  pipeline. When every file fails, the endpoint is not enforcing the schema, so
+  set the action's `structured_output` input to `tools`, the fix for a provider
+  that ignores `response_format`; see
+  [the section below](#the-provider-ignores-response_format). The rejected body
+  is not in the forensics archive, which captures a token-cap truncation only;
+  `CITE_DEBUG=1` on the review job is what dumps it.
 - **`output truncated at token cap (finish_reason=length)`.** The review of that
   file did not fit in the output budget. The model wrote an answer and Cite cut
   it off, so the failure repeats and Cite does not retry. Raise
