@@ -881,7 +881,6 @@ func carryIntoRecord(rec *model.RunRecord, prev *stickyState, toReview []string,
 
 func nowClock() time.Time { return time.Now() }
 
-
 // carryBlockingSet is the repository's blocking categories as the reviewer
 // resolves them: the configured set, or the defaults when unset.
 func carryBlockingSet(cfg *config.Config) map[model.Category]bool {

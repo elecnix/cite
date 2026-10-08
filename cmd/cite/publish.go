@@ -207,7 +207,13 @@ func pickStart(start int) int {
 func renderComment(f model.ValidatedFinding) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "<!-- cite:fingerprint=%s -->\n", f.Fingerprint)
-	fmt.Fprintf(&sb, "**%s** · %s\n\n", f.Category, f.Title)
+	if f.Blocks {
+		// Which posted finding holds the gate red, said where the finding
+		// is (issue #129).
+		fmt.Fprintf(&sb, "**%s** · %s · *blocks the merge*\n\n", f.Category, f.Title)
+	} else {
+		fmt.Fprintf(&sb, "**%s** · %s\n\n", f.Category, f.Title)
+	}
 	if f.Body != "" {
 		sb.WriteString(f.Body)
 		sb.WriteString("\n\n")
