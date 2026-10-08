@@ -376,6 +376,14 @@ func buildFileContext(e scope.ManifestEntry, in *Inputs) (*fileContext, *scope.E
 		Removed: removed,
 		Prior:   in.PriorThreads[e.Path],
 	}
+	if in.Related != nil {
+		for _, sn := range in.Related.Related(e.Path, lines, added) {
+			env.Related = append(env.Related, scope.RelatedSnippet{
+				Path: sn.Path, Symbol: sn.Symbol, Kind: string(sn.Kind),
+				StartLine: sn.StartLine, Lines: sn.Lines,
+			})
+		}
+	}
 	if partial {
 		env.Context = "partial"
 	}
