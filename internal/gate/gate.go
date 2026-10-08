@@ -302,13 +302,13 @@ func skippedAggregate(files []model.FileOutcome) map[string][]string {
 // detail any of them carries as its example, or "" when the reasons differ. Details are
 // not compared: a provider's message carries a per-request reference.
 func sharedCause(files []model.FileOutcome) string {
-	reason, detail := "", ""
+	reason, detail, seen := "", "", false
 	for _, f := range files {
 		if f.State != model.FileErrored {
 			continue
 		}
-		if reason == "" {
-			reason = f.Reason
+		if !seen {
+			reason, seen = f.Reason, true
 		} else if f.Reason != reason {
 			return ""
 		}

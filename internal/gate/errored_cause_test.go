@@ -72,3 +72,14 @@ func TestSharedCauseTakesTheFirstDetailPresent(t *testing.T) {
 		t.Fatalf("sharedCause = %q", got)
 	}
 }
+
+// An empty reason is a reason like any other, not "not seen yet".
+func TestSharedCauseDoesNotTreatAnEmptyReasonAsUnset(t *testing.T) {
+	got := sharedCause([]model.FileOutcome{
+		{Path: "a.go", State: model.FileErrored},
+		{Path: "b.go", State: model.FileErrored, Reason: "model_error"},
+	})
+	if got != "" {
+		t.Fatalf("sharedCause = %q, want no shared cause", got)
+	}
+}
