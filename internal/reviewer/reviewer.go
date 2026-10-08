@@ -67,7 +67,7 @@ type Options struct {
 	// Verify installs the production verifier (modelVerifier) when
 	// DiscVerifier is nil: one call per surviving finding, on Client.
 	Verify bool
-	Logger       func(format string, args ...any)
+	Logger func(format string, args ...any)
 	// StructuredOutput selects how the model is asked for schema-shaped JSON:
 	// response_format (empty/default) or a forced function tool. It is wired
 	// from the GitHub Action's structured_output input.
