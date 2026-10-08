@@ -532,6 +532,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 	// carries partial results, the call log and usage — exactly what an
 	// operator needs to answer "why did this take so long".
 	writeRecordOut(rec, err, recordOut)
+	runErr := err
 	if err != nil && rec == nil {
 		return concludeFailure(ctx, c, checkID, dryRun, gateOpts, model.VerdictCouldNotEvaluate, err.Error())
 	}
@@ -631,6 +632,9 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 	applyCost(rec, cfg)
 	verdict, reason := gate.Decide(rec, cfg, gate.Options{})
 	rec.Verdict, rec.VerdictReason = verdict, reason
+	// The forensics record was written before the gate decided; write it
+	// again so the archived copy carries the verdict and its reason.
+	writeRecordOut(rec, runErr, recordOut)
 
 	// Surface anchor_invalid drops on the Actions run page (issue #42): the
 	// raw CI log is truncated, ANSI-mangled, and not where a reviewer looks.
@@ -700,10 +704,23 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 			return err
 		}
 	}
-	if verdict == model.VerdictPass {
+	return gateExit(verdict, gateOpts)
+}
+
+// gateExit is the process outcome of a concluded run. A pass exits zero. A
+// COULD_NOT_EVALUATE the repository asked to be neutral also exits zero:
+// the check run already concluded neutral, and a non-zero exit failed the
+// job that ran it, so a required "review" job blocked the merge that
+// tool_failure_blocks: false exists to let through. A finding always fails.
+func gateExit(v model.Verdict, opts gate.Options) error {
+	if v == model.VerdictPass {
 		return nil
 	}
-	return fmt.Errorf("gate: %s", verdict)
+	if v == model.VerdictCouldNotEvaluate && opts.NeutralToolFailure {
+		logToStderr("cite: %s concluded neutral (tool_failure_blocks: false); the job exits zero", v)
+		return nil
+	}
+	return fmt.Errorf("gate: %s", v)
 }
 
 func concludeFailure(ctx context.Context, c *githubclient.Client, checkID int64, dryRun bool, gateOpts gate.Options, v model.Verdict, reason string) error {
@@ -713,7 +730,7 @@ func concludeFailure(ctx context.Context, c *githubclient.Client, checkID int64,
 			return err
 		}
 	}
-	return fmt.Errorf("gate: %s", v)
+	return gateExit(v, gateOpts)
 }
 
 func containsID(ids []int64, id int64) bool {
