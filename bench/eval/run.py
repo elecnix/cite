@@ -118,7 +118,8 @@ def score(case, record, slack):
         fp_any = findings
     else:
         # A finding that hits no label is unlabelled: reported, not scored.
-        fp_any = [f for l in must_not for f in hits(l)]
+        # Each finding counts once, however many refuted labels it overlaps.
+        fp_any = [f for f in findings if any(f in hits(l) for l in must_not)]
     unlabelled = [f for f in findings
                   if not any(f.get("path") == l["path"] and overlaps(finding_anchor(f), l["lines"], slack)
                              for l in must_flag + must_not)]
@@ -212,7 +213,7 @@ def main():
             print(json.dumps(res), file=sys.stderr, flush=True)
 
     results.sort(key=lambda r: (r["id"], r["rep"]))
-    tot = {k: 0 for k in ("tp", "fn", "fp_labels", "fp_findings", "findings", "blocking", "errored", "runs")}
+    tot = {k: 0 for k in ("tp", "fn", "fp_labels", "fp_findings", "unlabelled", "findings", "blocking", "errored", "runs")}
     print(f"{'case':44} {'rep':>3} {'tp':>3} {'fn':>3} {'fpL':>3} {'fpF':>3} {'all':>3} {'blk':>3} {'err':>3} {'secs':>6}")
     for r in results:
         if "error" in r:
@@ -223,7 +224,7 @@ def main():
         err = len(r["errored_files"])
         print(f"{r['id'][:44]:44} {r['rep']:>3} {r['tp']:>3} {r['fn']:>3} {r['fp_labels']:>3} {r['fp_findings']:>3} "
               f"{r['findings']:>3} {r['blocking']:>3} {err:>3} {r['elapsed']:>6}")
-        for k in ("tp", "fn", "fp_labels", "fp_findings", "findings", "blocking"):
+        for k in ("tp", "fn", "fp_labels", "fp_findings", "unlabelled", "findings", "blocking"):
             tot[k] += r[k]
         tot["errored"] += 1 if err else 0
         tot["runs"] += 1
@@ -232,6 +233,7 @@ def main():
     print()
     print(f"runs={tot['runs']} recall={recall:.2f} ({tot['tp']}/{labelled}) "
           f"false_positive_findings={tot['fp_findings']} labelled_fp_hits={tot['fp_labels']} "
+          f"unlabelled_findings={tot['unlabelled']} "
           f"findings={tot['findings']} blocking={tot['blocking']} runs_with_errored_files={tot['errored']}")
     if args.json:
         Path(args.json).write_text(json.dumps(results, indent=2))
