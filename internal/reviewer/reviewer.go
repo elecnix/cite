@@ -101,6 +101,11 @@ type Inputs struct {
 	// Related finds the code in other files that a file's changed lines
 	// depend on. Nil means none: each call then sees its one file only.
 	Related RelatedFinder
+	// Unchanged names the files whose content an earlier run of this pull
+	// request already reviewed to completion. They are recorded as skipped
+	// (unchanged_since_review) and cost no model call; the caller carries
+	// their earlier findings forward.
+	Unchanged map[string]bool
 }
 
 // RelatedFinder returns the excerpts of other files that the changed lines
@@ -674,6 +679,12 @@ func (r *Reviewer) Run(ctx context.Context, in Inputs) (*model.RunRecord, error)
 			if in.PostImage[e.Path] == nil {
 				fo.State = model.FileErrored
 				fo.Reason = "missing_post_image"
+				r.recordFile(rec, fo)
+				continue
+			}
+			if in.Unchanged[e.Path] {
+				fo.State = model.FileSkipped
+				fo.Reason = scope.SkipReasonUnchanged
 				r.recordFile(rec, fo)
 				continue
 			}

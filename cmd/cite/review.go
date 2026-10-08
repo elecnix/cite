@@ -356,6 +356,11 @@ type stickyState struct {
 	BlobSHAs      map[string]string `json:"blob_shas,omitempty"`
 	Findings      []threadFinding   `json:"findings,omitempty"`
 	ReplyVerdicts map[string]string `json:"reply_verdicts,omitempty"` // fingerprint → reply classification cache
+	// DeltaSafe marks a state whose BlobSHAs hold only files whose review
+	// completed. A state written before it existed recorded every file,
+	// errored ones included, so its SHAs never decide that a file may be
+	// skipped as unchanged.
+	DeltaSafe bool `json:"delta_safe,omitempty"`
 }
 
 const stickyMarker = "<!-- cite-sticky -->"
@@ -518,7 +523,23 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 	// again, after the review, and fails the run on its own error. Report
 	// mode reads no live threads anywhere, so its prompts carry none.
 	var prior map[string][]scope.PriorThread
+	// Delta review: a file whose content an earlier run of this pull request
+	// reviewed to completion is not reviewed again. Its findings carry
+	// forward below, so a push that touches one file costs one file's
+	// review, and an untouched file cannot surface new findings because a
+	// model answered differently the second time (issue #132).
+	var prevState *stickyState
+	unchanged := map[string]bool{}
 	if !reportMode {
+		prevState = readSticky(ctx, c, num, stickyMarkerFor(reviewerID))
+		for _, e := range entries {
+			if x, ok := extras[e.Path]; ok && prevState.DeltaSafe && e.Status != "D" && x.BlobSHA != "" && prevState.BlobSHAs[e.Path] == x.BlobSHA {
+				unchanged[e.Path] = true
+			}
+		}
+		if len(unchanged) > 0 {
+			logToStderr("delta: %d of %d files are unchanged since a completed review and carry their findings forward", len(unchanged), len(entries))
+		}
 		if gthreads, terr := c.ListReviewThreads(ctx, num); terr != nil {
 			logToStderr("warning: review threads unavailable before the review; files are reviewed without their prior threads: %v", terr)
 		} else {
@@ -534,6 +555,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 		Nonce:         newNonce(),
 		PriorThreads:  prior,
 		Related:       relatedFromAPI(ctx, c, owner, repo, pr.HeadSHA),
+		Unchanged:     unchanged,
 	})
 	// Forensics first, whatever the run's fate: a failed or killed run still
 	// carries partial results, the call log and usage — exactly what an
@@ -582,7 +604,6 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 		// fresh; findings on untouched files carry forward. Fails toward
 		// re-review: carried findings re-enter the plan so their threads stay
 		// alive.
-		prevState := readSticky(ctx, c, num, stickyMarkerFor(reviewerID))
 		toReview := publisher.FilesToReview(prevState.BlobSHAs, curSHAs)
 		if len(prevState.BlobSHAs) > 0 && len(toReview) < len(entries) {
 			logToStderr("incremental: %d of %d files changed content since last review", len(toReview), len(entries))
@@ -694,7 +715,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 				_ = c.MinimizeComment(ctx, t.ID)
 			}
 		}
-		writeSticky(ctx, c, num, stickyMarkerFor(reviewerID), rec, ledger, curSHAs, plan.CommentsToPost)
+		writeSticky(ctx, c, num, stickyMarkerFor(reviewerID), rec, ledger, completedSHAs(rec.Files, curSHAs), standingFindings(rec.Findings, plan))
 	} else {
 		fmt.Printf("dry-run: would post %d comment(s), resolve %d thread(s), minimise %d\n",
 			len(comments), len(plan.ThreadsToResolve), len(plan.ThreadsToMinimise))
@@ -893,4 +914,44 @@ func carryBlockingSet(cfg *config.Config) map[model.Category]bool {
 		set[c] = true
 	}
 	return set
+}
+
+// completedSHAs keeps the blob SHA of each file whose review completed, or
+// that an approved reason skipped, so the next run may treat it as
+// unchanged. An errored file's SHA is left out: an incomplete review must
+// be retried, never carried forward as if it had happened.
+func completedSHAs(files []model.FileOutcome, cur map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, f := range files {
+		done := f.State == model.FileReviewed || (f.State == model.FileSkipped && scope.IsApprovedSkipReason(f.Reason))
+		if sha, ok := cur[f.Path]; ok && done {
+			out[f.Path] = sha
+		}
+	}
+	return out
+}
+
+// standingFindings is what the sticky records for the next run to carry:
+// every finding of this run, fresh or carried, except the ones a dismissal
+// suppressed or a human-resolved thread absorbed. Recording only the
+// comments posted this run lost a carried finding the moment its thread
+// already existed, and with it the block it held on an unchanged file.
+func standingFindings(findings []model.ValidatedFinding, plan publisher.ReconciliationPlan) []model.ValidatedFinding {
+	gone := map[string]bool{}
+	for _, f := range plan.SuppressedByLedger {
+		gone[f.Fingerprint] = true
+	}
+	for _, f := range plan.MatchedResolved {
+		gone[f.Fingerprint] = true
+	}
+	seen := map[string]bool{}
+	var out []model.ValidatedFinding
+	for _, f := range findings {
+		if f.Fingerprint == "" || gone[f.Fingerprint] || seen[f.Fingerprint] {
+			continue
+		}
+		seen[f.Fingerprint] = true
+		out = append(out, f)
+	}
+	return out
 }

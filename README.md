@@ -95,6 +95,9 @@ go with it (`CITE_CAPTURE_DIR`, `CITE_CAPTURE_MAX_BYTES`).
 - At most 10 comments per review, at most 2 per file. Small pull requests get
   at most 3.
 - No style comments. Your formatter owns that.
+- A push reviews only the files whose content changed since the last completed
+  review. Cite keeps its earlier findings on the other files as they were, so
+  code nobody touched cannot grow new comments.
 - Nothing to say means nothing posted. It never posts "LGTM".
 - Every comment quotes the exact line it is about. If the quote does not match
   your file, the comment is dropped before you see it.

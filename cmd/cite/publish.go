@@ -309,7 +309,7 @@ func writeSticky(ctx context.Context, c *githubclient.Client, prNum int, marker 
 			Title: f.Title, Evidence: f.Evidence, Blocks: f.Blocks,
 		})
 	}
-	st := stickyState{Ledger: blob, BlobSHAs: shas, Findings: tfs}
+	st := stickyState{Ledger: blob, BlobSHAs: shas, Findings: tfs, DeltaSafe: true}
 	raw, _ := json.Marshal(st)
 	var sb strings.Builder
 	sb.WriteString(marker + "\n")
