@@ -142,10 +142,10 @@ func refutationQuoted(in VerifyInput, a verdictAnswer) bool {
 }
 
 // quotes reports whether q is a substantial quote of line: contained in it
-// and at least half its trimmed length, or the whole of a short line.
+// and at least half its trimmed length.
 func quotes(line, q string) bool {
 	t := strings.TrimSpace(line)
-	return strings.Contains(t, q) && (len(q)*2 >= len(t) || len(q) >= 40)
+	return strings.Contains(t, q) && len(q)*2 >= len(t)
 }
 
 // renderVerifyRequest lays out the file, the related excerpts and the claim

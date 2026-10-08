@@ -120,10 +120,11 @@ func relatedSnippetFixture() scope.RelatedSnippet {
 func TestRefutationNeedsASubstantialQuote(t *testing.T) {
 	in := VerifyInput{Path: "a.go", Lines: []string{`	if len(calls) < 4 || len(efforts) < 4 { // guard`}}
 	for q, want := range map[string]bool{
-		"if": false,
+		"if":     false,
 		"return": false,
 		"if len(calls) < 4 || len(efforts) < 4 {": true,
-		"len(calls) < 4 || len(efforts) < 4": true,
+		"len(calls) < 4 || len(efforts) < 4":      true,
+		"calls) < 4 || len(effo":                  false,
 	} {
 		if got := refutationQuoted(in, verdictAnswer{RefutingLine: 1, RefutingQuote: q}); got != want {
 			t.Errorf("quote %q: %v, want %v", q, got, want)
