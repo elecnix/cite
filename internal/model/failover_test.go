@@ -82,3 +82,34 @@ func TestNoFallbackIsThePrimaryItself(t *testing.T) {
 		t.Fatal("without a chain the primary must be used directly")
 	}
 }
+
+type capStub struct {
+	legStub
+	got []int
+}
+
+func (c *capStub) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
+	c.got = append(c.got, req.MaxOutputTokens)
+	return c.legStub.Complete(ctx, req)
+}
+
+// A leg with a fallback behind it gets the bounded budget; the last leg gets
+// what the caller asked for; a caller asking for less keeps its own number.
+func TestFailoverCapsEveryLegButTheLast(t *testing.T) {
+	a := &capStub{legStub: legStub{id: "a", err: fmt.Errorf("%w: no answer", ErrRunaway)}}
+	b := &capStub{legStub: legStub{id: "b"}}
+	c := NewFailoverClient(a, []Client{b}, nil)
+	if _, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 131072}); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.got) != 1 || a.got[0] != DefaultLegCap || len(b.got) != 1 || b.got[0] != 131072 {
+		t.Fatalf("budgets: primary %v, last leg %v", a.got, b.got)
+	}
+	a.got, b.got = nil, nil
+	if _, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 8192}); err != nil {
+		t.Fatal(err)
+	}
+	if a.got[0] != 8192 {
+		t.Fatalf("a smaller request was raised to %d", a.got[0])
+	}
+}
