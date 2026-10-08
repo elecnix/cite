@@ -1,0 +1,24 @@
+{
+  "repo": "elecnix/cite",
+  "pr": 169,
+  "base": "c58025460dd1da52430c80367667bf9da0d738c1",
+  "head": "2a6543bb747e2d11cbb75d8d6cd032d6fd01a738",
+  "source": "https://github.com/elecnix/cite/pull/169",
+  "plant": [
+    {
+      "path": "cmd/cite/prior_threads.go",
+      "find": "if pt.StartLine == 0 {",
+      "replace": "if pt.StartLine != 0 {"
+    }
+  ],
+  "must_flag": [
+    {
+      "path": "cmd/cite/prior_threads.go",
+      "lines": [
+        38,
+        38
+      ],
+      "rubric": "A thread with a real start line has it overwritten by its end line, and a single-line thread keeps start 0."
+    }
+  ]
+}

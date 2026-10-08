@@ -1,0 +1,24 @@
+{
+  "repo": "elecnix/cite",
+  "pr": 165,
+  "base": "2a6543bb747e2d11cbb75d8d6cd032d6fd01a738",
+  "head": "cafb0f34fac90345cff0d671c02244ada90c332f",
+  "source": "https://github.com/elecnix/cite/pull/165",
+  "plant": [
+    {
+      "path": "internal/reviewer/reviewer.go",
+      "find": "if cap <= 0 || cap < recoveryMaxOutputTokens {",
+      "replace": "if cap <= 0 || cap > recoveryMaxOutputTokens {"
+    }
+  ],
+  "must_flag": [
+    {
+      "path": "internal/reviewer/reviewer.go",
+      "lines": [
+        242,
+        242
+      ],
+      "rubric": "The comparison is inverted: a cap above the recovery bound is returned unchanged, so the recovery re-asks with the same budget, and a cap below it is raised."
+    }
+  ]
+}

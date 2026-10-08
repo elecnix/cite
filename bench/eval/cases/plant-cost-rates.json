@@ -1,0 +1,24 @@
+{
+  "repo": "elecnix/cite",
+  "pr": 148,
+  "base": "d29d9491242168fb42e360f7552efb858dbcbb1e",
+  "head": "e25633ee44f0c3683dd39aacbb8ae0613491b20b",
+  "source": "https://github.com/elecnix/cite/pull/148",
+  "plant": [
+    {
+      "path": "cmd/cite/cost.go",
+      "find": "if !declaresAnyRates(cfg) {",
+      "replace": "if declaresAnyRates(cfg) {"
+    }
+  ],
+  "must_flag": [
+    {
+      "path": "cmd/cite/cost.go",
+      "lines": [
+        48,
+        48
+      ],
+      "rubric": "The early return now fires when rates are declared, so declared rates are never applied and the cost reads zero."
+    }
+  ]
+}

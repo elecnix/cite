@@ -1,0 +1,24 @@
+{
+  "repo": "elecnix/cite",
+  "pr": 145,
+  "base": "93f95db6a72cf3826ac21af5dae6d5533dfafddc",
+  "head": "d29d9491242168fb42e360f7552efb858dbcbb1e",
+  "source": "https://github.com/elecnix/cite/pull/145",
+  "plant": [
+    {
+      "path": "internal/scope/span.go",
+      "find": "func EvidenceGone(content []byte, evidence []model.Evidence) bool {\n\tif len(evidence) == 0 || !verifiable(evidence) {",
+      "replace": "func EvidenceGone(content []byte, evidence []model.Evidence) bool {\n\tif len(evidence) == 0 && !verifiable(evidence) {"
+    }
+  ],
+  "must_flag": [
+    {
+      "path": "internal/scope/span.go",
+      "lines": [
+        73,
+        73
+      ],
+      "rubric": "Unverifiable evidence no longer stops EvidenceGone, so a thread can be resolved as gone on a basis that cannot be checked."
+    }
+  ]
+}

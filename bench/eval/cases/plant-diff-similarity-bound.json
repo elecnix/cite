@@ -1,0 +1,24 @@
+{
+  "repo": "elecnix/cite",
+  "pr": 171,
+  "base": "f5e55389870174e017265f92e9dc4cceb71a1830",
+  "head": "c58025460dd1da52430c80367667bf9da0d738c1",
+  "source": "https://github.com/elecnix/cite/pull/171",
+  "plant": [
+    {
+      "path": "internal/scope/diff.go",
+      "find": "if err != nil || n < 0 || n > 100 {",
+      "replace": "if err != nil || n < 0 || n >= 100 {"
+    }
+  ],
+  "must_flag": [
+    {
+      "path": "internal/scope/diff.go",
+      "lines": [
+        154,
+        154
+      ],
+      "rubric": "A pure rename (similarity index 100%) is rejected as malformed: the bound excludes 100."
+    }
+  ]
+}

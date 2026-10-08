@@ -23,8 +23,14 @@ Case format (one JSON file per case):
       "description": "optional pull request body",
       "config": "optional .github/cite.yml content",
       "must_flag":     [{"path": "a.go", "lines": [10, 12], "rubric": "..."}],
-      "must_not_flag": [{"path": "a.go", "lines": [40, 40], "why": "..."}]
+      "must_not_flag": [{"path": "a.go", "lines": [40, 40], "why": "..."}],
+      "plant": [{"path": "a.go", "find": "if n < max {", "replace": "if n <= max {"}]
     }
+
+"plant" plants a defect: each find string must occur exactly once in the
+file at head, and is replaced before the diff is taken, so the planted
+line is part of the change under review. A must_flag label on the planted
+line measures recall on a known defect in real code.
 
 Lines are post-change line numbers at head. A finding hits a label when its
 path matches and its anchor overlaps the label's range widened by --slack.
@@ -162,7 +168,15 @@ def run_case(case, args, rep):
         with repo_lock(Path(args.cache), case["repo"]):
             sh(["git", "worktree", "add", "--detach", "--quiet", str(wt), case["head"]], cwd=bare)
         try:
-            diff = sh(["git", "diff", f"{case['base']}...{case['head']}"], cwd=wt).stdout
+            for p in case.get("plant") or []:
+                f = wt / p["path"]
+                text = f.read_text()
+                if text.count(p["find"]) != 1:
+                    raise RuntimeError(f"plant: {p['path']}: {p['find']!r} occurs {text.count(p['find'])} times, want 1")
+                f.write_text(text.replace(p["find"], p["replace"]))
+            merge_base = sh(["git", "merge-base", case["base"], case["head"]], cwd=wt).stdout.strip()
+            # Against the working tree, so a planted defect is part of the diff.
+            diff = sh(["git", "diff", merge_base], cwd=wt).stdout
             diff_path = Path(tmp) / "pr.diff"
             diff_path.write_text(diff)
             cfg_path = Path(tmp) / "cite.yml"

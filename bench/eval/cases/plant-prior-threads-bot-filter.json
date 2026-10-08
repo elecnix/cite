@@ -1,0 +1,24 @@
+{
+  "repo": "elecnix/cite",
+  "pr": 169,
+  "base": "c58025460dd1da52430c80367667bf9da0d738c1",
+  "head": "2a6543bb747e2d11cbb75d8d6cd032d6fd01a738",
+  "source": "https://github.com/elecnix/cite/pull/169",
+  "plant": [
+    {
+      "path": "cmd/cite/prior_threads.go",
+      "find": "if rc.AuthorLogin == \"\" || strings.HasSuffix(rc.AuthorLogin, \"[bot]\") {",
+      "replace": "if rc.AuthorLogin == \"\" || !strings.HasSuffix(rc.AuthorLogin, \"[bot]\") {"
+    }
+  ],
+  "must_flag": [
+    {
+      "path": "cmd/cite/prior_threads.go",
+      "lines": [
+        42,
+        42
+      ],
+      "rubric": "The filter is inverted: human replies are skipped and only bot replies are kept, the opposite of the comment above it."
+    }
+  ]
+}
