@@ -374,6 +374,7 @@ func buildFileContext(e scope.ManifestEntry, in *Inputs) (*fileContext, *scope.E
 		Status:  e.Status,
 		Lines:   envLines,
 		Removed: removed,
+		Prior:   in.PriorThreads[e.Path],
 	}
 	if partial {
 		env.Context = "partial"

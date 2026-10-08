@@ -493,12 +493,27 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 		RequireParameters: requireParameters,
 	})
 
+	// Issue #168: each file's review call carries the earlier Cite threads
+	// on that file and the replies under them. A failed fetch only costs
+	// that context, so it warns. Reconciliation below fetches the threads
+	// again, after the review, and fails the run on its own error. Report
+	// mode reads no live threads anywhere, so its prompts carry none.
+	var prior map[string][]scope.PriorThread
+	if !reportMode {
+		if gthreads, terr := c.ListReviewThreads(ctx, num); terr != nil {
+			logToStderr("warning: review threads unavailable before the review; files are reviewed without their prior threads: %v", terr)
+		} else {
+			prior = priorThreadsFrom(gthreads)
+		}
+	}
+
 	rec, err := r.Run(ctx, reviewer.Inputs{
 		Manifest:      entries,
 		Diffs:         diffs,
 		PostImage:     post,
 		PRDescription: pr.Body,
 		Nonce:         newNonce(),
+		PriorThreads:  prior,
 	})
 	// Forensics first, whatever the run's fate: a failed or killed run still
 	// carries partial results, the call log and usage — exactly what an
@@ -593,7 +608,11 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 			SpanGone:        spanGone,
 			ReReviewedFresh: func(t publisher.LiveThread) bool { return reviewedOK[t.Path] },
 			BlobSHAs:        curSHAs,
+			SameClaim:       newSameClaimMatcher(ctx, modelClient, threadData, sameClaimMaxCalls),
 		})
+		if n := len(plan.MatchedResolved); n > 0 {
+			logToStderr("%d finding(s) restate the claim of a resolved thread whose code still stands; not re-filed, gate unchanged (issue #168)", n)
+		}
 	}
 
 	applyCost(rec, cfg)

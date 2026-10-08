@@ -35,6 +35,27 @@ type EnvelopeFile struct {
 	Context string // defaults to "complete"
 	Lines   []EnvelopeLine
 	Removed []RemovedLine
+	// Prior is every earlier Cite thread on this file, with the human
+	// replies under it (issue #168). Untrusted: whoever replied wrote it.
+	Prior []PriorThread
+}
+
+// PriorThread is one earlier Cite finding on the file under review. Its
+// anchor is the one it was posted with, and later pushes may have moved it.
+type PriorThread struct {
+	ID        int64 // first comment's database id
+	Category  string
+	Title     string
+	StartLine int
+	EndLine   int
+	Resolved  bool
+	Replies   []PriorReply
+}
+
+// PriorReply is one human reply under a PriorThread.
+type PriorReply struct {
+	Author string
+	Body   string
 }
 
 // BuildEnvelope renders the full prompt envelope for one review call.
@@ -45,6 +66,7 @@ type EnvelopeFile struct {
 //	<pr_description ...>  untrusted, every line prefixed "| "
 //	<file_under_review>   the one code artifact (omitted when file == nil)
 //	<removed_lines>       deleted content with old numbers (only when present)
+//	<prior_threads ...>   earlier Cite claims and replies, untrusted (only when present)
 //
 // nonce must be unique per run and is embedded in the pr_description open
 // tag; it is sanitised so it cannot terminate the tag early.
@@ -57,6 +79,9 @@ func BuildEnvelope(manifest []ManifestEntry, prDescription string, nonce string,
 		sections = append(sections, renderFileUnderReview(file))
 		if len(file.Removed) > 0 {
 			sections = append(sections, renderRemovedLines(file.Path, file.Removed))
+		}
+		if len(file.Prior) > 0 {
+			sections = append(sections, renderPriorThreads(file.Path, file.Prior, sanitizeNonce(nonce)))
 		}
 	}
 	return strings.Join(sections, "\n\n") + "\n"
@@ -139,6 +164,37 @@ func renderRemovedLines(path string, removed []RemovedLine) string {
 	}
 	b.WriteString("</removed_lines>")
 	return b.String()
+}
+
+// priorReplyIndent sets a reply's lines under its "reply by" line, after
+// the "| " prefix.
+const priorReplyIndent = "  "
+
+// renderPriorThreads prefixes every line with "| ", as renderPRDescription
+// does, so a forged close tag inside a reply stays quoted data.
+func renderPriorThreads(path string, prior []PriorThread, nonce string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "<prior_threads path=%q trust=\"untrusted\" nonce=%q>\n", path, nonce)
+	for _, t := range prior {
+		fmt.Fprintf(&b, "| thread=%d category=%s lines=%d-%d resolved=%t\n", t.ID, oneLine(t.Category), t.StartLine, t.EndLine, t.Resolved)
+		b.WriteString("| claim: " + oneLine(t.Title) + "\n")
+		for _, r := range t.Replies {
+			b.WriteString("| reply by @" + oneLine(r.Author) + ":\n")
+			// Each reply line, empty ones included, gets the "| " prefix,
+			// then an indent that sets it under its "reply by" line.
+			for _, l := range strings.Split(strings.TrimRight(r.Body, "\n"), "\n") {
+				b.WriteString("| " + priorReplyIndent + strings.TrimSuffix(l, "\r") + "\n")
+			}
+		}
+	}
+	b.WriteString("</prior_threads>")
+	return b.String()
+}
+
+// oneLine keeps a header field on its line: a newline in a title or login
+// would otherwise start an unprefixed line.
+func oneLine(s string) string {
+	return strings.NewReplacer("\r", " ", "\n", " ").Replace(s)
 }
 
 func contextOrDefault(c string) string {
