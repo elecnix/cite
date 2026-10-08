@@ -30,7 +30,6 @@ import (
 var embeddedVerifyPrompt string
 
 const (
-
 	toolNameVerdict        = "report_verdict"
 	toolVerdictDescription = "Report whether the claim holds. The argument must match this function's parameter schema exactly."
 

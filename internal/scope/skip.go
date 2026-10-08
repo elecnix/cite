@@ -27,6 +27,11 @@ const (
 	// SkipReasonOversized is reserved for callers that cap per-file payload
 	// size before reading content.
 	SkipReasonOversized = "oversized"
+	// SkipReasonUnchanged is a file whose content is byte-for-byte the one
+	// an earlier run of this pull request reviewed to completion: its
+	// findings carry forward from that review instead of being re-derived
+	// by a model that may answer differently the second time.
+	SkipReasonUnchanged = "unchanged_since_review"
 )
 
 // IsBinary reports whether data looks binary: it contains a NUL byte in the
@@ -154,6 +159,7 @@ var approvedSkipReasons = map[string]bool{
 	SkipReasonMinified:  true,
 	SkipReasonIgnored:   true,
 	SkipReasonOversized: true,
+	SkipReasonUnchanged: true,
 }
 
 // IsApprovedSkipReason reports whether a skip reason counts toward the
