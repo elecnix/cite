@@ -150,6 +150,7 @@ jobs:
           fi
 
       - name: Review this pull request with the head build of Cite
+        id: review
         env:
           MODEL_API_KEY: ${{ vars.CITE_PROVIDER == 'openrouter' && secrets.MODEL_API_KEY || secrets.OLLAMA_API_KEY }}
           MODEL_BASE_URL: ${{ vars.CITE_PROVIDER == 'openrouter' && 'https://openrouter.ai/api/v1' || 'https://ollama.com/v1' }}
@@ -195,6 +196,11 @@ jobs:
           # flag the action would have passed; without it the two legs disagreed
           # and the head build alone turned red on its own truncation failures.
           ./cite-head review --pr "$GITHUB_REPOSITORY#$PR_NUM" --config .github/cite.yml --tool-failure-blocks=false 2>&1 | tee "$CITE_LOG"
+          # A neutral COULD_NOT_EVALUATE exits zero, so failure() misses it;
+          # this output keeps its forensics archived.
+          if grep -q 'COULD_NOT_EVALUATE concluded neutral' "$CITE_LOG"; then
+            echo "could_not_evaluate=true" >> "$GITHUB_OUTPUT"
+          fi
 
       # The run record on every successful run too: calls[] carries the
       # per-call cache counters and upstream provider.
@@ -208,7 +214,7 @@ jobs:
           retention-days: 14
 
       - name: Archive forensics on failure
-        if: failure()
+        if: failure() || steps.review.outputs.could_not_evaluate == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cite-head-forensics-${{ github.run_id }}
@@ -227,7 +233,7 @@ jobs:
       # run record rather than the 30 days of the forensics bundle above. The
       # file exists only when a review truncated, hence no warning when absent.
       - name: Archive the truncated response on failure
-        if: failure()
+        if: failure() || steps.review.outputs.could_not_evaluate == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cite-head-truncated-response-${{ github.run_id }}-${{ github.run_attempt }}
