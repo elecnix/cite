@@ -243,7 +243,18 @@ func renderComment(f model.ValidatedFinding) string {
 		fmt.Fprintf(&sb, "<!-- cite:evidence=%s -->\n", data)
 	}
 	sb.WriteString(originTag())
+	sb.WriteString("\n")
+	sb.WriteString(replyHint())
 	return sb.String()
+}
+
+// replyHint tells a reader, person or agent, the one exit that works: a
+// reply with the refuting line reaches the next review of the file (issue
+// #168). Without it, the reply-and-resolve an agent naturally tries looked
+// like a dead end, and deleting the code under the claim looked like the
+// only way to stop it (issue #132).
+func replyHint() string {
+	return "> Wrong? Reply quoting the line that refutes it; Cite re-checks the claim against your reply when it next reviews this file."
 }
 
 func originTag() string {
