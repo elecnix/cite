@@ -1,6 +1,8 @@
 package xref
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -198,5 +200,33 @@ func TestRelatedIgnoresCommentedCalls(t *testing.T) {
 	post := lines("package p\n\n// Hidden() is not called here\nvar x = 1\n")
 	if got := NewIndex(snap, Limits{}).Related("p.go", post, map[int]bool{3: true}); len(got) != 0 {
 		t.Fatalf("a name in a comment is not a use, got %+v", got)
+	}
+}
+
+// Local mode indexes dot-directories other than .git, as the tarball path
+// does: .github/scripts holds source like any other tree.
+func TestLoadDirKeepsDotDirectoriesButGit(t *testing.T) {
+	root := t.TempDir()
+	for p, body := range map[string]string{
+		".github/scripts/check.sh": "check_pins() {\n  true\n}\n",
+		".git/hooks/pre-push.sh":   "hook() {\n  true\n}\n",
+	} {
+		full := filepath.Join(root, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snap, err := LoadDir(root, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := snap[".github/scripts/check.sh"]; !ok {
+		t.Fatalf("a .github script was left out: %v", snap.Files())
+	}
+	if _, ok := snap[".git/hooks/pre-push.sh"]; ok {
+		t.Fatal(".git must never be indexed")
 	}
 }

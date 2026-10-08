@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 )
 
 // MapSnapshot is a Snapshot held in memory, path to content.
@@ -43,7 +42,9 @@ func LoadDir(root string, maxBytes int64) (MapSnapshot, error) {
 		}
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if rel != "." && (skipPath(rel+"/x") || strings.HasPrefix(d.Name(), ".")) {
+			// skipPath already names .git; other dot-directories such as
+			// .github/scripts hold source like any other tree.
+			if rel != "." && skipPath(rel+"/x") {
 				return filepath.SkipDir
 			}
 			return nil
