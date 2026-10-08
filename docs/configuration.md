@@ -206,9 +206,10 @@ the default, declare its `max_tokens` under the provider's `models` entry.
 fallback: [gateway/vendor/model-x, other/backup-model]
 ```
 
-An ordered list. Each review call that the primary model cannot answer moves to
-the next leg: a runaway generation, a model the endpoint no longer serves, an
-output overflow, a provider outage or rate limit, or an unreachable endpoint.
+An ordered list. When the primary model fails a review call, the call moves to
+the next leg. A runaway generation moves it, and so does a model the endpoint no
+longer serves. An output overflow, a provider outage or rate limit, and an
+unreachable endpoint move it too.
 A deadline does not move, because the next leg would start with the same
 expired clock. The action's `fallback_model_ids` input adds models at the
 primary's own endpoint ahead of this list, which is the short form when one
@@ -227,8 +228,8 @@ hit, so the chain is first-class configuration rather than an afterthought.
 - **The chain is exercised by a canary.** A scheduled job calls every leg of the
   chain, because an untested fallback is not a fallback but a second outage that
   begins at the same moment as the first.
-- **A failover is disclosed.** The run log names the model that failed and the
-  leg that served the call, and the run record's per-call log carries the
+- **A failover is disclosed.** The run log records the model that failed and
+  the leg that served the call, and the run record's per-call log carries the
   serving model, so a quality change after a failover is diagnosable rather
   than mysterious.
 
