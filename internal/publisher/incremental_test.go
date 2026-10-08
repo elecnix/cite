@@ -236,8 +236,14 @@ func TestBuildReviewBodyIgnoresOtherDropReasons(t *testing.T) {
 	if !strings.Contains(body, "d.go") || !strings.Contains(body, "anchor past EOF") {
 		t.Errorf("the anchor_out_of_range drop must reach the human too (issue #60):\n%s", body)
 	}
-	if strings.Contains(body, "nit: naming") || strings.Contains(body, "off by one") {
-		t.Fatalf("non-anchor drops must NOT appear in the body:\n%s", body)
+	// The rendered page: the machine-readable omitted block (issue #129) is
+	// an HTML comment and never shows.
+	visible := body
+	if i := strings.Index(visible, "<!-- cite:omitted"); i >= 0 {
+		visible = visible[:i]
+	}
+	if strings.Contains(visible, "nit: naming") || strings.Contains(visible, "off by one") {
+		t.Fatalf("non-anchor drops must NOT appear in the rendered body:\n%s", body)
 	}
 	if strings.Contains(body, NotableUnanchoredHeading) && !strings.Contains(body, "real but unanchored") {
 		t.Fatalf("heading present without the one anchor_invalid drop:\n%s", body)

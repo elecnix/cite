@@ -28,3 +28,15 @@ func TestRenderCommentConfidenceFooter(t *testing.T) {
 		t.Errorf("certain finding carries a confidence footer:\n%s", certain)
 	}
 }
+
+// Issue #129: a reader sees which posted finding holds the gate red.
+func TestRenderCommentMarksABlockingFinding(t *testing.T) {
+	block := renderComment(model.ValidatedFinding{Finding: model.Finding{Title: "t", Category: model.CategoryCrash, Confidence: model.ConfidenceCertain}, Path: "a.go", Blocks: true})
+	if !strings.Contains(block, "**crash** · t · *blocks the merge*") {
+		t.Fatalf("blocking finding not marked:\n%s", block)
+	}
+	note := renderComment(model.ValidatedFinding{Finding: model.Finding{Title: "t", Category: model.CategoryCrash, Confidence: model.ConfidenceCertain}, Path: "a.go"})
+	if strings.Contains(note, "blocks the merge") {
+		t.Fatalf("a note is marked blocking:\n%s", note)
+	}
+}

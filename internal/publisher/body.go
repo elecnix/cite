@@ -7,6 +7,7 @@
 package publisher
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -163,5 +164,36 @@ func BuildReviewBody(in ReviewBodyInput) string {
 		sb.WriteString("\n")
 		sb.WriteString(line)
 	}
+	if block := omittedBlock(in.AnchorInvalidDrops); block != "" {
+		sb.WriteString("\n\n")
+		sb.WriteString(block)
+	}
 	return strings.TrimRight(sb.String(), "\n") + "\n"
+}
+
+// omittedBlock renders every finding this run dropped as one HTML comment
+// (issue #129): invisible on the page, no notification, no thread and no
+// comment budget, yet one API read gives an agent the whole candidate set
+// instead of a workflow log to scrape. json.Marshal escapes < and >, so no
+// title can close the comment early.
+func omittedBlock(drops []model.DropEntry) string {
+	if len(drops) == 0 {
+		return ""
+	}
+	type omitted struct {
+		Path     string         `json:"path"`
+		Category model.Category `json:"category"`
+		Title    string         `json:"title"`
+		Reason   string         `json:"reason"`
+		Detail   string         `json:"detail,omitempty"`
+	}
+	rows := make([]omitted, 0, len(drops))
+	for _, d := range drops {
+		rows = append(rows, omitted{Path: d.Path, Category: d.Category, Title: model.SanitizeText(d.Title), Reason: string(d.Reason), Detail: model.SanitizeText(d.Detail)})
+	}
+	raw, err := json.Marshal(rows)
+	if err != nil {
+		return ""
+	}
+	return "<!-- cite:omitted " + strings.ReplaceAll(string(raw), "--", "-\\u002d") + " -->"
 }
