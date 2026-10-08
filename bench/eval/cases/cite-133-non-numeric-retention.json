@@ -11,7 +11,7 @@
         69,
         72
       ],
-      "rubric": "[logic-inversion] Non-numeric retention-days passes the 7-day check \u2014 A retention-days value that is not a number, such as `7d` or `${{ inputs.days }}`, makes `[ \"$retention\" -gt 7 ]` fail with a non-zero status, so the "
+      "rubric": "[logic-inversion] Non-numeric retention-days passes the 7-day check \u2014 A retention-days value that is not a number, such as `7d` or `${{ inputs.days }}`, makes `[ \"$retention\" -gt 7 ]` fail with a non-zero status, so the `2>/dev/null` swallows the error and the `||` branch never fires. The check then reports nothing and the capture is treated as compliant. The run record check on line 107 uses a plain string match, which has no such hole."
     }
   ]
 }

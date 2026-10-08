@@ -11,7 +11,7 @@
         58,
         60
       ],
-      "rubric": "[logic-inversion] 2026 CTC working-income threshold is the 2025 value \u2014 The 2026 entry carries ctc_working_income_threshold=12058, which is the 2025 figure. The PR description states CRA's wording for the 2026 taxation y"
+      "rubric": "[logic-inversion] 2026 CTC working-income threshold is the 2025 value \u2014 The 2026 entry carries ctc_working_income_threshold=12058, which is the 2025 figure. The PR description states CRA's wording for the 2026 taxation year is working income of $12,058 \"in 2025\" \u2014 i.e. 12058 is the threshold applied to 2025 income, so the 2026 row should hold the 2026-indexed amount. As written, a 2026 claim is gated on the prior year's threshold."
     }
   ]
 }

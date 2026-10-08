@@ -152,7 +152,9 @@ def score(case, record, slack):
 
 def run_case(case, args, rep):
     bare = ensure_repo(Path(args.cache), case["repo"], [case["base"], case["head"]])
-    out_dir = Path(args.out) / case["id"]
+    # Absolute: cite runs inside the temporary worktree, so a relative path
+    # would put the record in a directory deleted before it is read.
+    out_dir = Path(args.out).resolve() / case["id"]
     out_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="cite-eval-") as tmp:
         wt = Path(tmp) / "wt"

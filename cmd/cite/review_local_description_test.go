@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/elecnix/cite/internal/model"
@@ -20,10 +21,15 @@ import (
 // author stated.
 func TestReviewLocalPassesTheDescription(t *testing.T) {
 	chdirTempWithPostImage(t)
-	var bodies []string
+	var (
+		mu     sync.Mutex
+		bodies []string
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
 		bodies = append(bodies, string(b))
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(cleanReviewResponse))
 	}))
@@ -39,6 +45,8 @@ func TestReviewLocalPassesTheDescription(t *testing.T) {
 	if err := reviewLocal(diffPath, descPath, cfgPath, model.StructuredOutputResponseFormat, "", false, publisher.JSONReportSink(&report)); err != nil {
 		t.Fatalf("reviewLocal: %v", err)
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if len(bodies) == 0 {
 		t.Fatal("the model was never called")
 	}

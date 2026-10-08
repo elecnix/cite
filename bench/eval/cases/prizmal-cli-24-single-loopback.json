@@ -11,7 +11,7 @@
         134,
         136
       ],
-      "why": "Posted: [logic-inversion] Loopback rewrite replaces only one occurrence \u2014 `stubEndpointName` rewrites only the first `127.0.0.1`, so a stub URL of the form `[link removed] keeps the second occurrence and the assertion against th Refuted: strings.Replace(..., 1) on an httptest URL that always contains 127.0.0.1 exactly once; single call site. Unreachable input, test-helper nit."
+      "why": "Posted: [logic-inversion] Loopback rewrite replaces only one occurrence \u2014 `stubEndpointName` rewrites only the first `127.0.0.1`, so a stub URL of the form `[link removed] keeps the second occurrence and the assertion against the harness env fails. `strings.Replace(..., \"localhost\", 1)` is the complete rewrite only if the host appears exactly once, which this helper does not verify. Use `strings.ReplaceAll` if a rewrite of every occurrence is what the shape function does. Refuted: strings.Replace(..., 1) on an httptest URL that always contains 127.0.0.1 exactly once; single call site. Unreachable input, test-helper nit."
     }
   ]
 }

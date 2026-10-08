@@ -11,7 +11,7 @@
         210,
         216
       ],
-      "why": "Posted: [crash] Index panic when the provider records fewer than 4 calls \u2014 The guard on line 211 only checks len(calls) and len(efforts), but line 214 reads efforts[2] and line 232 reads calls[2] and calls[1]. If the run makes f Refuted: Guard at line 211 is `len(calls) < 4 || len(efforts) < 4` followed by t.Fatalf; every indexed read is behind it. Model misread the guard (and t.Fatalf termination). Author reproduced: shortfall fails at the guard, no panic."
+      "why": "Posted: [crash] Index panic when the provider records fewer than 4 calls \u2014 The guard on line 211 only checks len(calls) and len(efforts), but line 214 reads efforts[2] and line 232 reads calls[2] and calls[1]. If the run makes fewer than three provider calls, the guard passes and the test panics with an index out of range instead of reporting the failure. The removed version guarded with len(efforts) < 4 before the same reads. Refuted: Guard at line 211 is `len(calls) < 4 || len(efforts) < 4` followed by t.Fatalf; every indexed read is behind it. Model misread the guard (and t.Fatalf termination). Author reproduced: shortfall fails at the guard, no panic."
     }
   ]
 }

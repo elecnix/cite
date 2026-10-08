@@ -11,7 +11,7 @@
         267,
         271
       ],
-      "why": "Posted: [logic-inversion] Empty failing suite is skipped, not reported \u2014 The comment says a suite's own conclusion is a result only when the suite carries no runs, but the condition requires the opposite: `!suiteCarriesRuns(suit Refuted: `!suiteCarriesRuns(suite)` is true exactly when the suite has no runs \u2014 the case the comment describes. The finding inverted the negation (\"false whenever runs exist\" is true but irrelevant) and concluded the opposite."
+      "why": "Posted: [logic-inversion] Empty failing suite is skipped, not reported \u2014 The comment says a suite's own conclusion is a result only when the suite carries no runs, but the condition requires the opposite: `!suiteCarriesRuns(suite)` is false whenever runs exist, so a suite that carries runs never contributes its own conclusion. A lone non-container check that concluded FAILURE and produced no runs is dropped from Failing entirely. Refuted: `!suiteCarriesRuns(suite)` is true exactly when the suite has no runs \u2014 the case the comment describes. The finding inverted the negation (\"false whenever runs exist\" is true but irrelevant) and concluded the opposite."
     }
   ]
 }
