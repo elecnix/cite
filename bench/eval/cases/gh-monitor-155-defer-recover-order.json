@@ -1,0 +1,17 @@
+{
+  "repo": "elecnix/gh-monitor",
+  "pr": 155,
+  "base": "14bc66c6f4b45c674b6de606cb31ee364db1af76",
+  "head": "2d33bf0892e1d9bbf27ac5fa732b947ce2308a2e",
+  "source": "https://github.com/elecnix/gh-monitor/pull/155",
+  "must_not_flag": [
+    {
+      "path": "backend/capabilities_test.go",
+      "lines": [
+        286,
+        295
+      ],
+      "why": "Posted: [crash] Panic check is registered after the calls it guards \u2014 The recover() that is supposed to catch a panic from renderTable is deferred on line 288, after the two renderTable calls on lines 293-294. A panic in those c Refuted: Claims `defer recover()` registered at line 288 runs \"after\" the calls at 293-294; defer registers where written, which is before those calls. Misreads Go defer semantics."
+    }
+  ]
+}
