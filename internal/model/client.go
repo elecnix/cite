@@ -757,7 +757,7 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 			// Ollama Cloud answers 410 for a retired model; retrying it
 			// spent the run-global bucket three times on a certainty.
 			code = "model_unavailable"
-			hint = fmt.Sprintf("the endpoint does not serve model %q (retired or unknown); set model_id or roles.review.model to one it lists", c.Model)
+			hint = fmt.Sprintf("the endpoint at %s does not serve model %q: the model is retired or unknown there, or the base URL is not the API root (it should end in /v1 for most providers); fix model_id or model_base_url", c.BaseURL, c.Model)
 			terminal = true
 		case resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity:
 			code = "bad_request"
