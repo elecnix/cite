@@ -160,7 +160,7 @@ jobs:
           # #171, every attempt); glm-5.2 and kimi-k2.6 on the same endpoint
           # reviewed that file in one to two minutes, so they serve the calls
           # it cannot.
-          CITE_FALLBACK_MODELS: ${{ vars.CITE_PROVIDER == 'openrouter' && '' || 'glm-5.2,kimi-k2.6' }}
+          CITE_FALLBACK_MODELS: ${{ vars.CITE_PROVIDER != 'openrouter' && 'glm-5.2,kimi-k2.6' || '' }}
           # The action leg gets these two from its own inputs; this leg drives
           # the CLI directly, so it has to say the same thing: Ollama Cloud
           # ignores response_format and reads the schema from a forced tool
