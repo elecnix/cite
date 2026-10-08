@@ -232,7 +232,7 @@ func rereviewMerged(ctx context.Context, c *githubclient.Client, cfg *config.Con
 	// as `cite review --pr` assembles it.
 	diffs := buildRereviewDiffs(entries, extras, logToStderr)
 
-	modelClient, err := model.NewOpenAICompatClient()
+	modelClient, err := newModelClient(cfg)
 	if err != nil {
 		return nil, model.VerdictCouldNotEvaluate, err.Error(), err
 	}

@@ -299,7 +299,7 @@ func reviewLocal(diffPath, descPath, cfgPath string, structuredOutput model.Stru
 	}
 	printInstructionWarnings(warnings)
 
-	modelClient, err := model.NewOpenAICompatClient()
+	modelClient, err := newModelClient(cfg)
 	if err != nil {
 		return err
 	}
@@ -488,7 +488,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 		diffs[e.Path] = df
 	}
 
-	modelClient, err := model.NewOpenAICompatClient()
+	modelClient, err := newModelClient(cfg)
 	if err != nil {
 		// Fail-closed: conclude COULD_NOT_EVALUATE, never green.
 		return concludeFailure(ctx, c, checkID, dryRun, gateOpts, model.VerdictCouldNotEvaluate, err.Error())

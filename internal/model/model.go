@@ -480,6 +480,9 @@ type CallEntry struct {
 	CacheReadTokens  int    `json:"cache_read_tokens,omitempty"`
 	CacheWriteTokens int    `json:"cache_write_tokens,omitempty"`
 	Provider         string `json:"provider,omitempty"`
+	// Model is the model that served the call as the response names it,
+	// which is a fallback leg's when the primary failed over.
+	Model string `json:"model,omitempty"`
 	// PrefixID names the call's cacheable prefix (a short hash of the
 	// system prompt plus the user message up to the cache breakpoint), and
 	// PrefixBytes and PromptBytes are that prefix's length and the whole

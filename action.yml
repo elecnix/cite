@@ -47,6 +47,13 @@ inputs:
     description: 'Model id, e.g. openai/gpt-4o-mini. Empty means the client default.'
     required: false
     default: ''
+  fallback_model_ids:
+    description: >
+      Comma-separated model ids at the same endpoint, tried in order when
+      model_id runs away, is retired, or its provider is down or limiting.
+      The config's fallback references follow them. Empty means no fallback.
+    required: false
+    default: ''
   archive_on_failure:
     description: >
       Set to "true" (the default) to upload a forensics artifact when the
@@ -164,6 +171,7 @@ runs:
         MODEL_API_KEY: ${{ inputs.model_api_key }}
         MODEL_BASE_URL: ${{ inputs.model_base_url }}
         MODEL_ID: ${{ inputs.model_id }}
+        CITE_FALLBACK_MODELS: ${{ inputs.fallback_model_ids }}
         GITHUB_TOKEN: ${{ github.token }}
         # The pull request number, from the authenticated event payload: the
         # same expression covers pull_request, pull_request_target and the

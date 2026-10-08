@@ -206,16 +206,31 @@ the default, declare its `max_tokens` under the provider's `models` entry.
 fallback: [gateway/vendor/model-x, other/backup-model]
 ```
 
-An ordered list. If the primary provider is unavailable, the next leg serves the
-run. For a merge gate, provider outage is the first operational failure you will
+An ordered list. Each review call that the primary model cannot answer moves to
+the next leg: a runaway generation, a model the endpoint no longer serves, an
+output overflow, a provider outage or rate limit, or an unreachable endpoint.
+A deadline does not move, because the next leg would start with the same
+expired clock. The action's `fallback_model_ids` input adds models at the
+primary's own endpoint ahead of this list, which is the short form when one
+provider serves several models:
+
+```yaml
+- uses: elecnix/cite@dd49586e9858a8af211a1535909b95ea5e79b7f5  # v0.11.4
+  with:
+    model_id: deepseek-v4.1-flash
+    fallback_model_ids: glm-5.2,kimi-k2.6
+```
+
+For a merge gate, provider outage is the first operational failure you will
 hit, so the chain is first-class configuration rather than an afterthought.
 
 - **The chain is exercised by a canary.** A scheduled job calls every leg of the
   chain, because an untested fallback is not a fallback but a second outage that
   begins at the same moment as the first.
-- **A failover is disclosed.** The run artifact records which leg served each
-  call, so a quality change after a failover is diagnosable rather than
-  mysterious.
+- **A failover is disclosed.** The run log names the model that failed and the
+  leg that served the call, and the run record's per-call log carries the
+  serving model, so a quality change after a failover is diagnosable rather
+  than mysterious.
 
 ## Require parameters
 
