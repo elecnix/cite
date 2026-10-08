@@ -39,9 +39,12 @@ func ComputeCoverage(files []model.FileOutcome, apiCount int) model.Coverage {
 }
 
 // EmptyInScope reports the path-filter-bypass shape: the GitHub API listed
-// changed files, yet nothing was reviewed or approved-skipped (§11).
+// changed files, yet nothing was reviewed, approved-skipped or even
+// attempted (§11). A run whose files all errored at the model attempted
+// every one of them, which is a provider failure and not this shape (issue
+// #170).
 func EmptyInScope(c model.Coverage) bool {
-	return c.APIFiles > 0 && c.Reviewed == 0 && c.ApprovedSkip == 0
+	return c.APIFiles > 0 && c.Reviewed == 0 && c.ApprovedSkip == 0 && c.Errored == 0
 }
 
 // CoverageHolds restates the §7 assertion as a single boolean, for tests and

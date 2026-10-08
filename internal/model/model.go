@@ -344,6 +344,10 @@ type FileOutcome struct {
 	// deadline re-ask. Zero for a first-attempt success, so it is omitted
 	// from the JSON for every clean file.
 	Reasks int `json:"reasks,omitempty"`
+	// Detail is the first line of the error that ended an errored file,
+	// sanitised and bounded: "rate_limited: HTTP 429: monthly usage limit"
+	// is the cause an operator needs, where Reason only names the class.
+	Detail string `json:"detail,omitempty"`
 }
 
 // Verdict is the three-state gate. Only one of them is a pass (§11).
