@@ -578,7 +578,11 @@ func (r *Reviewer) completeWithRetry(ctx context.Context, unit string, req model
 			r.logf("%s call failed permanently after %d attempt(s), retries exhausted: %v", unit, attempt+1, err)
 			return nil, err
 		}
-		r.logf("%s call failed (%v); retrying from run-global bucket", unit, err)
+		wait := model.RetryDelay(err, attempt)
+		r.logf("%s call failed (%v); retrying from run-global bucket in %s", unit, err, wait.Round(100*time.Millisecond))
+		if err := retrySleep(ctx, wait); err != nil {
+			return nil, err
+		}
 	}
 }
 
@@ -1176,4 +1180,16 @@ func errDetail(err error) string {
 		line = string(r[:errDetailMax]) + "…"
 	}
 	return line
+}
+
+// retrySleep waits d or until ctx ends. A variable so tests can skip waits.
+var retrySleep = func(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
