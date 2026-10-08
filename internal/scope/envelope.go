@@ -38,6 +38,19 @@ type EnvelopeFile struct {
 	// Prior is every earlier Cite thread on this file, with the human
 	// replies under it (issue #168). Untrusted: whoever replied wrote it.
 	Prior []PriorThread
+	// Related is code from other files at the pull request head that the
+	// changed lines depend on: definitions of what they use, call sites of
+	// what they change. Untrusted like the file itself.
+	Related []RelatedSnippet
+}
+
+// RelatedSnippet is one excerpt of another file, with its line numbers.
+type RelatedSnippet struct {
+	Path      string
+	Symbol    string
+	Kind      string // "definition" or "caller"
+	StartLine int
+	Lines     []string
 }
 
 // PriorThread is one earlier Cite finding on the file under review. Its
@@ -67,6 +80,7 @@ type PriorReply struct {
 //	<file_under_review>   the one code artifact (omitted when file == nil)
 //	<removed_lines>       deleted content with old numbers (only when present)
 //	<prior_threads ...>   earlier Cite claims and replies, untrusted (only when present)
+//	<related_code ...>    excerpts of other files the change depends on (only when present)
 //
 // nonce must be unique per run and is embedded in the pr_description open
 // tag; it is sanitised so it cannot terminate the tag early.
@@ -82,6 +96,9 @@ func BuildEnvelope(manifest []ManifestEntry, prDescription string, nonce string,
 		}
 		if len(file.Prior) > 0 {
 			sections = append(sections, renderPriorThreads(file.Path, file.Prior, sanitizeNonce(nonce)))
+		}
+		if len(file.Related) > 0 {
+			sections = append(sections, renderRelatedCode(file.Related))
 		}
 	}
 	return strings.Join(sections, "\n\n") + "\n"
@@ -188,6 +205,26 @@ func renderPriorThreads(path string, prior []PriorThread, nonce string) string {
 		}
 	}
 	b.WriteString("</prior_threads>")
+	return b.String()
+}
+
+// renderRelatedCode lists each excerpt under a header naming its file, the
+// symbol it was found for and why, with the excerpt's own line numbers. The
+// numbers are the other file's, so they can never be mistaken for anchors in
+// the file under review: every line carries its path.
+func renderRelatedCode(snippets []RelatedSnippet) string {
+	var b strings.Builder
+	b.WriteString("<related_code trust=\"untrusted\">\n")
+	for i, s := range snippets {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "-- %s of %s in %s\n", oneLine(s.Kind), oneLine(s.Symbol), oneLine(s.Path))
+		for j, l := range s.Lines {
+			fmt.Fprintf(&b, "%s:%d |%s\n", s.Path, s.StartLine+j, strings.TrimSuffix(l, "\r"))
+		}
+	}
+	b.WriteString("</related_code>")
 	return b.String()
 }
 

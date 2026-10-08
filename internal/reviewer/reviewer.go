@@ -32,6 +32,7 @@ import (
 	"github.com/elecnix/cite/internal/instructions"
 	"github.com/elecnix/cite/internal/model"
 	"github.com/elecnix/cite/internal/scope"
+	"github.com/elecnix/cite/internal/xref"
 )
 
 // Verifier performs the mechanical external-claim checks (§8,
@@ -95,6 +96,16 @@ type Inputs struct {
 	// and their replies (issue #168). Each file's review call carries only
 	// its own entry.
 	PriorThreads map[string][]scope.PriorThread
+	// Related finds the code in other files that a file's changed lines
+	// depend on. Nil means none: each call then sees its one file only.
+	Related RelatedFinder
+}
+
+// RelatedFinder returns the excerpts of other files that the changed lines
+// of path depend on; *xref.Index is the production one. post is the
+// post-change file and added its changed line numbers.
+type RelatedFinder interface {
+	Related(path string, post []string, added map[int]bool) []xref.Snippet
 }
 
 // Reviewer executes one review pass per Run call.
@@ -853,12 +864,19 @@ func (r *Reviewer) reviewFile(ctx context.Context, in *Inputs, rec *model.RunRec
 	}
 
 	fc, env := buildFileContext(e, in)
+	if n := len(env.Related); n > 0 {
+		total := 0
+		for _, sn := range env.Related {
+			total += len(sn.Lines)
+		}
+		r.logf("review of %s: %d related excerpt(s), %d line(s), from other files", e.Path, n, total)
+	}
 	timeout, _, maxTokens := r.roleSettings(model.RoleReview, 0 /* review deadline derives from the output cap inside roleSettings (issue #28) */, config.DefaultReviewConcurrency, defaultReviewMaxTokens)
 
 	// Per-file payload: exactly one code artifact (§7). It is derived from
 	// scope.BuildEnvelope output so the rendering lives in one place: the
 	// envelope minus its manifest+pr_description prefix is precisely the
-	// <file_under_review>/<removed_lines>/<prior_threads> sections. Those go AFTER the
+	// <file_under_review>/<removed_lines>/<prior_threads>/<related_code> sections. Those go AFTER the
 	// cache-breakpoint marker; segment B (r.segB) carries the manifest,
 	// the nonce-carrying PR description and the repo instructions and is
 	// byte-identical for every call in this run.

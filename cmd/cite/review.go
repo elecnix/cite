@@ -319,6 +319,7 @@ func reviewLocal(diffPath, descPath, cfgPath string, structuredOutput model.Stru
 		PostImage:     post,
 		PRDescription: description,
 		Nonce:         newNonce(),
+		Related:       relatedFromDir("."),
 	})
 	if err != nil {
 		return err
@@ -525,6 +526,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 		PRDescription: pr.Body,
 		Nonce:         newNonce(),
 		PriorThreads:  prior,
+		Related:       relatedFromAPI(ctx, c, owner, repo, pr.HeadSHA),
 	})
 	// Forensics first, whatever the run's fate: a failed or killed run still
 	// carries partial results, the call log and usage — exactly what an
