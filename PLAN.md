@@ -247,6 +247,10 @@ answer for any file.
 - Ordering between two `*.instructions.md` files whose `applyTo` both match: most specific glob
   first, then lexical path.
 - Whether `applyTo` matches the changed files or the whole tree: the changed file.
+- A leading `/`, a leading `./`, repeated `//`, `.` and `..` elements and a
+  trailing `/` are cosmetic in a pattern, so `/docs/**` and `./docs/**` mean
+  `docs/**`. A pattern that specifies no segment matches no path, and `**` is
+  the only spelling that means "every path".
 - `.github/AGENTS.md` versus root `AGENTS.md`: root is repository-wide; `.github/AGENTS.md` is
   the nearest file for paths under `.github/` only.
 
@@ -325,7 +329,11 @@ The tiers live in `CONFORMANCE.md`, which carries that date:
 patterns are documented; brace expansion appears in the vendor's own examples but in no syntax
 list; quoting rules are unstated; and the editor accepts a YAML-array form that the web product
 does not document. There is no right answer to inherit. Cite picks one and writes it in
-`CONFORMANCE.md`, and accepts the array form as an alias.
+`CONFORMANCE.md`, and accepts the array form as an alias. Cite also keeps that answer in one
+place, in `internal/glob`, which both `paths_ignore` and instruction frontmatter call. They did not
+always: `paths_ignore` normalised a leading slash while `applyTo` did not, so `./docs/**` worked
+in `.github/cite.yml` while the instruction file it should have scoped silently never loaded. Two
+matchers for one dialect is the whole defect.
 
 **A documentation canary, daily.** The reference product is not entirely a black box: its
 documentation is a public git repository. A ten-line cron job watches the instruction-file pages and

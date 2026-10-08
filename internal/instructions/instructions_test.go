@@ -63,31 +63,6 @@ func headings(r *ResolvedInstructions, path string) []string {
 	return out
 }
 
-func TestGlobDialect(t *testing.T) {
-	cases := []struct {
-		pattern, name string
-		want          bool
-	}{
-		{"**/*.go", "main.go", true},
-		{"**/*.go", "internal/x/y.go", true},
-		{"**/*.go", "main.got", false},
-		{"*.md", "README.md", true},
-		{"*.md", "docs/README.md", false},
-		{"src/**/*.ts", "src/a/b.ts", true},
-		{"src/**/*.ts", "src/a.ts", true},
-		{"src/**/*.ts", "lib/a.ts", false},
-		{"cmd/?ain.go", "cmd/main.go", true},
-		{"cmd/?ain.go", "cmd/rain.go", true},
-		{"cmd/?ain.go", "cmd/two.go", false},
-		{"**", "anything/at/all.go", true},
-	}
-	for _, c := range cases {
-		if got := Match(c.pattern, c.name); got != c.want {
-			t.Errorf("Match(%q, %q) = %v, want %v", c.pattern, c.name, got, c.want)
-		}
-	}
-}
-
 func TestPrecedenceGlobSpecificity(t *testing.T) {
 	tree := ft(map[string]string{
 		".github/instructions/a.instructions.md": "---\napplyTo: \"**/*.go\"\n---\n## Broad\nbroad CHECKABLE rule\n",

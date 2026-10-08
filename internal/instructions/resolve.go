@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/elecnix/cite/internal/glob"
 	"github.com/elecnix/cite/internal/model"
 )
 
@@ -221,7 +222,7 @@ func matchSpecs(specs []sourceSpec, p string) []candidate {
 		case scopeGlobs:
 			best := ""
 			for _, g := range sp.globs {
-				if !Match(g, p) {
+				if !glob.Match(g, p) {
 					continue
 				}
 				if best == "" || moreSpecific(g, best) {
@@ -271,4 +272,20 @@ func moreSpecific(a, b string) bool {
 		return wa < wb
 	}
 	return len(a) > len(b)
+}
+
+// wildcards counts `*` and `?` occurrences. Specificity ordering (§5,
+// documented best-effort): between two *.instructions.md whose applyTo both
+// match a changed file, the most specific glob comes first — fewest
+// wildcards, then longest pattern — then lexical path. This counts the
+// characters the shared dialect treats as wildcards; it is not a second
+// matcher, and it deliberately does not count `**` any differently.
+func wildcards(pattern string) int {
+	n := 0
+	for i := 0; i < len(pattern); i++ {
+		if pattern[i] == '*' || pattern[i] == '?' {
+			n++
+		}
+	}
+	return n
 }

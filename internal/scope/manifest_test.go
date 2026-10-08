@@ -206,31 +206,3 @@ func TestSkipReasonBinaryAndIgnore(t *testing.T) {
 		t.Fatalf("default skip must stand: got %q %v", reason, ok)
 	}
 }
-
-func TestMatch(t *testing.T) {
-	cases := []struct {
-		pattern, name string
-		want          bool
-	}{
-		{"**/*.gen.go", "a/b/c.gen.go", true},
-		{"**/*.gen.go", "c.gen.go", true},
-		{"**/*.gen.go", "a/b/c.go", false},
-		{"docs/*.md", "docs/a.md", true},
-		{"docs/*.md", "docs/x/a.md", false},
-		{"docs/**/*.md", "docs/x/a.md", true},
-		{"docs/**/*.md", "docs/a.md", true},
-		{"**", "anything/at/all.go", true},
-		{"internal/**", "internal/a/b.go", true},
-		{"internal/**", "internalX/a.go", false},
-		{"*.go", "a.go", true},
-		{"*.go", "dir/a.go", false}, // '*' never crosses '/'
-		{"a?.go", "ab.go", true},
-		{"a?.go", "a.go", false},
-		{"[abc].go", "b.go", true},
-	}
-	for _, c := range cases {
-		if got := Match(c.pattern, c.name); got != c.want {
-			t.Errorf("Match(%q, %q) = %v, want %v", c.pattern, c.name, got, c.want)
-		}
-	}
-}
