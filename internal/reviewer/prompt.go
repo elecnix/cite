@@ -219,6 +219,11 @@ func reviewResponseSchema() json.RawMessage {
 				"reviewed", "reviewed_partial_context", "not_reviewable",
 			}},
 			"not_reviewable_reason": map[string]any{"type": "string"},
+			// analysis is where a model with no reasoning budget traces each
+			// changed condition before it commits to a finding. The JSON
+			// order follows the prompt's example, so it must come before
+			// findings there and in required. Cite reads nothing from it.
+			"analysis": map[string]any{"type": "string"},
 			"findings": map[string]any{
 				"type":     "array",
 				"maxItems": maxFindingsPerFile, // a cap, not a target (§8)
@@ -226,7 +231,7 @@ func reviewResponseSchema() json.RawMessage {
 			},
 		},
 		// Strict mode requires every property to be listed in required.
-		"required": []any{"schema_version", "path", "outcome", "not_reviewable_reason", "findings"},
+		"required": []any{"schema_version", "path", "outcome", "not_reviewable_reason", "analysis", "findings"},
 	}
 	return json.RawMessage(canonicalJSON(root))
 }
