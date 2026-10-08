@@ -130,3 +130,20 @@ func TestExactResolvedMatchStillPrefersTheOpenThread(t *testing.T) {
 		t.Fatalf("post=%d matchedResolved=%d, want the finding kept on the open thread", len(plan.CommentsToPost), len(plan.MatchedResolved))
 	}
 }
+
+// A resolved thread answers for one finding per run, as an open thread does:
+// a second, different finding that a lenient claim match would also pin on
+// the same thread posts rather than vanishing behind it.
+func TestResolvedThreadAbsorbsOneFindingPerRun(t *testing.T) {
+	first := reworded()
+	second := mkFinding("a.go", "crash", "Nil map write when the cache is cold", `cache[key] = v`)
+	same := func(model.ValidatedFinding, LiveThread) bool { return true }
+	plan := Reconcile([]model.ValidatedFinding{first, second}, []LiveThread{resolvedThread()}, DismissalLedger{},
+		ReconcileOptions{Repository: "o/r", SpanGone: spanStands, SameClaim: same})
+	if len(plan.MatchedResolved) != 1 || len(plan.CommentsToPost) != 1 {
+		t.Fatalf("matchedResolved=%d post=%d, want one absorbed and one posted", len(plan.MatchedResolved), len(plan.CommentsToPost))
+	}
+	if plan.MatchedResolved[0].Title != first.Title {
+		t.Fatalf("the thread absorbed %q, want the first finding", plan.MatchedResolved[0].Title)
+	}
+}

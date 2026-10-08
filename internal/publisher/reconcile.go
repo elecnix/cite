@@ -270,14 +270,17 @@ func Reconcile(current []model.ValidatedFinding, live []LiveThread, ledger Dismi
 			}
 		}
 		// Then resolved threads whose span stands: an exact fingerprint
-		// needs no model call.
+		// needs no model call. Like an open thread, a resolved one answers
+		// for one finding per run, so a second finding that a lenient
+		// match would also pin on it posts instead of vanishing.
 		fp := fingerprintOf(f)
 		for _, j := range byID {
 			t := live[j]
-			if t.Path != f.Path || !t.ResolvedByHuman || !spanStands(j) || t.Fingerprint != fp {
+			if t.Path != f.Path || !t.ResolvedByHuman || used[j] || !spanStands(j) || t.Fingerprint != fp {
 				continue
 			}
 			matchedResolved[i] = true
+			used[j] = true
 			break
 		}
 		if matchedResolved[i] || opts.SameClaim == nil {
@@ -285,10 +288,11 @@ func Reconcile(current []model.ValidatedFinding, live []LiveThread, ledger Dismi
 		}
 		for _, j := range byID {
 			t := live[j]
-			if t.Path != f.Path || !t.ResolvedByHuman || !spanStands(j) || !opts.SameClaim(f, t) {
+			if t.Path != f.Path || !t.ResolvedByHuman || used[j] || !spanStands(j) || !opts.SameClaim(f, t) {
 				continue
 			}
 			matchedResolved[i] = true
+			used[j] = true
 			break
 		}
 	}
