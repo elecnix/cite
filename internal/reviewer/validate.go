@@ -237,10 +237,8 @@ findingsLoop:
 		// The sixth conjunct is applied immediately below rather than
 		// inside the conjunction: an "unsupported" verdict drops the
 		// finding from the record, which is not a boolean this expression
-		// can fold in. The candidate is computed first so the verifier is
-		// only asked about a finding that could block at all.
-		//
-		// It also costs a call, which is why it stays out of the expression.
+		// can fold in, and the verifier is asked about every finding a
+		// reader would see, blocking or not.
 		// With no DiscriminativeVerifier (CITE_VERIFY=0) the conjunct is
 		// not applied, and each finding's verifier_result stays empty.
 		blocks := model.BlockingCandidate(model.BlockInputs{
