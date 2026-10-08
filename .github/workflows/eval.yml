@@ -1,0 +1,70 @@
+# Weekly quality evaluation: replay the labelled pull requests in
+# bench/eval/cases through the reviewer built from main, so recall, false
+# positives and runs that left a file unevaluated are tracked over time
+# instead of measured once on a laptop.
+#
+# The cases pin public repositories at fixed commits. The job checks those
+# commits out into worktrees and runs `cite review --diff` on them, which
+# reads files and calls the model; nothing from a case is executed. Results
+# are a summary in the job log and the per-run JSON as an artifact.
+#
+# One job at a time: Ollama Cloud rate-limits hard, and a parallel replay
+# measures the limiter rather than the reviewer.
+
+name: eval
+on:
+  schedule:
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      repeat:
+        description: Runs per case, to average over the model's sampling
+        required: false
+        default: "1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eval
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build Cite from main
+        run: go build -o cite ./cmd/cite
+      - name: Replay the labelled pull requests
+        env:
+          MODEL_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          MODEL_BASE_URL: https://ollama.com/v1
+          MODEL_ID: deepseek-v4.1-flash
+          CITE_FALLBACK_MODELS: glm-5.2,kimi-k2.6
+          CITE_STRUCTURED_OUTPUT: tools
+          REPEAT: ${{ inputs.repeat || '1' }}
+        run: |
+          set -euo pipefail
+          python3 bench/eval/run.py --cite ./cite --repeat "$REPEAT" --jobs 1 \
+            --cache "$RUNNER_TEMP/cite-eval-cache" --out "$RUNNER_TEMP/eval-out" \
+            --json "$RUNNER_TEMP/eval-results.json" bench/eval/cases | tee "$RUNNER_TEMP/eval-summary.txt"
+          {
+            echo '```'
+            cat "$RUNNER_TEMP/eval-summary.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive the results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: eval-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/eval-results.json
+            ${{ runner.temp }}/eval-summary.txt
+          if-no-files-found: warn
+          retention-days: 90
