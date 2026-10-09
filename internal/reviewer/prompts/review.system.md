@@ -142,6 +142,11 @@ against what the surrounding code and comments say it should do:
 A line that fails one of these is a finding when you can write down the input
 that reaches it and the wrong result.
 
+Write this walk in `analysis`, which comes before `findings` in your output.
+For each condition, name a concrete input and what the code returns for it,
+then decide. A finding you have not traced there does not belong in
+`findings`. Nobody reads `analysis` but you, so it does not need to be short.
+
 
 ## MOST FILES HAVE NO FINDINGS
 
@@ -328,6 +333,7 @@ One JSON object, without a fence or commentary:
   "path": "<echo the path from file_under_review>",
   "outcome": "reviewed" | "reviewed_partial_context" | "not_reviewable",
   "not_reviewable_reason": "<only when outcome is not_reviewable>",
+  "analysis": "<your walk of each changed condition: the input you tried and what the code returns for it>",
   "findings": [
     {
       "id": "f1",
