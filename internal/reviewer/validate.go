@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -149,7 +150,9 @@ findingsLoop:
 		// symbol_exists are mechanically checked; false or unverifiable
 		// drops the finding — a wrong path or symbol claim is a
 		// fabrication, and a claim the harness cannot resolve never grounds
-		// a block. config_key / ci_behavior / convention are note-only:
+		// a block. A symbol_exists subject that is not a name (see
+		// symbolSubject) has nothing to search for and is note-only.
+		// config_key / ci_behavior / convention are note-only:
 		// the finding survives as a note but may never block.
 		// version_behavior was already rejected at parse time.
 		claimDropped := false
@@ -168,7 +171,19 @@ findingsLoop:
 				c.Verified = &t
 				c.Disposition = "verified"
 			case model.ClaimSymbolExists:
-				if r.o.Verifier == nil || !r.o.Verifier.SymbolExists(c.Subject) {
+				sym, ok := symbolSubject(c.Subject)
+				if !ok {
+					// The subject is a sentence, not a name: a toolchain
+					// or language fact filed under the wrong type. A
+					// definition search can neither confirm nor refute
+					// it, so zero hits is no evidence of fabrication.
+					// It gets the note disposition a convention claim
+					// gets, and the finding can never block.
+					c.Disposition = "note"
+					claimsOK = false
+					continue
+				}
+				if r.o.Verifier == nil || !r.o.Verifier.SymbolExists(sym) {
 					drop(f, model.DropClaimUnverified,
 						fmt.Sprintf("symbol_exists claim %q has zero definition-shaped hits", c.Subject))
 					claimDropped = true
@@ -519,4 +534,22 @@ func titleNegation(f *model.Finding) string {
 		}
 	}
 	return ""
+}
+
+// symbolName is the shape a definition search can check: an identifier,
+// optionally qualified with "." or "::" (pkg.Func, Type::method).
+var symbolName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:(?:\.|::)[A-Za-z_][A-Za-z0-9_]*)*$`)
+
+// symbolSubject returns the name a symbol_exists claim asks about, with
+// the decoration a model adds around a name (backticks, a trailing "()")
+// removed. ok is false when the subject is not a name at all, such as a
+// sentence about how a tool behaves: no definition search can check it.
+func symbolSubject(subject string) (name string, ok bool) {
+	s := strings.TrimSpace(subject)
+	s = strings.TrimSpace(strings.Trim(s, "`"))
+	s = strings.TrimSuffix(s, "()")
+	if !symbolName.MatchString(s) {
+		return "", false
+	}
+	return s, true
 }
