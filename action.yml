@@ -5,12 +5,19 @@
 # fixed artifact, not head-controlled code — and reviews the pull request
 # from the GitHub API. Nothing from the pull request head is ever executed
 # or built (§12 I1).
-name: 'Cite'
-description: >
-  Reviews pull requests with a large language model you choose, posts a real
-  review with comments anchored to the lines they are about, and publishes a
-  check run that a repository may require before merge. Every finding quotes
-  the source line it is about, and the quote is verified against the file.
+# The name is the Marketplace listing's identifier, and GitHub refuses one
+# that matches an action already published there, a user or organization, or a
+# Marketplace category. "Cite" is rejected because github.com/cite is a user,
+# so the release form will not publish it. This name clears those rules; the
+# install path a consumer writes is `elecnix/cite` whichever it is.
+name: 'Cite PR Reviewer'
+# GitHub Marketplace refuses a description of 125 characters or more, reading
+# this field rather than the repository description, and reports the violation
+# only in the release form, which no CI job opens. The description is kept on
+# one line so its length is a thing a check can measure;
+# scripts/marketplace-metadata.sh is that check. The long version of the same
+# sentence lives in README.md and in the repository description.
+description: 'An open code reviewer for GitHub: reviews pull requests with the model you choose, and can block the merge.'
 
 branding:
   icon: 'check-circle'
