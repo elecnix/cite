@@ -43,6 +43,32 @@ The [`release` workflow](../.github/workflows/release.yml) then runs on its own:
 
 Every action step in the workflow is pinned to a full-length commit SHA.
 
+## Publish to GitHub Marketplace
+
+A Marketplace listing hangs off a release, and the release workflow stops at
+the GitHub release: putting the action on the Marketplace is a manual step
+afterwards. Open the release's edit page
+(`https://github.com/elecnix/cite/releases/edit/vX.Y.Z`) and tick **Publish this
+Action to the GitHub Marketplace**. Choose a primary category and update the
+release. GitHub asks for a 2FA confirmation here, and its API does not expose
+the checkbox, so no workflow can tick it ([cli/cli#5193](https://github.com/cli/cli/issues/5193)).
+
+Leaving the box unticked costs a consumer nothing: `uses: elecnix/cite@<full-sha>`
+resolves through the tag whatever the listing says. The listing ages. It keeps
+the version of the release somebody last published there, so a later release
+does not reach the Marketplace page until somebody ticks the same box on it.
+
+The form validates `action.yml` when it is submitted and reports every
+violation under "Release Action". It reads the name as the listing's identity,
+and GitHub refuses a name that a user or an organization already holds, so this
+action is listed as *Cite PR Reviewer* rather than *Cite*: github.com/cite is a
+person. The form also refuses a description of 125 characters or more, and the
+description has to fit on one line if a check is to measure it.
+`scripts/marketplace-metadata.sh` holds those two rules, so `ci` catches them
+instead of the release form. The name's uniqueness against the live
+Marketplace, and the `branding.icon` and `branding.color` values, exist only in
+the form.
+
 ## Which release a consumer runs
 
 The `version:` input decides, and an unset input means the release this action
