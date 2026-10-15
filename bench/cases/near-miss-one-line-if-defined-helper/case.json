@@ -1,0 +1,23 @@
+{
+  "name": "near-miss-one-line-if-defined-helper",
+  "description": "Near-miss (issue #201): the patch folds a multi-line if/then/else/fi into one line, whose failure branch calls the shell helper notok that the same file defines above. The one-line form is the shape Cite reported as \"notok is undefined: failure paths never increment fail\" with blocks=true, on a pull request whose only change was that fold. The recorded response asserts zero findings, and the harness asserts those findings really are empty.",
+  "base": [
+    {
+      "path": "scripts/test-thing.sh",
+      "content": "#!/usr/bin/env bash\n# A test harness with its own ok/notok helpers.\npass=0\nfail=0\nok()    { echo \"  ok: $1\"; pass=$((pass + 1)); }\nnotok() { echo \"  FAIL: $1\" >&2; fail=$((fail + 1)); }\n\nrun() { rc=\"${STUB_RC:-0}\"; }\n\necho \"a failing command is reported\"\nrun\nif [ \"$rc\" = 0 ]; then\n  ok \"exited 0\"\nelse\n  notok \"exited $rc\"\nfi\n\necho \"$pass passed, $fail failed\"\n[ \"$fail\" = 0 ]\n"
+    }
+  ],
+  "patch": "diff --git a/scripts/test-thing.sh b/scripts/test-thing.sh\n--- a/scripts/test-thing.sh\n+++ b/scripts/test-thing.sh\n@@ -11,6 +11,2 @@\n run\n-if [ \"$rc\" = 0 ]; then\n-  ok \"exited 0\"\n-else\n-  notok \"exited $rc\"\n-fi\n+if [ \"$rc\" = 0 ]; then ok \"exited 0\"; else notok \"exited $rc\"; fi",
+  "recorded_responses": [
+    {
+      "path": "scripts/test-thing.sh",
+      "response_json": "{\"schema_version\":1,\"path\":\"scripts/test-thing.sh\",\"outcome\":\"reviewed\",\"findings\":[]}"
+    }
+  ],
+  "expect": {
+    "schema_valid": true,
+    "anchors_in_diff": true,
+    "fingerprints_stable": true,
+    "replay_zero_new_threads": true
+  }
+}
