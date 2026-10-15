@@ -16,8 +16,8 @@ func TestShippedCasesPass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunAll: %v", err)
 	}
-	if len(rep.Results) != 3 {
-		t.Fatalf("loaded %d case(s), want 3", len(rep.Results))
+	if len(rep.Results) != 4 {
+		t.Fatalf("loaded %d case(s), want 4", len(rep.Results))
 	}
 	for _, cr := range rep.Results {
 		if !cr.Pass() {
@@ -168,10 +168,10 @@ func TestReportRenderingStable(t *testing.T) {
 	if !strings.Contains(a, "RESULT: PASS") {
 		t.Errorf("report should end PASS:\n%s", a)
 	}
-	if !strings.Contains(a, "3/3 case(s) passed.") {
+	if !strings.Contains(a, "4/4 case(s) passed.") {
 		t.Errorf("report should carry totals:\n%s", a)
 	}
-	for _, name := range []string{"positive-injection", "clean-equivalent-rewrite", "near-miss-correct-unlock"} {
+	for _, name := range []string{"positive-injection", "clean-equivalent-rewrite", "near-miss-correct-unlock", "near-miss-one-line-if-defined-helper"} {
 		if !strings.Contains(a, name) {
 			t.Errorf("report missing case %s:\n%s", name, a)
 		}

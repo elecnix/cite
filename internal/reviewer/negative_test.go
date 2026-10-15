@@ -212,3 +212,134 @@ func TestUnextractableSymbolNegativeClaimNeverBlocks(t *testing.T) {
 		t.Errorf("Blocks = true, want false: the negative claim could not be mechanically verified")
 	}
 }
+
+// --- definition-absence claims (issue #201) --------------------------------
+
+// shellDiffText adds one line to test.sh: the one-line if form whose failure
+// branch calls notok. notok is defined on the line below it, which is the
+// shape Cite published as "notok is undefined" with blocks=true, so the pull
+// request it reviewed could not go green.
+const shellDiffText = `diff --git a/test.sh b/test.sh
+--- a/test.sh
++++ b/test.sh
+@@ -1,1 +1,3 @@
++if [ "$rc" = 0 ]; then ok "exited 0"; else notok "exited $rc"; fi
++notok() { echo "  FAIL: $1" >&2; fail=$((fail + 1)); }
+ context line one
+`
+
+// shellInputs builds the post-image whose second line defines notok, or a
+// post-image without the definition when defined is false: the same call
+// site, one file that defines the helper and one that does not.
+func shellInputs(defined bool) Inputs {
+	df, err := scope.ParseUnifiedDiff(shellDiffText)
+	if err != nil {
+		panic(err)
+	}
+	post := "if [ \"$rc\" = 0 ]; then ok \"exited 0\"; else notok \"exited $rc\"; fi\n"
+	if defined {
+		post += "notok() { echo \"  FAIL: $1\" >&2; fail=$((fail + 1)); }\n"
+	}
+	post += "context line one\n"
+	return Inputs{
+		Manifest:      []scope.ManifestEntry{{Status: "M", Path: "test.sh", Adds: 2, Dels: 0}},
+		Diffs:         map[string]*scope.DiffFile{"test.sh": df.Files[0]},
+		PostImage:     map[string][]byte{"test.sh": []byte(post)},
+		PRDescription: "Test PR",
+		Nonce:         "nonce7f3a91",
+	}
+}
+
+// shellFinding is the claim Cite filed: an all-lowercase helper named in the
+// title, asserted undefined, anchored on the one-line if that calls it.
+func shellFinding() map[string]any {
+	f := mkFinding("f1", model.CategoryLogicInversion, 1, 1, "certain",
+		[]map[string]any{mkEvidence(1, `if [ "$rc" = 0 ]; then ok "exited 0"; else notok "exited $rc"; fi`)})
+	f["title"] = "notok is undefined: failure paths never increment fail"
+	f["body"] = "notok is invoked here but the file never defines it, so the failure path never increments fail."
+	return f
+}
+
+// The definition sits in the post-image the reviewer itself quoted, so the
+// claim is mechanically false and the finding is dropped, not softened to a
+// note: a note that names a helper the file defines is still a false claim
+// published, only quieter.
+func TestDefinitionAbsenceClaimFalsifiedByTheDefinitionInTheFile(t *testing.T) {
+	f := shellFinding()
+	c := &fakeClient{fn: reproScript(f)}
+	rec, err := runOnce(t, shellInputs(true), baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(rec.Findings) != 0 {
+		t.Fatalf("Findings = %d, want 0 (notok is defined at line 2); findings %+v", len(rec.Findings), rec.Findings)
+	}
+	d := findDrop(rec, model.DropNegativeClaimFalsified)
+	if d == nil {
+		t.Fatalf("no %s drop; drops %+v", model.DropNegativeClaimFalsified, rec.Drops)
+	}
+	if !strings.Contains(d.Detail, "is defined at line 2") {
+		t.Errorf("drop detail = %q, want it to name the definition at line 2", d.Detail)
+	}
+}
+
+// The shape discipline: a definition claim is falsified by a definition and
+// by nothing else. The same call site in a file that defines notok nowhere
+// leaves the claim standing, so the finding survives as the blocker it is:
+// this is the finding a reviewer gets right, and a call-shaped rule would
+// have dropped it on its own quoted call site.
+func TestDefinitionAbsenceClaimNotFalsifiedByItsCallSite(t *testing.T) {
+	f := shellFinding()
+	c := &fakeClient{fn: reproScript(f)}
+	rec, err := runOnce(t, shellInputs(false), baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(rec.Findings) != 1 {
+		t.Fatalf("Findings = %d, want 1 (nothing defines notok); drops %+v", len(rec.Findings), rec.Drops)
+	}
+	if !rec.Findings[0].Blocks {
+		t.Errorf("Blocks = false, want true: a call site does not answer a definition claim")
+	}
+}
+
+// A definition-absence sentence whose subject is a filler word names no
+// symbol, so nothing can be searched for and the finding fails open to a
+// note. It never becomes a false drop of some English word's definition.
+func TestDefinitionAbsenceClaimWithoutASubjectNeverBlocks(t *testing.T) {
+	f := shellFinding()
+	f["title"] = "the function is undefined"
+	f["body"] = "the helper is called before anything defines it, so the run dies."
+	c := &fakeClient{fn: reproScript(f)}
+	rec, err := runOnce(t, shellInputs(true), baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(rec.Findings) != 1 {
+		t.Fatalf("Findings = %d, want 1 (fail open to note); drops %+v", len(rec.Findings), rec.Drops)
+	}
+	if rec.Findings[0].Blocks {
+		t.Errorf("Blocks = true, want false: no symbol could be extracted from the claim")
+	}
+}
+
+// The copula belongs to the phrase. With the bare "not defined" matching
+// first, the token before it would be "is", the filler filter would reject
+// it, and the claim would fall open to a note instead of being falsified by
+// the definition the finding ignores.
+func TestDefinitionAbsenceClaimWithCopulaFindsItsSubject(t *testing.T) {
+	f := shellFinding()
+	f["title"] = "notok is not defined anywhere"
+	f["body"] = "The failure branch calls notok, which nothing declares."
+	c := &fakeClient{fn: reproScript(f)}
+	rec, err := runOnce(t, shellInputs(true), baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(rec.Findings) != 0 {
+		t.Fatalf("Findings = %d, want 0 (notok is defined at line 2); findings %+v", len(rec.Findings), rec.Findings)
+	}
+	if findDrop(rec, model.DropNegativeClaimFalsified) == nil {
+		t.Fatalf("no %s drop; drops %+v", model.DropNegativeClaimFalsified, rec.Drops)
+	}
+}

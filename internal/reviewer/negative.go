@@ -11,59 +11,103 @@ import (
 // Negative-existence claim verification (issue #45). A finding whose
 // narrative asserts a negative existential statement about the reviewed
 // file — "X is imported but never called", "the full file contains no other
-// occurrence" — is mechanically checkable against the post-image the
-// reviewer already received. The model can fabricate the absence claim
-// while the file sits in memory, and a fabricated negative became a merge
-// blocker (issue #45). So before a finding may block, its negative claims
-// are grepped against the file: a contradicted claim drops the finding;
-// a claim that cannot be verified (truncated view, no extractable symbol)
-// fails open to a note — it may survive, but never block.
+// occurrence", "X is undefined" — is mechanically checkable against the
+// post-image the reviewer already received. The model can fabricate the
+// absence claim while the file sits in memory, and a fabricated negative
+// became a merge blocker (issue #45). So before a finding may block, its
+// negative claims are grepped against the file: a contradicted claim drops
+// the finding; a claim that cannot be verified (truncated view, no
+// extractable symbol) fails open to a note — it may survive, but never
+// block.
+//
+// Each phrase carries the occurrence shape it denies, because a claim is
+// falsified only by the shape it is about: a definition answers "X is
+// undefined", a call site answers "X is never called". Reading one shape
+// for the other is what let a finding call a shell helper undefined while
+// quoting that helper's own definition as its evidence, and block on it
+// (issue #201).
 
-// negativeClaimPhrases are the narrative signals that a finding asserts a
-// negative existential about file contents. Strong phrases assert the
-// absence of ANY occurrence ("no other occurrence"); weak phrases assert
-// the absence of a use ("never called"), where definition-shaped
-// occurrences are expected and do not contradict the claim.
-var negativeClaimPhrases = []string{
-	// strong: any occurrence outside the quoted/anchored span falsifies
-	"no other occurrence",
-	"no occurrence",
-	"no occurrences",
-	// weak: falsified only by a call/use-shaped occurrence
-	"never called",
-	"never invoked",
-	"never used",
-	"never referenced",
-	"never read",
-	"never executed",
-	"not called",
-	"not invoked",
-	"not used",
-	"not referenced",
-	"no callers",
-	"no call site",
-	"no call sites",
-	"no usage",
-	"is unused",
-	"are unused",
+// claimShape is the occurrence shape a negative claim denies, and therefore
+// the only shape that can falsify it.
+type claimShape int
+
+const (
+	// shapeOccurrence: any word occurrence.
+	shapeOccurrence claimShape = iota
+	// shapeCall: a call or use site. A definition does not falsify, or every
+	// true "defined but never called" finding would falsify itself.
+	shapeCall
+	// shapeDefinition: a definition. A bare call site does not falsify, or
+	// every true "called but never defined" finding would falsify itself.
+	shapeDefinition
+)
+
+// negativePhrase is one narrative signal that a finding asserts a negative
+// existential about file contents, with the occurrence shape that answers
+// it.
+type negativePhrase struct {
+	phrase string
+	shape  claimShape
 }
 
-// isStrongOccurrencePhrase reports whether the matched phrase claims the
-// absence of any occurrence, not merely the absence of a call.
-func isStrongOccurrencePhrase(phrase string) bool {
-	return strings.Contains(phrase, "occurrence")
+// negativeClaimPhrases are the narrative signals, grouped by the shape that
+// falsifies them.
+var negativeClaimPhrases = []negativePhrase{
+	// any occurrence outside the quoted/anchored span falsifies
+	{"no other occurrence", shapeOccurrence},
+	{"no occurrence", shapeOccurrence},
+	{"no occurrences", shapeOccurrence},
+	// falsified by a call/use-shaped occurrence
+	{"never called", shapeCall},
+	{"never invoked", shapeCall},
+	{"never used", shapeCall},
+	{"never referenced", shapeCall},
+	{"never read", shapeCall},
+	{"never executed", shapeCall},
+	{"not called", shapeCall},
+	{"not invoked", shapeCall},
+	{"not used", shapeCall},
+	{"not referenced", shapeCall},
+	{"no callers", shapeCall},
+	{"no call site", shapeCall},
+	{"no call sites", shapeCall},
+	{"no usage", shapeCall},
+	{"is unused", shapeCall},
+	{"are unused", shapeCall},
+	// falsified by a definition: a symbol the finding says does not exist
+	// while the file defines it (issue #201, in a shell test helper). The
+	// copula belongs to the phrase so the subject sits immediately before
+	// it: with "not defined" alone, "notok is not defined" would offer
+	// "is" as the symbol, and subjectBefore would find nothing to search
+	// for. That is why the longer "is never defined" / "is not defined"
+	// forms come first: the first match in the list wins.
+	{"is undefined", shapeDefinition},
+	{"are undefined", shapeDefinition},
+	{"is never defined", shapeDefinition},
+	{"are never defined", shapeDefinition},
+	{"is not defined", shapeDefinition},
+	{"are not defined", shapeDefinition},
+	{"was not defined", shapeDefinition},
+	{"were not defined", shapeDefinition},
+	{"was never defined", shapeDefinition},
+	{"never defined", shapeDefinition},
+	{"not defined", shapeDefinition},
+	{"has no definition", shapeDefinition},
+	{"have no definition", shapeDefinition},
+	{"not declared", shapeDefinition},
+	{"never declared", shapeDefinition},
 }
 
 // negativeClaimPhrase returns the first negative-existence phrase present
-// in the finding's narrative text, if any.
-func negativeClaimPhrase(text string) (string, bool) {
+// in the finding's narrative text, if any, with the shape that falsifies it.
+func negativeClaimPhrase(text string) (negativePhrase, bool) {
 	lower := strings.ToLower(text)
 	for _, p := range negativeClaimPhrases {
-		if strings.Contains(lower, p) {
+		if strings.Contains(lower, p.phrase) {
 			return p, true
 		}
 	}
-	return "", false
+	return negativePhrase{}, false
 }
 
 var (
@@ -80,8 +124,11 @@ var (
 // about: backtick-quoted spans first, then identifier tokens appearing in
 // the text immediately before the phrase. Conservative by design — when no
 // candidate extracts, the claim simply cannot be mechanically checked and
-// the finding fails open to a note.
-func negativeClaimSymbols(text string) []string {
+// the finding fails open to a note. A definition-absence claim adds the
+// token immediately before the phrase (see subjectBefore), which the
+// identifier-shape filter would otherwise drop for an all-lowercase shell
+// helper.
+func negativeClaimSymbols(text string, matched negativePhrase) []string {
 	var out []string
 	seen := map[string]bool{}
 	add := func(s string) {
@@ -102,7 +149,7 @@ func negativeClaimSymbols(text string) []string {
 	for _, p := range negativeClaimPhrases {
 		idx := 0
 		for {
-			rel := strings.Index(lower[idx:], p)
+			rel := strings.Index(lower[idx:], p.phrase)
 			if rel < 0 {
 				break
 			}
@@ -116,10 +163,57 @@ func negativeClaimSymbols(text string) []string {
 					add(tok)
 				}
 			}
-			idx = i + len(p)
+			idx = i + len(p.phrase)
+		}
+	}
+	if matched.shape == shapeDefinition {
+		if subject, ok := subjectBefore(text, matched.phrase); ok {
+			add(subject)
 		}
 	}
 	return out
+}
+
+// subjectBefore returns the token immediately before phrase: the subject of
+// a sentence such as "notok is undefined", which no English word separates
+// from the phrase. A plain lowercase name is returned, because shell
+// helpers are named that way and identLikeRe rejects them for the other
+// phrases, where a lowercase word before the phrase is usually prose ("the
+// loop is never called"). Filler words return nothing: they name no symbol,
+// and a candidate that is not a symbol would only make the definition
+// search answer a question nobody asked.
+func subjectBefore(text, phrase string) (string, bool) {
+	idx := strings.Index(strings.ToLower(text), strings.ToLower(phrase))
+	if idx <= 0 {
+		return "", false
+	}
+	segment := text[:idx]
+	if len(segment) > 80 {
+		segment = segment[len(segment)-80:]
+	}
+	tokens := identTokenRe.FindAllString(segment, -1)
+	if len(tokens) == 0 {
+		return "", false
+	}
+	last := tokens[len(tokens)-1]
+	if subjectStopWords[strings.ToLower(last)] {
+		return "", false
+	}
+	return last, true
+}
+
+// subjectStopWords sits where a symbol would sit and names no symbol, so no
+// search should be run for it: the words of "the function is not defined",
+// where the subject of the sentence is somewhere else or absent.
+var subjectStopWords = map[string]bool{
+	"a": true, "an": true, "and": true, "are": true, "be": true,
+	"because": true, "been": true, "but": true, "code": true, "command": true,
+	"function": true, "had": true, "has": true, "have": true, "is": true,
+	"it": true, "its": true, "method": true, "name": true, "never": true,
+	"no": true, "not": true, "or": true, "so": true, "symbol": true,
+	"that": true, "the": true, "there": true, "this": true, "value": true,
+	"variable": true, "was": true, "were": true, "which": true,
+	"with": true, "without": true,
 }
 
 var (
@@ -131,31 +225,40 @@ var (
 )
 
 // falsifyingOccurrence scans the post-image lines for an occurrence of the
-// symbol that contradicts the negative claim. For a strong phrase
-// ("no other occurrence"), lines the finding anchored or quoted are
-// excluded — the reviewer saw those and used them as its own basis, and a
-// true strong claim quotes the import as its basis. For a weak call-phrase
-// the exclusion does not apply (issue #68): every line of the post-image,
-// including any quoted span, is scanned. It returns the 1-based line number
-// of the first contradiction.
+// symbol in the shape the claim denies, and returns the 1-based line number
+// of the first one.
 //
-// For a strong phrase ("no other occurrence"), any word occurrence
-// falsifies. For a weak call-phrase ("never called"), only a call-shaped
-// occurrence — the symbol followed by "(", and not a definition head —
-// falsifies, so "the definition sits in this file" cannot drop a true
-// "defined but never called" finding.
-func falsifyingOccurrence(lines []string, excluded map[int]bool, symbol string, strong bool) (int, bool) {
-	wordRe := regexp.MustCompile(`\b` + regexp.QuoteMeta(symbol) + `\b`)
+// The lines the finding anchored or quoted are excluded only for the
+// occurrence shape: a true "no other occurrence" claim quotes the one
+// occurrence it is about as its basis, so without the exclusion it would
+// falsify itself. A call claim gains nothing from that exclusion (issue
+// #68) — an import line is neither call-shaped nor a definition head — and
+// the exclusion only hides a fabricated claim that quotes its own
+// contradicting call site. A definition claim ignores it too, and has to:
+// issue #201's finding quoted the definition of the very symbol it called
+// undefined as its own evidence, so an exclusion there would hide exactly
+// the falsifier this rule exists for.
+func falsifyingOccurrence(lines []string, excluded map[int]bool, symbol string, shape claimShape) (int, bool) {
+	if shape == shapeDefinition {
+		return definitionOccurrence(lines, symbol)
+	}
+	if shape == shapeOccurrence {
+		wordRe := regexp.MustCompile(`\b` + regexp.QuoteMeta(symbol) + `\b`)
+		for i, line := range lines {
+			n := i + 1
+			if excluded[n] {
+				continue
+			}
+			if wordRe.MatchString(line) {
+				return n, true
+			}
+		}
+		return 0, false
+	}
 	callRe := regexp.MustCompile(`\b` + regexp.QuoteMeta(symbol) + `\b[[:space:]]*\(`)
 	for i, line := range lines {
 		n := i + 1
 		if excluded[n] {
-			continue
-		}
-		if strong {
-			if wordRe.MatchString(line) {
-				return n, true
-			}
 			continue
 		}
 		for _, loc := range callRe.FindAllStringIndex(line, -1) {
@@ -164,6 +267,26 @@ func falsifyingOccurrence(lines []string, excluded map[int]bool, symbol string, 
 				continue
 			}
 			return n, true
+		}
+	}
+	return 0, false
+}
+
+// definitionOccurrence scans the post-image for an occurrence that DEFINES
+// symbol, the shape an "is undefined" claim denies: a declaration keyword
+// before the name, a function body after it (notok() {), or an assignment
+// to it. A bare call is not a definition. "foo is undefined" about an
+// undefined foo the code calls is the finding a reviewer gets right, and it
+// must not be falsified by its own call site, which is the one line it can
+// quote.
+func definitionOccurrence(lines []string, symbol string) (int, bool) {
+	s := regexp.QuoteMeta(symbol)
+	head := regexp.MustCompile(`(?i)(^|[^[:alnum:]_.])(func|def|function|fn|sub|proc|method|class|struct|interface|enum|type|const|let|var|local|declare)[[:space:]]+(\([^)]*\)[[:space:]]+)?` + s + `\b`)
+	body := regexp.MustCompile(`(^|[^[:alnum:]_.])` + s + `[[:space:]]*\(\)[[:space:]]*\{`)
+	assign := regexp.MustCompile(`(^|[^[:alnum:]_.])` + s + `[[:space:]]*:?=[^=>]`)
+	for i, line := range lines {
+		if head.MatchString(line) || body.MatchString(line) || assign.MatchString(line) {
+			return i + 1, true
 		}
 	}
 	return 0, false
@@ -181,29 +304,22 @@ func checkNegativeClaims(f *model.Finding, lines []string, partial bool) (drop b
 	if !ok {
 		return false, true, ""
 	}
-	symbols := negativeClaimSymbols(text)
+	symbols := negativeClaimSymbols(text, phrase)
 	if len(symbols) == 0 {
 		// No symbol could be extracted, so the claim cannot be checked
 		// against the file at all — the absence was never mechanically
 		// observed, whatever the file's length. Fail open: the finding
 		// may survive as a note but can never ground a blocker.
 		if partial {
-			return false, false, fmt.Sprintf("negative claim %q on a partially-sent file cannot be verified", phrase)
+			return false, false, fmt.Sprintf("negative claim %q on a partially-sent file cannot be verified", phrase.phrase)
 		}
-		return false, false, fmt.Sprintf("negative claim %q has no extractable symbol to verify against", phrase)
+		return false, false, fmt.Sprintf("negative claim %q has no extractable symbol to verify against", phrase.phrase)
 	}
-	strong := isStrongOccurrencePhrase(phrase)
 	// Quoted/anchored spans are excluded from the falsification scan only
-	// for strong occurrence-phrases (issue #68). A strong claim asserts the
-	// absence of any other occurrence and legitimately quotes the import as
-	// its basis, so without the exclusion every true strong claim would
-	// falsify itself on its own quote. A weak call-claim ("never called")
-	// gains nothing from the exclusion — an import line is neither
-	// call-shaped nor a definition head, so it can never falsify one — and
-	// the exclusion only hides a fabricated claim that quotes its own
-	// contradicting call site.
+	// for occurrence-phrases (issue #68); see falsifyingOccurrence for why
+	// the other two shapes must not exclude them.
 	excluded := map[int]bool{}
-	if strong {
+	if phrase.shape == shapeOccurrence {
 		for l := f.Anchor.StartLine; l <= f.Anchor.EndLine; l++ {
 			excluded[l] = true
 		}
@@ -212,15 +328,28 @@ func checkNegativeClaims(f *model.Finding, lines []string, partial bool) (drop b
 		}
 	}
 	for _, sym := range symbols {
-		if n, hit := falsifyingOccurrence(lines, excluded, sym, strong); hit {
+		if n, hit := falsifyingOccurrence(lines, excluded, sym, phrase.shape); hit {
 			return true, false, fmt.Sprintf(
-				"negative claim %q is falsified: %q occurs at line %d outside the quoted span", phrase, sym, n)
+				"negative claim %q is falsified: %q %s at line %d", phrase.phrase, sym, falsifiedShape(phrase.shape), n)
 		}
 	}
 	if partial {
-		return false, false, fmt.Sprintf("negative claim %q for %q not contradicted in the visible prefix of a partially-sent file", phrase, symbols[0])
+		return false, false, fmt.Sprintf("negative claim %q for %q not contradicted in the visible prefix of a partially-sent file", phrase.phrase, symbols[0])
 	}
 	// Full file searched, no contradiction: the absence claim is true as
 	// far as the file is concerned; the ordinary blocking formula applies.
 	return false, true, ""
+}
+
+// falsifiedShape names, for the drop detail, what the falsifying occurrence
+// is: the shape the claim denied.
+func falsifiedShape(shape claimShape) string {
+	switch shape {
+	case shapeDefinition:
+		return "is defined"
+	case shapeCall:
+		return "is called"
+	default:
+		return "occurs"
+	}
 }
