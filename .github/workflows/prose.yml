@@ -47,7 +47,7 @@ jobs:
   prose:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: elecnix/vale-action@a8c2225c38f990ea957c63c6aabc505dd49e6ab5 # v1.1.1: read the added lines from the pull request's own diff (vale-action#5)
         with:
           # The action defaults to this version, pinned here so a change to
