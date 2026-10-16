@@ -31,7 +31,7 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - uses: elecnix/cite@534087b12205e442d971bddd7c157354a0c31da1  # v0.14.0
+      - uses: elecnix/cite@f5707676437aacf2d3566d0e831c5c558717f994 # v0.15.0
         env:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
 ```
@@ -68,7 +68,7 @@ response Cite's schema rejected is never written down anywhere. When you need
 those bytes, opt into the wire capture:
 
 ```yaml
-      - uses: elecnix/cite@534087b12205e442d971bddd7c157354a0c31da1  # v0.14.0
+      - uses: elecnix/cite@f5707676437aacf2d3566d0e831c5c558717f994 # v0.15.0
         with:
           capture_wire: true
         env:
