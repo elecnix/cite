@@ -138,23 +138,55 @@ jobs:
         run: |
           set -euo pipefail
           tag="$GITHUB_REF_NAME"
+          # A release nobody can use is the failure this job exists to name, so it names
+          # every problem it finds rather than the first: one run should be enough to
+          # know what to fix. Each failure below marks the run and continues, and the
+          # step fails once at the end.
+          failed=0
+          gh release view "$tag" -R "$GITHUB_REPOSITORY" --json assets >/dev/null || {
+            echo "release $tag does not exist"
+            exit 1
+          }
           for arch in linux-amd64 linux-arm64 darwin-arm64; do
             name="cite-$arch"
             json="$(gh release view "$tag" -R "$GITHUB_REPOSITORY" --json assets \
               --jq ".assets[] | select(.name == \"$name\") | {url, size, state}")"
-            [ -n "$json" ] || { echo "$name is not attached to $tag"; exit 1; }
+            if [ -z "$json" ]; then
+              echo "$name is not attached to $tag"
+              failed=1
+              continue
+            fi
             url="$(printf '%s' "$json" | jq -r .url)"
             size="$(printf '%s' "$json" | jq -r .size)"
             state="$(printf '%s' "$json" | jq -r .state)"
-            [ "$state" = "uploaded" ] || { echo "$name is in state $state"; exit 1; }
-            [ "$size" -gt 0 ] || { echo "$name is empty"; exit 1; }
-            # The URL a consumer's action downloads from, and a real status code:
-            # the release knowing the asset exists is not the same thing as it being
-            # fetchable, and that difference shows up in somebody else's CI.
-            code="$(curl -sS -o /dev/null -w '%{http_code}' -L "$url")"
-            [ "$code" = "200" ] || { echo "$name answered HTTP $code"; exit 1; }
+            if [ "$state" != "uploaded" ]; then
+              echo "$name is in state $state"
+              failed=1
+              continue
+            fi
+            if [ "$size" -le 0 ]; then
+              echo "$name is empty"
+              failed=1
+              continue
+            fi
+            # The URL a consumer's action downloads from, and a real status code: the
+            # release knowing the asset exists is not the same thing as it being
+            # fetchable, and that difference shows up in somebody else's CI. A transport
+            # failure is reported rather than left to curl, so the diagnostic survives.
+            code="$(curl -sS -o /dev/null -w '%{http_code}' -L "$url" 2>/dev/null)" || code=""
+            if [ -z "$code" ]; then
+              echo "$name could not be fetched from $url"
+              failed=1
+              continue
+            fi
+            if [ "$code" != "200" ]; then
+              echo "$name answered HTTP $code"
+              failed=1
+              continue
+            fi
             echo "$name: HTTP 200, $size bytes"
           done
+          [ "$failed" -eq 0 ]
 
       - name: The binary reports the version it was released under
         env:

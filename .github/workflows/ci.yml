@@ -37,3 +37,5 @@ jobs:
         run: bash scripts/marketplace-metadata_test.sh
       - name: release guard rails
         run: bash scripts/release-tag_test.sh
+      - name: release verify step
+        run: bash scripts/release-verify_test.sh
