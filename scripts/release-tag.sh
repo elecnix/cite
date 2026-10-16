@@ -120,11 +120,15 @@ git fetch --quiet "$remote" || fail "cannot reach $remote"
 default_ref="$(git symbolic-ref -q --short "refs/remotes/$remote/HEAD" 2>/dev/null || true)"
 default_branch="${default_ref#"$remote"/}"
 if [ -z "$default_branch" ]; then
-  # A bare clone without the symbolic ref: fall back to asking the remote.
+  # A bare clone without the symbolic ref: fall back to asking the remote. Both
+  # answers come from the remote rather than from this machine's configuration,
+  # because a default branch guessed locally is a branch the bump might be pushed to
+  # without anyone asking for it.
   default_branch="$(git ls-remote --symref "$remote" HEAD 2>/dev/null |
     sed -n 's|^ref: refs/heads/\([^[:space:]]*\).*|\1|p' | head -1)"
 fi
-[ -n "$default_branch" ] || fail "cannot determine the default branch of $remote"
+[ -n "$default_branch" ] ||
+  fail "cannot determine the default branch of $remote: neither $remote/HEAD nor its advertised HEAD names one (is its HEAD unborn, or pointing at a branch it does not have?)"
 
 tag_exists() {
   git rev-parse -q --verify "refs/tags/$tag" >/dev/null 2>&1 && return 0

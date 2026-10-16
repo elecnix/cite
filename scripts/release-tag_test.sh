@@ -39,13 +39,25 @@ trap cleanup EXIT
 
 # A fresh remote and a clone of it: VERSION and cmd/cite/main.go both at 1.0.0,
 # with the real version-check.sh, on a release branch off main.
+#
+# `--initial-branch=main` rather than whatever the ambient configuration says: the
+# guards read the remote's default branch, so the sandbox has to name it instead of
+# inheriting it. A runner has no init.defaultBranch, which made the bare repository
+# point HEAD at `master` while the test pushed `main`, and every guard then answered
+# "cannot determine the default branch of origin". Local runs passed for that one
+# reason, and only running the test with an empty global config reproduced it.
 sandbox() {
   dir="$(mktemp -d)"
   sandboxes+=("$dir")
-  git init -q --bare "$dir/origin.git"
+  git init -q --bare --initial-branch=main "$dir/origin.git"
   git clone -q "$dir/origin.git" "$dir/work" 2>/dev/null
   cd "$dir/work" || exit 1
-  git checkout -q -b main
+  git checkout -q -b main 2>/dev/null || git checkout -q main
+  # The script commits as whoever runs it, so the sandbox has to be somebody: without
+  # a repository-local identity the commit is the thing that fails when the ambient
+  # configuration is empty, which is what a runner starts with.
+  git config user.email t@example.invalid
+  git config user.name "release-tag test"
   printf '1.0.0\n' >VERSION
   mkdir -p cmd/cite scripts
   printf 'package main\n\nconst version = "1.0.0"\n' >cmd/cite/main.go
@@ -167,6 +179,21 @@ out="$(rt 2>&1)"
 contains "$out" "usage: bash scripts/release-tag.sh" || fail "a missing version was not refused"
 out="$(rt 1.0.1 --nonsense 2>&1)"
 contains "$out" "unknown option" || fail "an unknown option was not refused: $out"
+
+# A remote whose HEAD names no branch it has: the script cannot say what the default
+# branch is, so it refuses rather than guessing one. This is the shape the CI runner
+# produced from the sandbox's own ambiguity, and it is worth keeping as a case: the
+# refusal is the correct outcome, and guessing `master` or `main` from the local
+# configuration would push the bump to a branch nobody asked about.
+sandbox
+git remote set-head origin -d 2>/dev/null
+git --git-dir="$dir/origin.git" symbolic-ref HEAD refs/heads/does-not-exist
+out="$(rt 1.0.1 2>&1)"
+rc=$?
+[ "$rc" != 0 ] || fail "the bump ran with no determinable default branch: $out"
+[ "$(cat VERSION)" = "1.0.0" ] || fail "VERSION was written without a known default branch"
+contains "$out" "default branch" || contains "$out" "unknown after fetching" ||
+  fail "the refusal does not say why it stopped: $out"
 
 # --- the tag phase: refuses before the merge, tags the merged commit after --
 sandbox
