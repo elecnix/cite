@@ -19,12 +19,28 @@ Refresh the documented `uses: elecnix/cite@<full-sha>  # vX.Y.Z` pins in the
 same commit or the next one. `scripts/action-pins_test.sh` only warns about a
 lagging pin, because a pin can only specify a tag that already exists.
 
-Tag the bump commit itself:
+Tag the bump commit itself. `scripts/release-tag.sh` does both halves: it writes
+the two version strings, refuses a tree that is dirty, on `main`, behind the
+remote, or already carrying that tag, commits on a branch and pushes it — and
+then, after the bump is merged, tags the merged commit.
 
 ```sh
-git tag vX.Y.Z
-git push origin vX.Y.Z
+bash scripts/release-tag.sh X.Y.Z        # bump on a branch, then open a pull request
+# merge it once CI is green
+bash scripts/release-tag.sh X.Y.Z --tag  # annotated tag on the merged commit
 ```
+
+The tag phase reads `VERSION` and `cmd/cite/main.go` **out of the commit being
+tagged** (`git show`, into a temporary root for `version-check.sh`), so what it
+checks is the commit rather than this machine's checkout, and it refuses a tag
+that already exists: a tag is moved deliberately or not at all.
+
+The GitHub release form is not the path. It creates the tag itself, from whatever
+the default branch points at in that moment, and publishes the release in the same
+click, so nobody can check what commit the tag names before it exists. Moving the
+tag afterwards is not a repair: a consumer that resolved it in between has a binary
+whose attestation names a commit the tag no longer points to. v0.15.0 was cut that
+way and moved afterwards.
 
 The [`release` workflow](../.github/workflows/release.yml) then runs on its own:
 
@@ -40,6 +56,12 @@ The [`release` workflow](../.github/workflows/release.yml) then runs on its own:
    attestation store.
 4. **Publish**: a final job downloads the build artifacts and attaches every
    binary to the GitHub release for the tag, with generated release notes.
+5. **Verify**: a last job asks the release itself. Each of the three assets has to
+   be `uploaded`, non-empty, and answer HTTP 200 at the URL a consumer's action
+   downloads from — and the attached `linux/amd64` binary is run, so the version it
+   prints is compared with the tag. Everything before this can succeed and still
+   leave a release nobody can use, and that is the last moment it can be caught
+   here rather than in somebody else's workflow.
 
 Every action step in the workflow is pinned to a full-length commit SHA.
 

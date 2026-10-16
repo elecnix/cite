@@ -35,3 +35,5 @@ jobs:
         run: bash scripts/action-archive_test.sh
       - name: action.yml marketplace metadata
         run: bash scripts/marketplace-metadata_test.sh
+      - name: release guard rails
+        run: bash scripts/release-tag_test.sh
