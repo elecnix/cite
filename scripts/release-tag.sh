@@ -172,7 +172,11 @@ fi
 # ---------------------------------------------------------------------------
 # Phase 1: prepare the bump
 # ---------------------------------------------------------------------------
-current_branch="$(git rev-parse --abbrev-ref HEAD)"
+current_branch="$(git symbolic-ref -q --short HEAD || true)"
+# A detached HEAD has no branch name to compare with the default branch, so the
+# refusal below would quietly not apply and the commit would land nowhere.
+[ -n "$current_branch" ] ||
+  fail "HEAD is detached: check out a branch, so the release commit has one to land on"
 [ "$current_branch" = "$default_branch" ] &&
   fail "refusing to bump on $default_branch: the release commit lands by pull request"
 
@@ -209,11 +213,19 @@ if [ "$dry_run" -eq 1 ]; then
   say "  would rewrite the version line in cmd/cite/main.go"
 else
   printf '%s\n' "$version" >VERSION
-  before="$(grep -c -m1 -E '^const version = "[^"]+"$' cmd/cite/main.go)"
+  # Counted without -m1: a count capped at one cannot see a second version line,
+  # which is the duplicate this assertion exists to catch -- `sed` rewrites every
+  # matching line, so two of them would become two, and version-check.sh reads only
+  # the first. Each write is asserted rather than assumed: a substitution that
+  # matched nothing would leave one of the two strings behind, and version-check.sh
+  # would then refuse the *tag* instead, where the mistake is expensive.
+  before="$(grep -c -E '^const version = "[^"]+"$' cmd/cite/main.go || true)"
+  [ "$before" = "1" ] ||
+    fail "cmd/cite/main.go has $before 'const version' lines, expected exactly one"
   sed -i -E "s|^const version = \"[^\"]+\"$|const version = \"$version\"|" cmd/cite/main.go
-  after="$(grep -c -m1 -E "^const version = \"$version\"\$" cmd/cite/main.go)"
-  [ "$before" = "1" ] && [ "$after" = "1" ] ||
-    fail "the version line in cmd/cite/main.go did not change exactly once"
+  after="$(grep -c -E "^const version = \"$version\"\$" cmd/cite/main.go || true)"
+  [ "$after" = "1" ] ||
+    fail "the version line in cmd/cite/main.go did not change exactly once ($after now)"
 fi
 
 say "  checking with scripts/version-check.sh"

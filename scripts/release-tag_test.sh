@@ -105,6 +105,25 @@ out="$(rt 1.0.1 2>&1)"
 contains "$out" "working tree is dirty" || fail "a dirty tree was not refused: $out"
 rm -f NOTES.md
 
+# A detached HEAD has no branch name, so the default-branch refusal would silently
+# not apply: the guard has to be on "is this a branch" and not only on its name.
+sandbox
+git checkout -q --detach origin/main
+out="$(rt 1.0.1 2>&1)"
+contains "$out" "HEAD is detached" || fail "a detached HEAD was not refused: $out"
+[ "$(cat VERSION)" = "1.0.0" ] || fail "VERSION was written on a detached HEAD"
+
+# Two version lines: `sed` rewrites both, version-check.sh reads the first, and a
+# count capped at one could not see the difference.
+sandbox
+git checkout -q main
+printf 'package main\n\nconst version = "1.0.0"\nconst version = "1.0.0"\n' >cmd/cite/main.go
+git -c user.email=t@t -c user.name=t commit -qam duplicate
+git push -q origin main
+git checkout -q -b release/1.0.3
+out="$(rt 1.0.3 2>&1)"
+contains "$out" "expected exactly one" || fail "a duplicated version line was not refused: $out"
+
 sandbox
 out="$(rt 1.0.0 2>&1)"
 contains "$out" "already at 1.0.0" || fail "a no-op bump was not refused: $out"
@@ -169,7 +188,8 @@ contains "$out" "would run: git tag -a v1.0.1" || fail "the tag dry run did not 
 out="$(rt 1.0.1 --tag 2>&1)" || fail "tagging the merged bump failed: $out"
 [ -n "$(git ls-remote --tags origin refs/tags/v1.0.1)" ] || fail "the tag was not pushed"
 [ "$(git cat-file -t v1.0.1)" = "tag" ] || fail "the tag is not annotated"
-[ "$(git rev-parse v1.0.1^{commit})" = "$(git rev-parse origin/main)" ] ||
+# shellcheck disable=SC1083 # the ^{commit} peeling syntax is git's, not a shell brace
+[ "$(git rev-parse "v1.0.1^{commit}")" = "$(git rev-parse origin/main)" ] ||
   fail "the tag does not point at the merged commit"
 [ "$(git tag -l --format='%(contents:subject)' v1.0.1)" = "v1.0.1" ] ||
   fail "the tag message does not name the version"
