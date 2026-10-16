@@ -227,7 +227,12 @@ else
   [ "$before" = "1" ] ||
     fail "cmd/cite/main.go has $before 'const version' lines, expected exactly one"
   sed -i -E "s|^const version = \"[^\"]+\"$|const version = \"$version\"|" cmd/cite/main.go
-  after="$(grep -c -E "^const version = \"$version\"\$" cmd/cite/main.go || true)"
+  # `-F -x` and not an ERE built from the version: `version_re` above allows
+  # `1.0.0+build1`, and interpolated into a pattern the `+` is a quantifier, so the
+  # assertion counted zero lines and failed *after* both files were written, leaving a
+  # dirty tree for a version the script had just declared valid. Literal and whole-line
+  # is what "did this line become the version" actually means.
+  after="$(grep -c -F -x "const version = \"$version\"" cmd/cite/main.go || true)"
   [ "$after" = "1" ] ||
     fail "the version line in cmd/cite/main.go did not change exactly once ($after now)"
 fi

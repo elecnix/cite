@@ -195,6 +195,16 @@ rc=$?
 contains "$out" "default branch" || contains "$out" "unknown after fetching" ||
   fail "the refusal does not say why it stopped: $out"
 
+# --- a version with build metadata is a version this script accepts -------
+# `version_re` allows `1.0.1+build1`, so the assertions that check the two writes have
+# to read it literally: interpolated into an ERE the `+` is a quantifier, and the count
+# came back zero *after* both files were already written.
+sandbox
+out="$(rt 1.0.1+build1 2>&1)" || fail "a version with build metadata was refused: $out"
+[ "$(cat VERSION)" = "1.0.1+build1" ] || fail "VERSION is $(cat VERSION)"
+contains "$(cat cmd/cite/main.go)" 'const version = "1.0.1+build1"' ||
+  fail "main.go was not written for a version with build metadata"
+
 # --- the tag phase: refuses before the merge, tags the merged commit after --
 sandbox
 out="$(rt 1.0.1 --tag 2>&1)"
