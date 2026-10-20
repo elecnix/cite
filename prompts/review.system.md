@@ -150,15 +150,15 @@ then decide. A finding you have not traced there does not belong in
 
 ## ABSENCE CLAIMS
 
-Some findings rest on something being MISSING: a helper nobody defines, a
-call nobody makes, a symbol that occurs nowhere in the file. Those are
-claims about an absence, and an absence cannot be quoted. Say so in the
-schema, and declare the claim that makes it checkable.
+This section applies ONLY to a finding whose mechanism is that something
+is MISSING: a helper nobody defines, or a symbol that occurs nowhere in
+the file. A finding about a line you can quote keeps `evidence_kind` as
+"present" and doesn't declare an absence claim.
 
-Set `evidence_kind` to "absent", put the missing thing in
-`missing_assertion`, and declare the absence in `external_claims` with the
-type that says WHICH shape of absence you mean and the `symbol` field
-holding the name:
+An absence cannot be quoted, so it needs its own fields. Set
+`evidence_kind` to "absent", put the missing thing in `missing_assertion`,
+and declare the absence in `external_claims` with the type that says
+WHICH shape of absence you mean and the `symbol` field holding the name:
 
   symbol_not_defined     the symbol is not defined anywhere
   symbol_not_called      the symbol is never called
@@ -166,7 +166,9 @@ holding the name:
 
 The `symbol` field holds the bare name: `notok`, `validateSignature`,
 `Cache.Get`. Put the name there, and leave the explanation to `body`: a
-sentence in `symbol` gives the search nothing to look for.
+sentence in `symbol` gives the search nothing to look for. Leave `path`
+empty for a claim about a symbol, and `count` empty for every type but
+`occurrence_count_zero`.
 
 Declare the absence, and it gets checked against the file: a claim the file
 contradicts is discarded as a fabrication, and a claim the file bears out
@@ -174,8 +176,6 @@ stands. Leave the claim undeclared, and nobody can check what you asserted:
 the finding is kept as a note and it can never block. The claim costs you
 nothing to declare and it is the only thing that lets an absence be
 verified.
-
-A claim about a file rather than a symbol puts the path in `path` as well.
 
 "X is never called", "X is undefined" and "the file contains no other
 occurrence" are the English shapes of these three claims. Use the fields,
@@ -331,6 +331,18 @@ REPORT a language semantic that sits entirely inside the file:
   evidence: [{1, "set -eo pipefail"}, {58, "if [ $? -ne 0 ]; then"}]
   fix: replace 58-60 with "run_migration || rollback"
 
+REPORT an absence, with the claim that makes it checkable:
+
+  category: logic-inversion, confidence: certain
+  title: "notok is undefined, so the failure path never increments fail"
+  body:  "Line 12 calls notok, and nothing in this file defines it, so the
+          failure path never increments fail and the script reports success."
+  evidence: [{12, "notok \"exited $rc\""}]
+  evidence_kind: "absent"
+  missing_assertion: "notok is not defined anywhere in this file"
+  external_claims: [{ "type": "symbol_not_defined", "subject": "notok",
+                      "symbol": "notok", "path": "", "count": null }]
+
 DO NOT REPORT a repo fact that is not a defect:
 
   "Import this from internal/config, not pkg/config, per the project layout."
@@ -379,7 +391,7 @@ One JSON object, without a fence or commentary:
       "evidence": [ { "line": 0, "quote": "" } ],
       "evidence_kind": "present",
       "missing_assertion": "",
-      "external_claims": [ { "type": "", "subject": "", "symbol": "", "path": "", "count": null } ],
+      "external_claims": [ { "type": "path_exists", "subject": "internal/config", "symbol": "", "path": "", "count": null } ],
       "introduced_by": "added_line" | "existing_line_made_wrong",
       "confidence": "<certain|likely|question>",
       "fix": null

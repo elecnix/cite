@@ -478,7 +478,7 @@ func checkDeclaredAbsenceClaim(c model.ExternalClaim, path string, f *model.Find
 	if c.Type == model.ClaimOccurrenceCountZero && c.Count != nil && *c.Count != 0 {
 		// The type says the count is zero and the count field says
 		// otherwise: the claim contradicts itself, so there is nothing
-		// to check and nothing to trust.
+		// to check and nothing to trust. Note, never a block.
 		return false, false, fmt.Sprintf("%s claim %q declares a count of %d, want 0", c.Type, c.Symbol, *c.Count)
 	}
 	if c.Path != "" && c.Path != path {

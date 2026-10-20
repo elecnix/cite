@@ -76,32 +76,42 @@ func TestParseFileReviewAcceptsAbsenceClaimTypes(t *testing.T) {
 	}
 }
 
-// An absence claim with no symbol names nothing to search for, so it can
-// never be checked. It is a schema violation, not a note: the finding
-// declared a shape it cannot give a subject for.
-func TestParseFileReviewRejectsAbsenceClaimWithoutASymbol(t *testing.T) {
+// An absence claim with no symbol does not fail the parse. The claim
+// names nothing to search for, so the validator gives it the note
+// disposition and the finding can never block. A field on one finding
+// must not cost the whole file its review.
+func TestParseFileReviewKeepsAbsenceClaimWithoutASymbol(t *testing.T) {
 	in := `{"schema_version":1,"path":"a.go","outcome":"reviewed","findings":[{
 	  "id":"f1","category":"crash","anchor":{"start_line":1,"end_line":2},
 	  "title":"t","body":"b","impact":"i",
 	  "evidence":[{"line":1,"quote":"x"}],
 	  "external_claims":[{"type":"symbol_not_defined","subject":"notok"}],
 	  "introduced_by":"added_line","confidence":"likely"}]}`
-	if _, err := ParseFileReview([]byte(in)); err == nil {
-		t.Fatal("an absence claim with no symbol must be rejected at parse time")
+	fr, err := ParseFileReview([]byte(in))
+	if err != nil {
+		t.Fatalf("an absence claim with no symbol must not fail the parse: %v", err)
+	}
+	if len(fr.Findings) != 1 {
+		t.Fatalf("Findings = %d, want 1", len(fr.Findings))
 	}
 }
 
 // An occurrence_count_zero claim that declares a non-zero count contradicts
-// itself: the type says the count is zero.
-func TestParseFileReviewRejectsZeroCountClaimWithANonZeroCount(t *testing.T) {
+// itself: the type says the count is zero. The parse keeps it, and the
+// validator turns it into a note.
+func TestParseFileReviewKeepsZeroCountClaimWithANonZeroCount(t *testing.T) {
 	in := `{"schema_version":1,"path":"a.go","outcome":"reviewed","findings":[{
 	  "id":"f1","category":"crash","anchor":{"start_line":1,"end_line":2},
 	  "title":"t","body":"b","impact":"i",
 	  "evidence":[{"line":1,"quote":"x"}],
 	  "external_claims":[{"type":"occurrence_count_zero","subject":"notok","symbol":"notok","count":3}],
 	  "introduced_by":"added_line","confidence":"likely"}]}`
-	if _, err := ParseFileReview([]byte(in)); err == nil {
-		t.Fatal("an occurrence_count_zero claim with count 3 must be rejected at parse time")
+	fr, err := ParseFileReview([]byte(in))
+	if err != nil {
+		t.Fatalf("a self-contradicting count must not fail the parse: %v", err)
+	}
+	if got := fr.Findings[0].ExternalClaims[0].Count; got == nil || *got != 3 {
+		t.Errorf("Count = %v, want 3: the parse keeps what the model said", got)
 	}
 }
 

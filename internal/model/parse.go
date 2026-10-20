@@ -153,19 +153,19 @@ func ParseFileReview(data []byte) (*FileReview, error) {
 				return nil, fmt.Errorf("schema: finding %s unknown external_claim type %q", f.ID, c.Type)
 			}
 			// The absence-claim types (issue #203) carry a structured
-			// subject. A claim without one names no symbol, so the
-			// mechanical check has nothing to look for: that is a
-			// schema violation, not a note, because a note is what a
-			// claim that cannot be checked earns, and this one was
-			// never checkable in the first place.
-			if c.Type.IsAbsenceClaim() {
-				if strings.TrimSpace(c.Symbol) == "" {
-					return nil, fmt.Errorf("schema: finding %s declares %s without a symbol", f.ID, c.Type)
-				}
-				if c.Type == ClaimOccurrenceCountZero && c.Count != nil && *c.Count != 0 {
-					return nil, fmt.Errorf("schema: finding %s declares %s with count %d, want 0", f.ID, c.Type, *c.Count)
-				}
-			}
+			// subject, but a missing one is NOT a parse failure. The
+			// validator gives an absence claim with no usable symbol
+			// the note disposition, the same way it treats a
+			// symbol_exists claim whose subject is a sentence: the
+			// search has nothing to look for, so the claim can neither
+			// confirm nor refute the absence, and an uncheckable
+			// claim must not block.
+			//
+			// Rejecting it here instead would fail the whole
+			// response over one finding's field, and a file that
+			// cannot be parsed ends up unevaluated, which the gate
+			// turns into a veto. A field on one finding must not cost
+			// the file's review.
 		}
 		if f.Fix != nil && !validFixShape(f.Fix.Shape) {
 			return nil, fmt.Errorf("schema: finding %s unknown fix shape %q", f.ID, f.Fix.Shape)

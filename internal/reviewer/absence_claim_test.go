@@ -370,6 +370,45 @@ func TestDeclaredAbsenceClaimOnAPartialFileNeverBlocks(t *testing.T) {
 	}
 }
 
+// A declared absence claim with no symbol does not cost the file its
+// review. The parse keeps it, and the validator gives it the note
+// disposition: the search has nothing to look for, so the claim can
+// neither confirm nor refute the absence, and it must never block.
+func TestAbsenceClaimWithNoSymbolIsANoteAndTheFileSurvives(t *testing.T) {
+	rec := runAbsenceClaim(t, nil, absenceClaim(model.ClaimSymbolNotDefined, ""), nil)
+	if len(rec.Findings) != 1 {
+		t.Fatalf("Findings = %d, want 1; drops %+v", len(rec.Findings), rec.Drops)
+	}
+	if rec.Findings[0].Blocks {
+		t.Errorf("Blocks = true, want false: a claim nobody could check cannot block")
+	}
+	if got := rec.Findings[0].ExternalClaims[0].Disposition; got != "note" {
+		t.Errorf("Disposition = %q, want note", got)
+	}
+}
+
+// An occurrence_count_zero claim that declares a non-zero count contradicts
+// itself. It is a note, not a block, and it does not cost the file its
+// review either.
+func TestSelfContradictingCountClaimIsANote(t *testing.T) {
+	claims := []any{map[string]any{
+		"type":    string(model.ClaimOccurrenceCountZero),
+		"subject": "helper",
+		"symbol":  "helper",
+		"count":   3,
+	}}
+	rec := runAbsenceClaim(t, nil, claims, nil)
+	if len(rec.Findings) != 1 {
+		t.Fatalf("Findings = %d, want 1; drops %+v", len(rec.Findings), rec.Drops)
+	}
+	if rec.Findings[0].Blocks {
+		t.Errorf("Blocks = true, want false: a claim that contradicts itself cannot block")
+	}
+	if got := rec.Findings[0].ExternalClaims[0].Disposition; got != "note" {
+		t.Errorf("Disposition = %q, want note", got)
+	}
+}
+
 // The record says what happened to the claim: a claim that was checked and
 // held is "verified", a claim nobody could check is a "note". An
 // unverified claim also fails the "every claim verified true" conjunct, so
