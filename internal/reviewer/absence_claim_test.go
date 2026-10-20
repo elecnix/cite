@@ -197,8 +197,11 @@ func TestDeclaredAbsenceClaimsAreCheckedOnTheirTypeAndSymbol(t *testing.T) {
 			if got := rec.Findings[0].ExternalClaims[0].Disposition; got != "verified" {
 				t.Errorf("Disposition = %q, want verified", got)
 			}
-			if got := rec.Findings[0].ExternalClaims[0].Disposition; got != "verified" {
-				t.Errorf("Disposition = %q, want verified", got)
+			if got := rec.Findings[0].ExternalClaims[0].Type; got != c.typ {
+				t.Errorf("Type = %q, want %q: the claim keeps the type it declared", got, c.typ)
+			}
+			if got := rec.Findings[0].ExternalClaims[0].Symbol; got != c.symbol {
+				t.Errorf("Symbol = %q, want %q: the claim keeps the subject it declared", got, c.symbol)
 			}
 		})
 	}

@@ -397,7 +397,7 @@ One JSON object, without a fence or commentary:
       "body": "",
       "impact": "",
       "evidence": [ { "line": 0, "quote": "" } ],
-      "evidence_kind": "present",
+      "evidence_kind": "present" | "absent",
       "missing_assertion": "",
       "external_claims": [],
       "introduced_by": "added_line" | "existing_line_made_wrong",
