@@ -54,19 +54,21 @@ func TestReviewSchemaCarriesTheAbsenceClaimTypes(t *testing.T) {
 	claim := schema.Properties["findings"].Items.Properties["external_claims"].Items
 	types := claim.Properties["type"].Enum
 	for _, want := range []string{"symbol_not_defined", "symbol_not_called", "occurrence_count_zero"} {
-		if !contains(types, want) {
+		if !listHas(types, want) {
 			t.Errorf("external_claims type enum lacks %q: %v", want, types)
 		}
 	}
 	for _, want := range []string{"subject", "symbol", "path", "count"} {
-		if !contains(claim.Required, want) {
+		if !listHas(claim.Required, want) {
 			t.Errorf("external_claims required lacks %q: %v", want, claim.Required)
 		}
 	}
 }
 
-// contains reports whether xs holds s.
-func contains(xs []string, s string) bool {
+// listHas reports whether xs holds s. Named for this file rather than
+// "contains", which another package already uses and which a name
+// collision in a shared package would turn into a build failure.
+func listHas(xs []string, s string) bool {
 	for _, x := range xs {
 		if x == s {
 			return true

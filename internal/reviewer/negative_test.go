@@ -108,13 +108,15 @@ func TestWeakCallClaimQuotingCallSiteDropped(t *testing.T) {
 	}
 }
 
-// The negative claim is true (no call site anywhere in the file): the
-// finding survives and the ordinary blocking formula applies.
+// The declared absence claim is true (no call site anywhere in the file):
+// the finding survives and the ordinary blocking formula applies.
 //
 // Issue #203: the absence has to be DECLARED for it to be checkable. The
 // declared claim is what the mechanical check runs on, so a claim asserted
 // only in prose is no longer checkable and cannot ground a blocker. The
-// declared form of this claim is symbol_not_called.
+// declared form of this claim is symbol_not_called. The prose-only
+// counterpart, where the finding survives as a note, is in
+// absence_claim_test.go.
 func TestTrueNegativeClaimStillBlocks(t *testing.T) {
 	in := reproInputs("")
 	f := reproFinding()

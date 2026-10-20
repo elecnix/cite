@@ -202,6 +202,44 @@ func TestAbsenceInAnotherLanguageNeverBlocks(t *testing.T) {
 	}
 }
 
+// A prose absence that is TRUE survives as a note: it is not dropped,
+// because nothing in the file contradicts it, and it does not block,
+// because nobody checked it. The finding is published either way, and the
+// difference between the two verdicts is the point of the change.
+func TestTrueProseAbsenceSurvivesAsANonBlockingNote(t *testing.T) {
+	rec := runAbsenceClaim(t, nil, nil, func(f map[string]any) {
+		f["title"] = "maybeSuffixForkIdentity is never called"
+		f["body"] = "The helper maybeSuffixForkIdentity is never invoked anywhere in this module."
+	})
+	if len(rec.Findings) != 1 {
+		t.Fatalf("Findings = %d, want 1 (a true absence is not dropped); drops %+v", len(rec.Findings), rec.Drops)
+	}
+	if rec.Findings[0].Blocks {
+		t.Errorf("Blocks = true, want false: a prose-only absence was never mechanically checked")
+	}
+	if findDrop(rec, model.DropNegativeClaimFalsified) != nil {
+		t.Errorf("a true prose absence must not be dropped; drops %+v", rec.Drops)
+	}
+}
+
+// The same finding WITH the declared claim of the same shape is checked
+// against the file, and a true one blocks. This is the pair the prose
+// fallback and the declared claim have to agree on: the fallback demotes,
+// the declared claim decides.
+func TestDeclaredClaimOfTheSameShapeStillBlocks(t *testing.T) {
+	rec := runAbsenceClaim(t, nil, absenceClaim(model.ClaimSymbolNotCalled, "maybeSuffixForkIdentity"),
+		func(f map[string]any) {
+			f["title"] = "maybeSuffixForkIdentity is never called"
+			f["body"] = "The helper maybeSuffixForkIdentity is never invoked anywhere in this module."
+		})
+	if len(rec.Findings) != 1 {
+		t.Fatalf("Findings = %d, want 1; drops %+v", len(rec.Findings), rec.Drops)
+	}
+	if !rec.Findings[0].Blocks {
+		t.Errorf("Blocks = false, want true: the declared claim was checked and it holds")
+	}
+}
+
 // The fallback keeps the falsifying power it always had: a prose absence
 // the file contradicts is still dropped. The demotion is a demotion, not a
 // pardon.
