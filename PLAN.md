@@ -782,6 +782,9 @@ count and the run record.
 | `version_behavior` | impossible without network | **rejected at parse time** |
 | `ci_behavior` | impossible | note only, never blocking |
 | `convention` | impossible | note only, rendered as a question |
+| `symbol_not_defined` | search the reviewed file for a definition of the declared `symbol` | **drop** when the file defines it |
+| `symbol_not_called` | search the reviewed file for a call of the declared `symbol` | **drop** when the file calls it |
+| `occurrence_count_zero` | search the reviewed file for any occurrence of the declared `symbol` | **drop** when the file has it |
 
 A `symbol_exists` subject that isn't an identifier, such as a sentence about how a toolchain
 behaves, gives the definition search nothing to look for, and zero hits can't refute it. The
@@ -792,6 +795,29 @@ never blocks. The harness strips backticks and a trailing `()` from a name befor
 and the model is always confident about it. It is the class that flagged a real `actions/checkout@v5` as "no such version".
 `ci_behavior` is the class that produced the suggestion which would have silently disabled every
 staging deploy.
+
+### Absence claims are declared, not inferred
+
+The absence-claim types exist because a finding that asserts an absence used to have its
+narrative recovered into a check by reading English. The harness matched a table of phrases
+against the finding's narrative fields and guessed the subject from the token before the phrase.
+Coverage was a function of the narrative vocabulary. Outside English no phrase matched,
+so the guard was absent rather than weaker, and the ordinary blocking formula applied to an
+absence claim nobody had checked. Every fix was a new word, and the class has produced four
+incidents closed by widening the table.
+
+So the model fills in the absence it asserts. The type says which one
+(`symbol_not_defined`, `symbol_not_called`, `occurrence_count_zero`), the `symbol` field says which
+name, and the check runs on the type and the symbol, in any language the finding is written in. A
+claim the file contradicts drops the finding. A claim the file bears out stands and can block.
+
+The prose tables stay, as a fallback, and the fallback is weaker in the one direction that matters.
+An absence in prose that no declared claim covers was never mechanically observed, so the finding
+fails open to a note and can never ground a blocker. The tables keep the falsifying power they
+always had, because dropping a false claim is worth more than the coverage of the table. A
+phrase-matched claim the file contradicts is still dropped. A finding that declares
+`evidence_kind: "absent"` with no absence claim is held to the same rule, and `evidence_kind` is a
+field rather than a phrase, so the rule works in every language.
 
 ### The verifier pass
 
@@ -1619,6 +1645,40 @@ then decide. A finding you have not traced there does not belong in
 `findings`. Nobody reads `analysis` but you, so it does not need to be short.
 
 
+## ABSENCE CLAIMS
+
+Some findings rest on something being MISSING: a helper nobody defines, a
+call nobody makes, a symbol that occurs nowhere in the file. Those are
+claims about an absence, and an absence cannot be quoted. Say so in the
+schema, and declare the claim that makes it checkable.
+
+Set `evidence_kind` to "absent", put the missing thing in
+`missing_assertion`, and declare the absence in `external_claims` with the
+type that says WHICH shape of absence you mean and the `symbol` field
+holding the name:
+
+  symbol_not_defined     the symbol is not defined anywhere
+  symbol_not_called      the symbol is never called
+  occurrence_count_zero  the symbol does not occur at all
+
+The `symbol` field holds the bare name: `notok`, `validateSignature`,
+`Cache.Get`. Put the name there, and leave the explanation to `body`: a
+sentence in `symbol` gives the search nothing to look for.
+
+Declare the absence, and it gets checked against the file: a claim the file
+contradicts is discarded as a fabrication, and a claim the file bears out
+stands. Leave the claim undeclared, and nobody can check what you asserted:
+the finding is kept as a note and it can never block. The claim costs you
+nothing to declare and it is the only thing that lets an absence be
+verified.
+
+A claim about a file rather than a symbol puts the path in `path` as well.
+
+"X is never called", "X is undefined" and "the file contains no other
+occurrence" are the English shapes of these three claims. Use the fields,
+not the prose: the checker reads the type and the symbol, so it works the
+same in any language you write in.
+
 ## MOST FILES HAVE NO FINDINGS
 
 Returning `"findings": []` is the correct answer for many files, and it is a
@@ -1814,7 +1874,9 @@ One JSON object, without a fence or commentary:
       "body": "",
       "impact": "",
       "evidence": [ { "line": 0, "quote": "" } ],
-      "external_claims": [ { "type": "", "subject": "" } ],
+      "evidence_kind": "present",
+      "missing_assertion": "",
+      "external_claims": [ { "type": "", "subject": "", "symbol": "", "path": "", "count": null } ],
       "introduced_by": "added_line" | "existing_line_made_wrong",
       "confidence": "<certain|likely|question>",
       "fix": null

@@ -1,6 +1,7 @@
 package reviewer
 
 import (
+	"encoding/json"
 	"os"
 	"regexp"
 	"strings"
@@ -23,6 +24,79 @@ import (
 // embedded copy is the behaviour, the root copy is the diff, and the appendix
 // is the documentation. A prose rewrite that lands in one and misses another
 // is exactly the failure this guards.
+// Issue #203: the absence-claim types are in the response schema the
+// provider enforces, and each one keeps its subject in a structured field.
+//
+// A claim type the provider's schema does not know cannot be emitted, and
+// a subject the schema has no field for comes back empty, so the check
+// would have nothing to look for. Strict mode requires every property to
+// be listed in required, so the subject fields are required too.
+func TestReviewSchemaCarriesTheAbsenceClaimTypes(t *testing.T) {
+	// The claims live under properties -> findings -> items -> properties
+	// -> external_claims -> items.
+	var schema struct {
+		Properties map[string]struct {
+			Items struct {
+				Properties map[string]struct {
+					Items struct {
+						Properties map[string]struct {
+							Enum []string `json:"enum"`
+						} `json:"properties"`
+						Required []string `json:"required"`
+					} `json:"items"`
+				} `json:"properties"`
+			} `json:"items"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(reviewResponseSchema(), &schema); err != nil {
+		t.Fatal(err)
+	}
+	claim := schema.Properties["findings"].Items.Properties["external_claims"].Items
+	types := claim.Properties["type"].Enum
+	for _, want := range []string{"symbol_not_defined", "symbol_not_called", "occurrence_count_zero"} {
+		if !contains(types, want) {
+			t.Errorf("external_claims type enum lacks %q: %v", want, types)
+		}
+	}
+	for _, want := range []string{"subject", "symbol", "path", "count"} {
+		if !contains(claim.Required, want) {
+			t.Errorf("external_claims required lacks %q: %v", want, claim.Required)
+		}
+	}
+}
+
+// contains reports whether xs holds s.
+func contains(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// The prompt asks for the absence claim, and the answer names the three
+// types and the field that carries the subject. A prompt that names the
+// shapes in prose but not in the schema teaches the model to write prose.
+func TestPromptAsksForTheAbsenceClaim(t *testing.T) {
+	prompt := strings.Join(strings.Fields(systemPrompt()), " ")
+	for _, want := range []string{
+		"## ABSENCE CLAIMS",
+		"symbol_not_defined",
+		"symbol_not_called",
+		"occurrence_count_zero",
+		"evidence_kind",
+		"missing_assertion",
+		"`symbol`",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("system prompt lacks %q", want)
+		}
+	}
+}
+
+// The three prompt copies stay in step: the root file, the embedded copy
+// and the design document.
 func TestPromptCopiesStayInSync(t *testing.T) {
 	root := readFile(t, "../../prompts/review.system.md")
 	embedded := readFile(t, "prompts/review.system.md")

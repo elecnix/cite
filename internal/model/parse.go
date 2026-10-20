@@ -152,6 +152,20 @@ func ParseFileReview(data []byte) (*FileReview, error) {
 			if !validClaimType(c.Type) {
 				return nil, fmt.Errorf("schema: finding %s unknown external_claim type %q", f.ID, c.Type)
 			}
+			// The absence-claim types (issue #203) carry a structured
+			// subject. A claim without one names no symbol, so the
+			// mechanical check has nothing to look for: that is a
+			// schema violation, not a note, because a note is what a
+			// claim that cannot be checked earns, and this one was
+			// never checkable in the first place.
+			if c.Type.IsAbsenceClaim() {
+				if strings.TrimSpace(c.Symbol) == "" {
+					return nil, fmt.Errorf("schema: finding %s declares %s without a symbol", f.ID, c.Type)
+				}
+				if c.Type == ClaimOccurrenceCountZero && c.Count != nil && *c.Count != 0 {
+					return nil, fmt.Errorf("schema: finding %s declares %s with count %d, want 0", f.ID, c.Type, *c.Count)
+				}
+			}
 		}
 		if f.Fix != nil && !validFixShape(f.Fix.Shape) {
 			return nil, fmt.Errorf("schema: finding %s unknown fix shape %q", f.ID, f.Fix.Shape)
@@ -180,7 +194,8 @@ func validConfidence(c Confidence) bool {
 
 func validClaimType(t ClaimType) bool {
 	switch t {
-	case ClaimPathExists, ClaimSymbolExists, ClaimConfigKey, ClaimCIBehavior, ClaimConvention:
+	case ClaimPathExists, ClaimSymbolExists, ClaimConfigKey, ClaimCIBehavior, ClaimConvention,
+		ClaimSymbolNotDefined, ClaimSymbolNotCalled, ClaimOccurrenceCountZero:
 		return true
 	}
 	return false

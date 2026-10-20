@@ -110,9 +110,16 @@ func TestWeakCallClaimQuotingCallSiteDropped(t *testing.T) {
 
 // The negative claim is true (no call site anywhere in the file): the
 // finding survives and the ordinary blocking formula applies.
+//
+// Issue #203: the absence has to be DECLARED for it to be checkable. The
+// declared claim is what the mechanical check runs on, so a claim asserted
+// only in prose is no longer checkable and cannot ground a blocker. The
+// declared form of this claim is symbol_not_called.
 func TestTrueNegativeClaimStillBlocks(t *testing.T) {
 	in := reproInputs("")
-	c := &fakeClient{fn: reproScript(reproFinding())}
+	f := reproFinding()
+	f["external_claims"] = absenceClaim(model.ClaimSymbolNotCalled, "maybeSuffixForkIdentity")
+	c := &fakeClient{fn: reproScript(f)}
 	rec, err := runOnce(t, in, baseOptions(c))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -133,6 +140,7 @@ func TestDefinitionOccurrenceDoesNotFalsifyCallClaim(t *testing.T) {
 	f := reproFinding()
 	f["title"] = "maybeSuffixForkIdentity defined but never called"
 	f["body"] = "The helper maybeSuffixForkIdentity is never called anywhere in this module."
+	f["external_claims"] = absenceClaim(model.ClaimSymbolNotCalled, "maybeSuffixForkIdentity")
 	c := &fakeClient{fn: reproScript(f)}
 	rec, err := runOnce(t, in, baseOptions(c))
 	if err != nil {
@@ -290,6 +298,7 @@ func TestDefinitionAbsenceClaimFalsifiedByTheDefinitionInTheFile(t *testing.T) {
 // have dropped it on its own quoted call site.
 func TestDefinitionAbsenceClaimNotFalsifiedByItsCallSite(t *testing.T) {
 	f := shellFinding()
+	f["external_claims"] = absenceClaim(model.ClaimSymbolNotDefined, "notok")
 	c := &fakeClient{fn: reproScript(f)}
 	rec, err := runOnce(t, shellInputs(false), baseOptions(c))
 	if err != nil {

@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -47,6 +48,75 @@ func TestParseFileReviewRejectsBannedClaimType(t *testing.T) {
 	_, err := ParseFileReview([]byte(in))
 	if err == nil || !strings.Contains(err.Error(), "version_behavior") {
 		t.Fatalf("version_behavior must be rejected at parse time, got %v", err)
+	}
+}
+
+// The absence-claim types (issue #203) parse, and each one keeps its
+// subject in a structured field: the type says which shape of absence the
+// finding asserts, the symbol says which name.
+func TestParseFileReviewAcceptsAbsenceClaimTypes(t *testing.T) {
+	for _, typ := range []ClaimType{ClaimSymbolNotDefined, ClaimSymbolNotCalled, ClaimOccurrenceCountZero} {
+		in := fmt.Sprintf(`{"schema_version":1,"path":"a.go","outcome":"reviewed","findings":[{
+		  "id":"f1","category":"crash","anchor":{"start_line":1,"end_line":2},
+		  "title":"t","body":"b","impact":"i",
+		  "evidence":[{"line":1,"quote":"x"}],
+		  "external_claims":[{"type":%q,"subject":"notok","symbol":"notok"}],
+		  "introduced_by":"added_line","confidence":"likely"}]}`, typ)
+		fr, err := ParseFileReview([]byte(in))
+		if err != nil {
+			t.Fatalf("%s: %v", typ, err)
+		}
+		c := fr.Findings[0].ExternalClaims[0]
+		if c.Type != typ {
+			t.Errorf("Type = %q, want %q", c.Type, typ)
+		}
+		if c.Symbol != "notok" {
+			t.Errorf("Symbol = %q, want notok: the subject is a structured field", c.Symbol)
+		}
+	}
+}
+
+// An absence claim with no symbol names nothing to search for, so it can
+// never be checked. It is a schema violation, not a note: the finding
+// declared a shape it cannot give a subject for.
+func TestParseFileReviewRejectsAbsenceClaimWithoutASymbol(t *testing.T) {
+	in := `{"schema_version":1,"path":"a.go","outcome":"reviewed","findings":[{
+	  "id":"f1","category":"crash","anchor":{"start_line":1,"end_line":2},
+	  "title":"t","body":"b","impact":"i",
+	  "evidence":[{"line":1,"quote":"x"}],
+	  "external_claims":[{"type":"symbol_not_defined","subject":"notok"}],
+	  "introduced_by":"added_line","confidence":"likely"}]}`
+	if _, err := ParseFileReview([]byte(in)); err == nil {
+		t.Fatal("an absence claim with no symbol must be rejected at parse time")
+	}
+}
+
+// An occurrence_count_zero claim that declares a non-zero count contradicts
+// itself: the type says the count is zero.
+func TestParseFileReviewRejectsZeroCountClaimWithANonZeroCount(t *testing.T) {
+	in := `{"schema_version":1,"path":"a.go","outcome":"reviewed","findings":[{
+	  "id":"f1","category":"crash","anchor":{"start_line":1,"end_line":2},
+	  "title":"t","body":"b","impact":"i",
+	  "evidence":[{"line":1,"quote":"x"}],
+	  "external_claims":[{"type":"occurrence_count_zero","subject":"notok","symbol":"notok","count":3}],
+	  "introduced_by":"added_line","confidence":"likely"}]}`
+	if _, err := ParseFileReview([]byte(in)); err == nil {
+		t.Fatal("an occurrence_count_zero claim with count 3 must be rejected at parse time")
+	}
+}
+
+// IsAbsenceClaim names the claim types whose blocking turns on an absence.
+func TestIsAbsenceClaim(t *testing.T) {
+	absences := []ClaimType{ClaimSymbolNotDefined, ClaimSymbolNotCalled, ClaimOccurrenceCountZero}
+	for _, c := range absences {
+		if !c.IsAbsenceClaim() {
+			t.Errorf("%s must be an absence claim", c)
+		}
+	}
+	for _, c := range []ClaimType{ClaimPathExists, ClaimSymbolExists, ClaimConfigKey, ClaimCIBehavior, ClaimConvention} {
+		if c.IsAbsenceClaim() {
+			t.Errorf("%s must not be an absence claim", c)
+		}
 	}
 }
 

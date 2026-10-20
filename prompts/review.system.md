@@ -148,6 +148,40 @@ then decide. A finding you have not traced there does not belong in
 `findings`. Nobody reads `analysis` but you, so it does not need to be short.
 
 
+## ABSENCE CLAIMS
+
+Some findings rest on something being MISSING: a helper nobody defines, a
+call nobody makes, a symbol that occurs nowhere in the file. Those are
+claims about an absence, and an absence cannot be quoted. Say so in the
+schema, and declare the claim that makes it checkable.
+
+Set `evidence_kind` to "absent", put the missing thing in
+`missing_assertion`, and declare the absence in `external_claims` with the
+type that says WHICH shape of absence you mean and the `symbol` field
+holding the name:
+
+  symbol_not_defined     the symbol is not defined anywhere
+  symbol_not_called      the symbol is never called
+  occurrence_count_zero  the symbol does not occur at all
+
+The `symbol` field holds the bare name: `notok`, `validateSignature`,
+`Cache.Get`. Put the name there, and leave the explanation to `body`: a
+sentence in `symbol` gives the search nothing to look for.
+
+Declare the absence, and it gets checked against the file: a claim the file
+contradicts is discarded as a fabrication, and a claim the file bears out
+stands. Leave the claim undeclared, and nobody can check what you asserted:
+the finding is kept as a note and it can never block. The claim costs you
+nothing to declare and it is the only thing that lets an absence be
+verified.
+
+A claim about a file rather than a symbol puts the path in `path` as well.
+
+"X is never called", "X is undefined" and "the file contains no other
+occurrence" are the English shapes of these three claims. Use the fields,
+not the prose: the checker reads the type and the symbol, so it works the
+same in any language you write in.
+
 ## MOST FILES HAVE NO FINDINGS
 
 Returning `"findings": []` is the correct answer for many files, and it is a
@@ -343,7 +377,9 @@ One JSON object, without a fence or commentary:
       "body": "",
       "impact": "",
       "evidence": [ { "line": 0, "quote": "" } ],
-      "external_claims": [ { "type": "", "subject": "" } ],
+      "evidence_kind": "present",
+      "missing_assertion": "",
+      "external_claims": [ { "type": "", "subject": "", "symbol": "", "path": "", "count": null } ],
       "introduced_by": "added_line" | "existing_line_made_wrong",
       "confidence": "<certain|likely|question>",
       "fix": null
