@@ -409,6 +409,36 @@ func TestUncheckableDeclaredAbsenceClaimsAreNotes(t *testing.T) {
 	}
 }
 
+// The zero-count claim is about ZERO occurrences, so its own anchor line
+// counts too. The prose claim "no other occurrence" quotes the one
+// occurrence it is about, and the quoted-span exclusion exists for that
+// one; a declared zero-count claim has no such occurrence to quote, so
+// the anchor line falsifies it like any other line.
+func TestZeroCountClaimIsFalsifiedByItsOwnAnchorLine(t *testing.T) {
+	in := baseInputs()
+	in.PostImage["a.go"] = []byte("context line one\nhelper does the work here\ncontext line two\n")
+	c := &fakeClient{fn: func(_ int, req model.CompletionRequest) (string, error) {
+		if isTriageCall(req) {
+			return triageJSON("a.go"), nil
+		}
+		f := mkFinding("f1", model.CategoryLogicInversion, 2, 2, "certain",
+			[]map[string]any{mkEvidence(2, "helper does the work here")})
+		f["external_claims"] = absenceClaim(model.ClaimOccurrenceCountZero, "helper")
+		return reviewJSON("a.go", "reviewed", []map[string]any{f}), nil
+	}}
+	rec, err := runOnce(t, in, baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(rec.Findings) != 0 {
+		t.Fatalf("Findings = %d, want 0 (helper occurs on its own anchor line); findings %+v",
+			len(rec.Findings), rec.Findings)
+	}
+	if findDrop(rec, model.DropNegativeClaimFalsified) == nil {
+		t.Fatalf("no %s drop; drops %+v", model.DropNegativeClaimFalsified, rec.Drops)
+	}
+}
+
 // The zero-count claim is about ZERO occurrences, and the wording that
 // says one occurrence is there and every other one is missing is a
 // different claim. A model that declares occurrence_count_zero for "the

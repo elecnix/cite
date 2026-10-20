@@ -276,6 +276,12 @@ var (
 // issue #201's finding quoted the definition of the very symbol it called
 // undefined as its own evidence, so an exclusion there would hide exactly
 // the falsifier this rule exists for.
+//
+// A DECLARED occurrence_count_zero claim gets no exclusion at all, even
+// though it maps to the occurrence shape. It says the symbol occurs zero
+// times, so its own anchor line is one of the occurrences that falsifies
+// it. The exclusion above belongs to the prose claim "no other
+// occurrence", which quotes the occurrence it is about.
 func falsifyingOccurrence(lines []string, excluded map[int]bool, symbol string, shape claimShape) (int, bool) {
 	if shape == shapeDefinition {
 		return definitionOccurrence(lines, symbol)
@@ -517,8 +523,16 @@ func checkDeclaredAbsenceClaim(c model.ExternalClaim, path string, f *model.Find
 	// The quoted/anchored spans are excluded from the falsification scan
 	// only for the occurrence shape (issue #68); see falsifyingOccurrence
 	// for why the other two shapes must not exclude them.
+	//
+	// A declared occurrence_count_zero claim is the exception that proves
+	// the rule: it says the symbol occurs ZERO times, so its own anchor
+	// line counts too. The exclusion exists for the prose claim "no OTHER
+	// occurrence", which quotes the one occurrence it is about and would
+	// otherwise falsify itself. A declared zero-count claim has no such
+	// occurrence to quote, so nothing is excluded and the anchor line
+	// falsifies it like any other line.
 	excluded := map[int]bool{}
-	if shape == shapeOccurrence {
+	if shape == shapeOccurrence && c.Type != model.ClaimOccurrenceCountZero {
 		for l := f.Anchor.StartLine; l <= f.Anchor.EndLine; l++ {
 			excluded[l] = true
 		}
