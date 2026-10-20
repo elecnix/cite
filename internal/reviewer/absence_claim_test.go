@@ -290,7 +290,8 @@ func TestMissingAssertionAloneNeverBlocks(t *testing.T) {
 
 // The same absence finding WITH a declared claim is checkable, so it can
 // still block.
-func TestAbsenceFindingWithADeclaredClaimCanBlock(t *testing.T) {	rec := runAbsenceClaim(t, nil, absenceClaim(model.ClaimSymbolNotCalled, "validateSignature"),
+func TestAbsenceFindingWithADeclaredClaimCanBlock(t *testing.T) {
+	rec := runAbsenceClaim(t, nil, absenceClaim(model.ClaimSymbolNotCalled, "validateSignature"),
 		func(f map[string]any) {
 			f["evidence_kind"] = "absent"
 			f["missing_assertion"] = "validateSignature is not called anywhere in this file"
@@ -406,6 +407,58 @@ func TestSelfContradictingCountClaimIsANote(t *testing.T) {
 	}
 	if got := rec.Findings[0].ExternalClaims[0].Disposition; got != "note" {
 		t.Errorf("Disposition = %q, want note", got)
+	}
+}
+
+// The drop log says which failure happened. A phrase-matched absence with
+// no extractable symbol is a different failure from a finding that
+// asserts an absence in a field and declares no claim, and the more
+// specific reason survives.
+func TestTheMoreSpecificAbsenceReasonSurvives(t *testing.T) {
+	// A phrase match with no extractable symbol: the fallback's own
+	// reason applies, and it names the phrase.
+	f := &model.Finding{
+		Title: "the branch is dead",
+		Body:  "No call site exists for it, so the branch is dead.",
+	}
+	res := checkAbsenceClaims(f, "a.go", []string{"context line one"}, false)
+	if res.Verified {
+		t.Errorf("Verified = true, want false: the claim could not be checked")
+	}
+	if !strings.Contains(res.Detail, "no extractable symbol") {
+		t.Errorf("Detail = %q, want the fallback's own reason about the missing symbol", res.Detail)
+	}
+
+	// The same finding with the structural marker set: the fallback's
+	// reason still wins, because it is the more specific one.
+	f2 := &model.Finding{
+		Title:            "the branch is dead",
+		Body:             "No call site exists for it, so the branch is dead.",
+		EvidenceKind:     model.EvidenceAbsent,
+		MissingAssertion: "no call site exists for it",
+	}
+	res2 := checkAbsenceClaims(f2, "a.go", []string{"context line one"}, false)
+	if res2.Verified {
+		t.Errorf("Verified = true, want false")
+	}
+	if !strings.Contains(res2.Detail, "no extractable symbol") {
+		t.Errorf("Detail = %q, want the fallback's own reason to survive", res2.Detail)
+	}
+
+	// A finding that asserts an absence in a field and has no phrase at
+	// all gets the structural reason.
+	f3 := &model.Finding{
+		Title:            "Something is missing here",
+		Body:             "The check is missing from this function.",
+		EvidenceKind:     model.EvidenceAbsent,
+		MissingAssertion: "the signature check is missing",
+	}
+	res3 := checkAbsenceClaims(f3, "a.go", []string{"context line one"}, false)
+	if res3.Verified {
+		t.Errorf("Verified = true, want false")
+	}
+	if !strings.Contains(res3.Detail, "declares no absence claim") {
+		t.Errorf("Detail = %q, want the structural reason", res3.Detail)
 	}
 }
 

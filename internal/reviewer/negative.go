@@ -420,8 +420,15 @@ func checkAbsenceClaims(f *model.Finding, path string, lines []string, partial b
 	// remembered.
 	if declaresAbsence(f) {
 		res.Verified = false
-		res.Detail = "the finding asserts an absence and declares no absence claim, " +
-			"so it cannot be verified and cannot block"
+		// The fallback's own reason is more specific when it has one, so
+		// it survives: a phrase-matched absence with no extractable
+		// symbol is a different failure from a finding that asserts an
+		// absence in a field and declares no claim, and the drop log
+		// says which happened.
+		if res.Detail == "" {
+			res.Detail = "the finding asserts an absence and declares no absence claim, " +
+				"so it cannot be verified and cannot block"
+		}
 	}
 	return res
 }
