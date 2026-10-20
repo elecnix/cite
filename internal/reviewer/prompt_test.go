@@ -2,6 +2,7 @@ package reviewer
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -40,7 +41,8 @@ func TestReviewSchemaCarriesTheAbsenceClaimTypes(t *testing.T) {
 				Properties map[string]struct {
 					Items struct {
 						Properties map[string]struct {
-							Enum []string `json:"enum"`
+							Enum  []string `json:"enum"`
+							AnyOf []any    `json:"anyOf"`
 						} `json:"properties"`
 						Required []string `json:"required"`
 					} `json:"items"`
@@ -61,6 +63,26 @@ func TestReviewSchemaCarriesTheAbsenceClaimTypes(t *testing.T) {
 	for _, want := range []string{"subject", "symbol", "path", "count"} {
 		if !listHas(claim.Required, want) {
 			t.Errorf("external_claims required lacks %q: %v", want, claim.Required)
+		}
+	}
+	// The structured subject fields are nullable, so a claim that is not
+	// about a symbol says null rather than leaving the key out. A key
+	// the model omits fails the whole response under strict mode, and
+	// one missing key must not cost the file its review.
+	for _, field := range []string{"symbol", "path", "count"} {
+		anyOf := claim.Properties[field].AnyOf
+		if len(anyOf) != 2 {
+			t.Errorf("external_claims %q must be nullable: %+v", field, claim.Properties[field])
+			continue
+		}
+		types := map[string]bool{}
+		for _, alt := range anyOf {
+			if m, ok := alt.(map[string]any); ok {
+				types[fmt.Sprint(m["type"])] = true
+			}
+		}
+		if !types["null"] {
+			t.Errorf("external_claims %q must accept null: %v", field, types)
 		}
 	}
 }

@@ -115,6 +115,28 @@ func TestParseFileReviewKeepsZeroCountClaimWithANonZeroCount(t *testing.T) {
 	}
 }
 
+// A null structured subject decodes to the empty string, so a claim that
+// is not about a symbol parses and reads as "no symbol here". The
+// provider's strict schema requires the key, and a key the model omits
+// fails the whole response, so null is the shape that says "not
+// applicable" without costing the file its review.
+func TestParseFileReviewAcceptsNullStructuredSubjects(t *testing.T) {
+	in := `{"schema_version":1,"path":"a.go","outcome":"reviewed","findings":[{
+	  "id":"f1","category":"crash","anchor":{"start_line":1,"end_line":2},
+	  "title":"t","body":"b","impact":"i",
+	  "evidence":[{"line":1,"quote":"x"}],
+	  "external_claims":[{"type":"path_exists","subject":"internal/config","symbol":null,"path":null,"count":null}],
+	  "introduced_by":"added_line","confidence":"likely"}]}`
+	fr, err := ParseFileReview([]byte(in))
+	if err != nil {
+		t.Fatalf("a null structured subject must parse: %v", err)
+	}
+	c := fr.Findings[0].ExternalClaims[0]
+	if c.Symbol != "" || c.Path != "" || c.Count != nil {
+		t.Errorf("claim = %+v, want empty symbol, empty path and no count", c)
+	}
+}
+
 // IsAbsenceClaim names the claim types whose blocking turns on an absence.
 func TestIsAbsenceClaim(t *testing.T) {
 	absences := []ClaimType{ClaimSymbolNotDefined, ClaimSymbolNotCalled, ClaimOccurrenceCountZero}

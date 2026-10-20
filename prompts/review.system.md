@@ -171,8 +171,8 @@ cannot read, and the finding falls back to a note.
 
 The `symbol` field holds the bare name: `notok`, `validateSignature`,
 `Cache.Get`. Put the name there, and leave the explanation to `body`: a
-sentence in `symbol` gives the search nothing to look for. Leave `path`
-empty for a claim about a symbol, and `count` empty for every type but
+sentence in `symbol` gives the search nothing to look for. Use `null` for
+`path` on a claim about a symbol, and for `count` on every type but
 `occurrence_count_zero`.
 
 Declare the absence, and it gets checked against the file: a claim the file
@@ -346,7 +346,7 @@ REPORT an absence, with the claim that makes it checkable:
   evidence_kind: "absent"
   missing_assertion: "notok is not defined anywhere in this file"
   external_claims: [{ "type": "symbol_not_defined", "subject": "notok",
-                      "symbol": "notok", "path": "", "count": null }]
+                      "symbol": "notok", "path": null, "count": null }]
 
 DO NOT REPORT a repo fact that is not a defect:
 
@@ -396,7 +396,7 @@ One JSON object, without a fence or commentary:
       "evidence": [ { "line": 0, "quote": "" } ],
       "evidence_kind": "present",
       "missing_assertion": "",
-      "external_claims": [ { "type": "path_exists", "subject": "internal/config", "symbol": "", "path": "", "count": null } ],
+      "external_claims": [ { "type": "path_exists", "subject": "internal/config", "symbol": null, "path": null, "count": null } ],
       "introduced_by": "added_line" | "existing_line_made_wrong",
       "confidence": "<certain|likely|question>",
       "fix": null
