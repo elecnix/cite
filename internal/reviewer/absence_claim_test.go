@@ -143,11 +143,29 @@ func TestDeclaredAbsenceClaimsAreCheckedOnTheirTypeAndSymbol(t *testing.T) {
 			dropDetail:    "occurs at line 4",
 		},
 		{
-			name:          "occurrence_count_zero is not falsified by nothing at all",
+			name:          "occurrence_count_zero is not falsified by another symbol",
 			typ:           model.ClaimOccurrenceCountZero,
 			symbol:        "helper",
 			contradicting: "result = other(",
 			falsified:     false,
+		},
+		{
+			name:      "a symbol_not_defined claim nothing contradicts",
+			typ:       model.ClaimSymbolNotDefined,
+			symbol:    "notok",
+			falsified: false,
+		},
+		{
+			name:      "a symbol_not_called claim nothing contradicts",
+			typ:       model.ClaimSymbolNotCalled,
+			symbol:    "notok",
+			falsified: false,
+		},
+		{
+			name:      "an occurrence_count_zero claim nothing contradicts",
+			typ:       model.ClaimOccurrenceCountZero,
+			symbol:    "notok",
+			falsified: false,
 		},
 	}
 	for _, c := range cases {
@@ -178,27 +196,6 @@ func TestDeclaredAbsenceClaimsAreCheckedOnTheirTypeAndSymbol(t *testing.T) {
 			}
 			if got := rec.Findings[0].ExternalClaims[0].Disposition; got != "verified" {
 				t.Errorf("Disposition = %q, want verified", got)
-			}
-		})
-	}
-}
-
-// A declared claim the file bears out stands, and it can block. This is
-// the finding a reviewer gets right, and the claim is what makes it
-// checkable.
-func TestADeclaredAbsenceClaimThatHoldsBlocks(t *testing.T) {
-	for _, c := range []model.ClaimType{
-		model.ClaimSymbolNotDefined,
-		model.ClaimSymbolNotCalled,
-		model.ClaimOccurrenceCountZero,
-	} {
-		t.Run(string(c), func(t *testing.T) {
-			rec := runAbsenceClaim(t, nil, absenceClaim(c, "notok"), nil)
-			if len(rec.Findings) != 1 {
-				t.Fatalf("Findings = %d, want 1; drops %+v", len(rec.Findings), rec.Drops)
-			}
-			if !rec.Findings[0].Blocks {
-				t.Errorf("Blocks = false, want true: a declared absence claim that holds blocks")
 			}
 			if got := rec.Findings[0].ExternalClaims[0].Disposition; got != "verified" {
 				t.Errorf("Disposition = %q, want verified", got)
