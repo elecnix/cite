@@ -281,3 +281,28 @@ func TestRunRecordCostText(t *testing.T) {
 		})
 	}
 }
+
+// ReportedTokens is the guard that decides whether a run consumed tokens, so
+// it has to count every counter the cost formula prices. A run whose only
+// tokens were a cache write was still billed for them, and counting two of
+// the four priced counters would price that run as a known zero.
+func TestUsageReportedTokens(t *testing.T) {
+	cases := []struct {
+		name string
+		u    Usage
+		want bool
+	}{
+		{"nothing reported", Usage{}, false},
+		{"input", Usage{InputTokens: 10}, true},
+		{"output", Usage{OutputTokens: 10}, true},
+		{"cache read", Usage{CacheReadTokens: 10}, true},
+		{"cache write", Usage{CacheWriteTokens: 10}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.u.ReportedTokens(); got != tc.want {
+				t.Errorf("ReportedTokens() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

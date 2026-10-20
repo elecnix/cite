@@ -414,6 +414,25 @@ func (u Usage) CacheHitRate() float64 {
 	return float64(u.CacheReadTokens) / float64(u.InputTokens)
 }
 
+// ReportedTokens reports whether the provider reported any token at all.
+//
+// It counts every counter the cost formula prices — input, output, cache
+// read and cache write — because "did this run consume tokens" and "what
+// does this run cost" are the same question asked about the same set of
+// counters. A run whose only tokens were a cache write still consumed
+// tokens, and it is billed for them: a gateway that remaps a native
+// cache-creation counter onto the OpenAI shape reports a prompt of zero
+// alongside the cache write it was charged for.
+//
+// The two lists are deliberately one method rather than two. A guard that
+// names two of the four priced counters and a formula that prices four
+// drift apart the moment a counter is added, and the drift is silent: the
+// run reports a price for tokens nobody counted.
+func (u Usage) ReportedTokens() bool {
+	return u.InputTokens > 0 || u.OutputTokens > 0 ||
+		u.CacheReadTokens > 0 || u.CacheWriteTokens > 0
+}
+
 // CompletionResponse carries the text and the counters.
 type CompletionResponse struct {
 	Text         string

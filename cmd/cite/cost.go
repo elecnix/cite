@@ -30,11 +30,13 @@ func applyCost(rec *model.RunRecord, cfg *config.Config) {
 	}
 	rate := costRatesFor(rec.Model, cfg)
 	if rate == nil {
-		// Tokens without a price are an unpriced run, not a free one. A
-		// run that reported no tokens has nothing to price and nothing
-		// to be uncertain about, so it keeps the documented $0 and stays
-		// silent.
-		if rec.Usage.InputTokens > 0 || rec.Usage.OutputTokens > 0 {
+		// Tokens without a price are an unpriced run, not a free one. The
+		// counters counted here are the ones the cost formula prices, so
+		// a run whose only tokens were a cache write is unpriced too. A
+		// run that reported no tokens at all has nothing to price and
+		// nothing to be uncertain about, so it keeps the documented $0
+		// and stays silent.
+		if rec.Usage.ReportedTokens() {
 			rec.CostUnknown = true
 			warnMissingRates(rec.Model)
 		}

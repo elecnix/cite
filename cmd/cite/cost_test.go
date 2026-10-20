@@ -189,6 +189,31 @@ func TestApplyCostMarksUnknownOnOutputTokensAlone(t *testing.T) {
 	}
 }
 
+// A run whose only tokens were cache tokens was still billed for them. The
+// cost formula prices the cache counters, so the guard that decides the run
+// is unpriced has to count them too: a cache write billed on top of the
+// prompt tokens can be the only token count a provider reports, and pricing
+// it as a known zero says the opposite of what happened.
+func TestApplyCostMarksUnknownOnCacheTokensAlone(t *testing.T) {
+	cases := []struct {
+		name  string
+		usage model.Usage
+	}{
+		{"cache read only", model.Usage{CacheReadTokens: 5000}},
+		{"cache write only", model.Usage{CacheWriteTokens: 5000}},
+		{"both cache counters", model.Usage{CacheReadTokens: 5000, CacheWriteTokens: 100}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &model.RunRecord{Model: "ollama/deepseek-v4", Usage: tc.usage}
+			applyCost(rec, &config.Config{})
+			if !rec.CostUnknown {
+				t.Errorf("CostUnknown = false, want true: the run reported cache tokens and nothing priced them")
+			}
+		})
+	}
+}
+
 // A run that reported no tokens at all has nothing to price and nothing to
 // be uncertain about: there is no call, so there is no bill. It keeps the
 // documented $0 and stays silent.
