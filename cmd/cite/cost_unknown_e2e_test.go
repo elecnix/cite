@@ -132,15 +132,19 @@ func TestLocalReviewCostReporting(t *testing.T) {
 				t.Errorf("the run record carries no token of the expected kind: %+v", rec.Usage)
 			}
 
-			// An unknown cost is never printed as a zero, and the
-			// published report says the same thing as stdout.
-			if tc.wantUnknown {
-				if strings.Contains(stdout, "$0.0000") {
-					t.Errorf("stdout summary claims an unknown cost was zero:\n%s", stdout)
-				}
-				if !strings.Contains(published, tc.wantCost) {
-					t.Errorf("published report missing %q:\n%s", tc.wantCost, published)
-				}
+			// The published report says the same thing about the cost
+			// as stdout does, for every case and not only for the
+			// unpriced one.
+			if !strings.Contains(published, tc.wantCost) {
+				t.Errorf("published report missing %q:\n%s", tc.wantCost, published)
+			}
+
+			// An unknown cost is never printed as a zero.
+			if tc.wantUnknown && strings.Contains(stdout, "$0.0000") {
+				t.Errorf("stdout summary claims an unknown cost was zero:\n%s", stdout)
+			}
+			if tc.wantUnknown && strings.Contains(published, "$0.0000") {
+				t.Errorf("published report claims an unknown cost was zero:\n%s", published)
 			}
 		})
 	}

@@ -11,6 +11,13 @@ import (
 // captureStdout collects what a function writes to os.Stdout. The run
 // printout goes to stdout, so this is how a test reads the cost line a
 // human sees in the CI log.
+//
+// The restore is deferred, because a panic inside fn is how a real failure
+// first reaches this helper: it unwinds straight past the lines that put
+// os.Stdout back, and a binary left writing into a pipe whose reader is
+// never drained loses the output of every test that runs afterwards. The
+// same reasoning is why both ends are closed on the way out, and it is the
+// reason captureStderr in this package does the same thing.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
@@ -19,6 +26,12 @@ func captureStdout(t *testing.T, fn func()) string {
 	}
 	saved := os.Stdout
 	os.Stdout = w
+	defer func() {
+		os.Stdout = saved
+		w.Close()
+		r.Close()
+	}()
+
 	done := make(chan string, 1)
 	go func() {
 		b := make([]byte, 4096)
@@ -34,11 +47,11 @@ func captureStdout(t *testing.T, fn func()) string {
 		}
 		done <- got.String()
 	}()
+
 	fn()
 	os.Stdout = saved
 	w.Close()
 	out := <-done
-	r.Close()
 	return out
 }
 
@@ -129,5 +142,43 @@ func TestStickyVisibleBodyCostLine(t *testing.T) {
 				t.Errorf("sticky body contains %q, which it must not:\n%s", tc.forbid, out)
 			}
 		})
+	}
+}
+
+// TestCaptureStdoutRestoresStdoutWhenFnPanics covers the way out of the
+// helper. A panic inside the function under test is how a real failure
+// first reaches captureStdout, and it unwinds straight past the lines that
+// put os.Stdout back. The helper has to restore the stream while the panic
+// unwinds: a binary left writing into a pipe with no live reader loses the
+// output of every test that runs afterwards.
+//
+// The reason captureStderr in this package already does this is the same
+// one: the helper is shared by every test that reads a cost line, so a
+// failure in one of them must not cost the rest their output.
+func TestCaptureStdoutRestoresStdoutWhenFnPanics(t *testing.T) {
+	saved := os.Stdout
+	held := saved
+	t.Cleanup(func() {
+		// Left dangling by a failing helper, this stream is a pipe with
+		// no reader left; hand the binary back its stdout and drop it.
+		os.Stdout = saved
+		if held != saved {
+			held.Close()
+		}
+	})
+
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("the panic did not propagate out of captureStdout; a swallowed panic would hide the failure under test")
+			}
+		}()
+		captureStdout(t, func() { panic("the function under test failed") })
+	}()
+
+	if os.Stdout != saved {
+		held = os.Stdout
+		t.Fatalf("os.Stdout = %s after captureStdout unwound from a panic, want %s; every later test writes into a pipe nobody reads",
+			os.Stdout.Name(), saved.Name())
 	}
 }
