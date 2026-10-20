@@ -156,4 +156,63 @@ func TestApplyCostReportedZeroIsNotReplacedByDeclaredRates(t *testing.T) {
 	if rec.CostUSD != 0 {
 		t.Errorf("CostUSD = %v, want the provider-reported 0", rec.CostUSD)
 	}
+	if rec.CostUnknown {
+		t.Error("CostUnknown = true, want false: the provider billed the call, so the cost is known")
+	}
+}
+
+// Issue #204: a provider that reports token counts but no per-call cost, in
+// a config that declares no rates, leaves the run's price unknowable. The
+// cost is unknown, not zero: the account is billed, and $0.0000 would claim
+// the run was free.
+func TestApplyCostMarksUnknownWhenTokensHaveNoPrice(t *testing.T) {
+	rec := &model.RunRecord{Model: "ollama/deepseek-v4",
+		Usage: model.Usage{InputTokens: 45_000, OutputTokens: 2_000}}
+	applyCost(rec, &config.Config{})
+	if !rec.CostUnknown {
+		t.Error("CostUnknown = false, want true: the run reported tokens and nothing priced them")
+	}
+	if rec.CostUSD != 0 {
+		t.Errorf("CostUSD = %v, want 0: an unknown cost is not a guessed number", rec.CostUSD)
+	}
+}
+
+// The unknown case is the provider-reports-tokens shape, and it needs either
+// token counter to be non-zero: a run that only produced output tokens is
+// still a run that was billed.
+func TestApplyCostMarksUnknownOnOutputTokensAlone(t *testing.T) {
+	rec := &model.RunRecord{Model: "ollama/deepseek-v4",
+		Usage: model.Usage{OutputTokens: 12}}
+	applyCost(rec, &config.Config{})
+	if !rec.CostUnknown {
+		t.Error("CostUnknown = false, want true: the run reported output tokens and nothing priced them")
+	}
+}
+
+// A run that reported no tokens at all has nothing to price and nothing to
+// be uncertain about: there is no call, so there is no bill. It keeps the
+// documented $0 and stays silent.
+func TestApplyCostNoTokensAndNoPriceIsZeroNotUnknown(t *testing.T) {
+	rec := &model.RunRecord{Model: "ollama/deepseek-v4"}
+	applyCost(rec, &config.Config{})
+	if rec.CostUnknown {
+		t.Error("CostUnknown = true, want false: a run with no tokens has no cost to be unknown")
+	}
+	if rec.CostUSD != 0 {
+		t.Errorf("CostUSD = %v, want 0 for a run with no tokens", rec.CostUSD)
+	}
+}
+
+// A declared rate resolves the cost, so the run's cost is known even though
+// the provider reported none.
+func TestApplyCostDeclaredRateIsKnown(t *testing.T) {
+	rec := &model.RunRecord{Model: "gateway/vendor/model-x",
+		Usage: model.Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000}}
+	applyCost(rec, testCostConfig())
+	if rec.CostUnknown {
+		t.Error("CostUnknown = true, want false: a declared rate priced the run")
+	}
+	if rec.CostUSD != 35 {
+		t.Errorf("CostUSD = %v, want 35 (1M @ $5 + 1M @ $30)", rec.CostUSD)
+	}
 }

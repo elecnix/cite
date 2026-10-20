@@ -123,3 +123,62 @@ func TestMarkdownReportSinkHandlesCleanRun(t *testing.T) {
 		t.Errorf("clean run rendered degenerate output:\n%s", out)
 	}
 }
+
+// Issue #204: the published report must not state a price Cite could not
+// determine. A run whose provider reported tokens but no cost, in a config
+// that declares no rates, is billed; "$0.0000" would claim it was free.
+func TestMarkdownReportSinkShowsUnknownCost(t *testing.T) {
+	var buf bytes.Buffer
+	rec := sampleRecord()
+	rec.Usage = model.Usage{InputTokens: 45_000, OutputTokens: 2_000}
+	rec.CostUnknown = true
+	if err := MarkdownReportSink(&buf).Publish(rec, samplePayload()); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "cost: unknown") {
+		t.Errorf("published report missing the unknown cost line:\n%s", out)
+	}
+	if strings.Contains(out, "$0.0000") {
+		t.Errorf("published report claims an unknown cost was zero:\n%s", out)
+	}
+}
+
+// A provider-reported zero is a price. The published report keeps it.
+func TestMarkdownReportSinkShowsBilledZeroCost(t *testing.T) {
+	var buf bytes.Buffer
+	rec := sampleRecord()
+	rec.Usage = model.Usage{InputTokens: 45_000, OutputTokens: 2_000, CostReported: true}
+	if err := MarkdownReportSink(&buf).Publish(rec, samplePayload()); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "cost: $0.0000") {
+		t.Errorf("published report missing the billed zero cost line:\n%s", out)
+	}
+	if strings.Contains(out, "cost: unknown") {
+		t.Errorf("a provider-reported zero must not read as unknown:\n%s", out)
+	}
+}
+
+// The JSON report carries the run record as it is persisted, so the unknown
+// cost has to survive serialization: a consumer reading the artifact must
+// be able to tell an unknown cost from a zero one.
+func TestJSONReportSinkCarriesUnknownCost(t *testing.T) {
+	var buf bytes.Buffer
+	rec := sampleRecord()
+	rec.Usage = model.Usage{InputTokens: 45_000, OutputTokens: 2_000}
+	rec.CostUnknown = true
+	if err := JSONReportSink(&buf).Publish(rec, samplePayload()); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	var got struct {
+		Run model.RunRecord `json:"run"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if !got.Run.CostUnknown {
+		t.Error("the JSON report dropped the unknown-cost flag; a consumer cannot tell it from a zero cost")
+	}
+}

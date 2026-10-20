@@ -416,6 +416,38 @@ func TestCheckRunPayloadOmitsCostLineWithoutUsage(t *testing.T) {
 	}
 }
 
+// Issue #204: the check run is the surface a buyer looks at, so an unknown
+// cost must say so there too. The old line printed "$0.0000" for any run
+// that reported tokens, which claimed the run was free when the account was
+// billed for it.
+func TestCheckRunPayloadShowsUnknownCost(t *testing.T) {
+	rec := baseRecord()
+	rec.Model = "ollama/deepseek-v4"
+	rec.Usage = model.Usage{InputTokens: 45_000, OutputTokens: 2_000}
+	rec.CostUnknown = true
+	_, summary := CheckRunPayload(rec, model.VerdictPass, "all clear")
+	if !strings.Contains(summary, "cost: unknown") {
+		t.Errorf("summary missing the unknown cost line:\n%s", summary)
+	}
+	if strings.Contains(summary, "$0.0000") {
+		t.Errorf("summary claims an unknown cost was zero:\n%s", summary)
+	}
+}
+
+// A provider-reported zero is a price, and the check run keeps it as one.
+func TestCheckRunPayloadShowsBilledZeroCost(t *testing.T) {
+	rec := baseRecord()
+	rec.Model = "openrouter/vendor/free-model"
+	rec.Usage = model.Usage{InputTokens: 45_000, OutputTokens: 2_000, CostReported: true}
+	_, summary := CheckRunPayload(rec, model.VerdictPass, "all clear")
+	if !strings.Contains(summary, "cost: $0.0000") {
+		t.Errorf("summary missing the billed zero cost line:\n%s", summary)
+	}
+	if strings.Contains(summary, "cost: unknown") {
+		t.Errorf("a provider-reported zero must not read as unknown:\n%s", summary)
+	}
+}
+
 func TestCheckRunPayloadCacheHitBelowFloorStillShown(t *testing.T) {
 	// A cold miss must be visible, not hidden: the whole point of printing
 	// the rate is that a regression shows up on the check itself.

@@ -13,17 +13,31 @@ import (
 // the cost (issue #103). Otherwise the cost comes from the declared
 // per-million rates (§6), so cost reporting works for a model Cite has never
 // heard of. A model with neither costs 0, never a guessed number (§15).
+//
+// When neither the provider nor the config prices the run, and the run
+// reported tokens, the cost is unknown rather than zero (issue #204): such a
+// provider bills in aggregate and Cite cannot see the number, so printing
+// $0.0000 would claim the run was free when it was not. The record carries
+// that distinction, and the run's surfaces print "unknown" in its place.
 func applyCost(rec *model.RunRecord, cfg *config.Config) {
 	if rec == nil {
 		return
 	}
+	rec.CostUnknown = false
 	if rec.Usage.CostReported {
 		rec.CostUSD = rec.Usage.CostUSD
 		return
 	}
 	rate := costRatesFor(rec.Model, cfg)
 	if rate == nil {
-		warnMissingRates(rec.Model, cfg)
+		// Tokens without a price are an unpriced run, not a free one. A
+		// run that reported no tokens has nothing to price and nothing
+		// to be uncertain about, so it keeps the documented $0 and stays
+		// silent.
+		if rec.Usage.InputTokens > 0 || rec.Usage.OutputTokens > 0 {
+			rec.CostUnknown = true
+			warnMissingRates(rec.Model)
+		}
 		return
 	}
 	u := rec.Usage
@@ -36,37 +50,20 @@ func applyCost(rec *model.RunRecord, cfg *config.Config) {
 // warnMissingRates says out loud that a run's cost is unknown. The model
 // client reads MODEL_ID from the environment and never consults the providers
 // block, so the model a run actually used is frequently one that no provider
-// declared. applyCost then has no rates to apply, and printRecord goes on to
-// print "cost: $0.0000" as though the run had been free. A declared rate of
-// zero is a price; the absence of a rate is not, so the difference is reported
-// rather than folded into the number (§15).
+// declared. applyCost then has no rates to apply, and the run goes on to
+// print "cost: unknown" instead of a number it does not have. A declared rate
+// of zero is a price; the absence of a rate is not, so the difference is
+// reported rather than folded into the number (§15).
 //
-// The note stays silent when no provider declares rates at all: there is
-// nothing to be mismatched against, and a zero cost is then the documented
-// outcome rather than a silent surprise.
-func warnMissingRates(modelID string, cfg *config.Config) {
-	if !declaresAnyRates(cfg) {
-		return
-	}
+// The note used to stay silent when no provider declared rates at all, on
+// the reasoning that there was nothing to be mismatched against. That
+// reasoning covered the mismatch case and missed the other one (issue #204):
+// a config with no rates and a provider that reports no per-call cost is a
+// run whose price Cite cannot know, and it is the very run that spends
+// money. The note now fires whenever the run's cost could not be
+// determined, which is exactly when the run's surfaces print "unknown".
+func warnMissingRates(modelID string) {
 	logToStderr("cost: no declared rates for model %q: this run's cost is unknown, not zero. Declare the model under a provider, or set MODEL_ID to a declared model.", modelID)
-}
-
-// declaresAnyRates reports whether any declared model carries a cost block.
-func declaresAnyRates(cfg *config.Config) bool {
-	if cfg == nil {
-		return false
-	}
-	for _, p := range cfg.Providers {
-		if p == nil {
-			continue
-		}
-		for _, m := range p.Models {
-			if m.Cost != nil {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // costRatesFor finds the Cost rates for a model id among the declared

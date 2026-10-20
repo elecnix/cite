@@ -103,7 +103,9 @@ go with it (`CITE_CAPTURE_DIR`, `CITE_CAPTURE_MAX_BYTES`).
   your file, the comment is dropped before you see it.
 - Cost you can see: every run reports its token usage and USD cost. The cost
   is what your provider billed, when it reports one (OpenRouter does), or
-  else a figure from the rates you declare.
+  else a figure from the rates you declare. When neither prices the run, the
+  cost reads `unknown` rather than `$0.0000`: your provider may bill in
+  aggregate, and an unpriced run is not a free one.
 
 ## Local evaluation path
 
