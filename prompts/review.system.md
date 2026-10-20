@@ -184,10 +184,16 @@ the finding is kept as a note and it can never block. The claim costs you
 nothing to declare and it is the only thing that lets an absence be
 verified.
 
-"X is never called", "X is undefined" and "the file contains no other
-occurrence" are the English shapes of these three claims. Use the fields,
-not the prose: the checker reads the type and the symbol, so it works the
-same in any language you write in.
+"X is never called" is what symbol_not_called says, and "X is
+undefined" is what symbol_not_defined says. The third one is careful:
+"the file contains no occurrence of X" is occurrence_count_zero, and "the
+file contains no OTHER occurrence of X" is not, because that wording says
+one occurrence is there and every other one is missing. Declare the type
+that matches what you are claiming, not the one the words resemble: a
+claim the file contradicts is discarded as a fabrication.
+
+Use the fields, not the prose: the checker reads the type and the symbol,
+so it works the same in any language you write in.
 
 ## MOST FILES HAVE NO FINDINGS
 

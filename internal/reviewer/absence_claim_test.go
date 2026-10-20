@@ -409,6 +409,28 @@ func TestUncheckableDeclaredAbsenceClaimsAreNotes(t *testing.T) {
 	}
 }
 
+// The zero-count claim is about ZERO occurrences, and the wording that
+// says one occurrence is there and every other one is missing is a
+// different claim. A model that declares occurrence_count_zero for "the
+// file contains no other occurrence of X" would have its own claim
+// falsified by the one occurrence the wording admits.
+//
+// The declared type is the mechanism, so the check runs on it: a
+// zero-count claim with an occurrence in the file is dropped.
+func TestZeroCountClaimIsAboutZeroOccurrences(t *testing.T) {
+	rec := runAbsenceClaim(t, []string{"// helper does the work"},
+		absenceClaim(model.ClaimOccurrenceCountZero, "helper"),
+		func(f map[string]any) {
+			f["title"] = "the file contains no other occurrence of helper"
+		})
+	if len(rec.Findings) != 0 {
+		t.Fatalf("Findings = %d, want 0 (the file has one occurrence); findings %+v", len(rec.Findings), rec.Findings)
+	}
+	if findDrop(rec, model.DropNegativeClaimFalsified) == nil {
+		t.Fatalf("no %s drop; drops %+v", model.DropNegativeClaimFalsified, rec.Drops)
+	}
+}
+
 // A declared absence claim on a partially-sent file cannot be confirmed
 // either: the file was truncated, so the absence was never observed. It
 // fails open to a note.
