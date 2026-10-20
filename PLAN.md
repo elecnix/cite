@@ -1654,12 +1654,17 @@ the file. A finding about a line you can quote keeps `evidence_kind` as
 
 An absence cannot be quoted, so it needs its own fields. Set
 `evidence_kind` to "absent", put the missing thing in `missing_assertion`,
-and declare the absence in `external_claims` with the type that says
-WHICH shape of absence you mean and the `symbol` field holding the name:
+and declare the absence as one entry in `external_claims`. The `type` key
+of that entry says WHICH shape of absence you mean, and the `symbol` key
+holds the name:
 
-  symbol_not_defined     the symbol is not defined anywhere
-  symbol_not_called      the symbol is never called
-  occurrence_count_zero  the symbol does not occur at all
+  type "symbol_not_defined"     the symbol is not defined anywhere
+  type "symbol_not_called"      the symbol is never called
+  type "occurrence_count_zero"  the symbol does not occur at all
+
+The `type` key says which one. A claim that puts the absence in
+`subject` instead, or uses it as a key of its own, is a claim the checker
+cannot read, and the finding falls back to a note.
 
 The `symbol` field holds the bare name: `notok`, `validateSignature`,
 `Cache.Get`. Put the name there, and leave the explanation to `body`: a
