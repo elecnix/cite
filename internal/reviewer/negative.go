@@ -374,12 +374,16 @@ type absenceResult struct {
 // The second is the point of issue #203: a finding that asserts an absence
 // and declares no claim is not mechanically checkable, and an unverifiable
 // absence must never block a merge.
+//
+// The fallback runs even when the model declared a claim, because a
+// declared claim does not withdraw the falsifying power the tables always
+// had. A finding can declare one absence and assert another in its prose,
+// and the prose one the file contradicts is still a false claim.
 func checkAbsenceClaims(f *model.Finding, path string, lines []string, partial bool) absenceResult {
 	declared := declaredAbsenceClaims(f)
 	if len(declared) > 0 {
-		// The declared claim is the mechanism, so the prose fallback does
-		// not run: the model said what it claimed, and that is what gets
-		// checked.
+		// The declared claim is the mechanism, so it is what gets checked
+		// against the file.
 		verified := true
 		out := make([]model.ExternalClaim, 0, len(declared))
 		for _, c := range declared {
@@ -396,6 +400,17 @@ func checkAbsenceClaims(f *model.Finding, path string, lines []string, partial b
 				c.Disposition = "note"
 			}
 			out = append(out, c)
+		}
+		// The prose fallback still runs, because a declared claim does
+		// not withdraw the falsifying power the tables always had. A
+		// finding can declare one absence and assert another in its
+		// prose, and the prose one the file contradicts is still a false
+		// claim. What the fallback does NOT do is grant "verified": the
+		// declared claim alone decides that, and the fallback can only
+		// take it away.
+		prose := checkProseAbsenceClaim(f, lines, partial)
+		if prose.Drop {
+			return prose
 		}
 		return absenceResult{Verified: verified, Claims: out}
 	}

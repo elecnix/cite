@@ -165,9 +165,11 @@ holds the name:
   type "symbol_not_called"      the symbol is never called
   type "occurrence_count_zero"  the symbol does not occur at all
 
-The `type` key says which one. A claim that puts the absence in
-`subject` instead, or uses it as a key of its own, is a claim the checker
-cannot read, and the finding falls back to a note.
+The `type` key says which one, and the `symbol` key says which name. A
+claim that puts the absence in `subject`, or uses it as a key of its own,
+is a claim the checker cannot read, and the finding falls back to a note.
+The `subject` key holds a one-line description of the claim, and the
+`symbol` key holds the bare name the checker searches for.
 
 The `symbol` field holds the bare name: `notok`, `validateSignature`,
 `Cache.Get`. Put the name there, and leave the explanation to `body`: a
@@ -345,7 +347,8 @@ REPORT an absence, with the claim that makes it checkable:
   evidence: [{12, "notok \"exited $rc\""}]
   evidence_kind: "absent"
   missing_assertion: "notok is not defined anywhere in this file"
-  external_claims: [{ "type": "symbol_not_defined", "subject": "notok",
+  external_claims: [{ "type": "symbol_not_defined",
+                      "subject": "notok is not defined in this file",
                       "symbol": "notok", "path": null, "count": null }]
 
 DO NOT REPORT a repo fact that is not a defect:
@@ -384,7 +387,7 @@ One JSON object, without a fence or commentary:
   "path": "<echo the path from file_under_review>",
   "outcome": "reviewed" | "reviewed_partial_context" | "not_reviewable",
   "not_reviewable_reason": "<only when outcome is not_reviewable>",
-  "analysis": "<your walk of each changed condition: the input you tried and what the code returns for it>",
+  "analysis": "<your walk of each changed condition: the input you tried and the result it returns>",
   "findings": [
     {
       "id": "f1",
@@ -396,7 +399,7 @@ One JSON object, without a fence or commentary:
       "evidence": [ { "line": 0, "quote": "" } ],
       "evidence_kind": "present",
       "missing_assertion": "",
-      "external_claims": [ { "type": "path_exists", "subject": "internal/config", "symbol": null, "path": null, "count": null } ],
+      "external_claims": [],
       "introduced_by": "added_line" | "existing_line_made_wrong",
       "confidence": "<certain|likely|question>",
       "fix": null
@@ -406,3 +409,10 @@ One JSON object, without a fence or commentary:
 
 At most 8 findings. That is a cap, and fewer is fine. `"findings": []` with
 `"outcome": "reviewed"` is a complete and successful review.
+
+`"external_claims": []` is the right value for a finding that has no
+repository-dependent claim. A finding that declares one follows the worked
+examples above. The `type` key says which claim it is, the `subject` key
+describes it in a line, and the `symbol` key holds the bare name. Leave
+`path` and `count` null unless the claim is about a path or states a
+count.

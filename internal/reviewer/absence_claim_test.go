@@ -270,7 +270,34 @@ func TestAnUndeclaredAbsenceNeverBlocks(t *testing.T) {
 	}
 }
 
-// The fallback keeps the falsifying power it always had: a prose absence
+// A declared claim does not withdraw the falsifying power the prose
+// tables always had. A finding can declare one absence and assert another
+// in its prose, and the prose one the file contradicts is still a false
+// claim, so the finding is still dropped.
+//
+// The prose fallback reads the first phrase it matches, so the prose claim
+// here is the one it reads. The declared claim is a different absence, and
+// the file does not contradict it.
+func TestADeclaredClaimDoesNotWithdrawTheProseFalsification(t *testing.T) {
+	rec := runAbsenceClaim(t, []string{"result = helperBar("},
+		absenceClaim(model.ClaimSymbolNotCalled, "notok"),
+		func(f map[string]any) {
+			f["title"] = "notok is never called"
+			f["body"] = "helperBar is never called, so the branch dies."
+		})
+	if len(rec.Findings) != 0 {
+		t.Fatalf("Findings = %d, want 0 (helperBar is called at line 4); findings %+v", len(rec.Findings), rec.Findings)
+	}
+	d := findDrop(rec, model.DropNegativeClaimFalsified)
+	if d == nil {
+		t.Fatalf("no %s drop; drops %+v", model.DropNegativeClaimFalsified, rec.Drops)
+	}
+	if !strings.Contains(d.Detail, "is called at line 4") {
+		t.Errorf("drop detail = %q, want it to name the call at line 4", d.Detail)
+	}
+}
+
+// The prose fallback keeps the falsifying power it always had: a prose absence
 // the file contradicts is still dropped. The demotion is a demotion, not a
 // pardon.
 func TestProseAbsenceContradictedByTheFileStillDrops(t *testing.T) {
