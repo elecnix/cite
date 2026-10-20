@@ -176,6 +176,9 @@ func TestDeclaredAbsenceClaimsAreCheckedOnTheirTypeAndSymbol(t *testing.T) {
 			if !rec.Findings[0].Blocks {
 				t.Errorf("Blocks = false, want true: the claim was checked and it holds")
 			}
+			if got := rec.Findings[0].ExternalClaims[0].Disposition; got != "verified" {
+				t.Errorf("Disposition = %q, want verified", got)
+			}
 		})
 	}
 }
