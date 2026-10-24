@@ -39,22 +39,22 @@ uploads the forensics archive when the review fails, and `capture_wire` uploads
 the wire capture on every run, whether it passed or failed.
 
 `capture_wire` is now also a key, under [Operator settings](#operator-settings).
-It was excluded from this list on purpose while a config file was the only place
-a setting could live, because a switch an operator flips while diagnosing one
-failure should not need a commit. A machine-level file and a flag are both
-outside the repository, so the reason no longer applies, and a repository that
-does want it can set it.
+This list left it out on purpose while a config file was the only place a
+setting could live: a switch an operator flips while diagnosing one failure
+should not need a commit. A machine-level file and a flag live outside the
+repository too, so that reason expired, and a repository can set the switch in
+its own file if it wants to.
 
 ## Operator settings
 
-A repository file holds policy. The settings that say how a run reaches its
-model and what it writes live under the same schema, and each of them also has
-a flag and an environment variable. They resolve by one ladder, strongest
+A repository file holds policy. The same schema also describes the settings that
+say how a run reaches its model and what it writes, and each of them has a flag
+and an environment variable as well. One ladder resolves them, strongest
 first:
 
 1. the command-line flag;
-2. the environment variable;
-3. the configuration files, in the order given, later overriding earlier;
+2. an environment variable;
+3. configuration files, in the order given, later overriding earlier;
 4. the built-in default.
 
 Environment sits above the files so a one-off `MODEL_ID=… cite review` behaves

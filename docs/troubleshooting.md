@@ -127,8 +127,9 @@ reach the same conclusion.
 
 `--capture-dir` (or `CITE_CAPTURE_DIR`) sets where the documents go, and the
 action points it at `$RUNNER_TEMP/cite-wire`. `--capture-max-bytes` (or
-`CITE_CAPTURE_MAX_BYTES`) sets the per-body ceiling, 256 KiB by default. A body over the ceiling is cut with `truncated`,
-`original_bytes` and a note that says which setting cut it, and the manifest
+`CITE_CAPTURE_MAX_BYTES`) sets the per-body ceiling, 256 KiB by default. A body
+over the ceiling arrives cut, with `truncated`, `original_bytes` and a note
+naming the setting that cut it, and the manifest
 row carries `request_omitted_bytes` and `response_omitted_bytes`, so a cut is
 never silent. Set either in the workflow's own `env:`. Neither needs an
 input.
