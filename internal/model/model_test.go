@@ -242,3 +242,67 @@ func TestUnwrapJSONLeavesNonFencedInputAlone(t *testing.T) {
 		}
 	}
 }
+
+// The cost line is the one number a buyer reads, and it has to distinguish
+// three cases (issue #204): a billed amount, a billed zero, and a cost Cite
+// could not determine. The last one must not read as a zero.
+func TestRunRecordCostText(t *testing.T) {
+	cases := []struct {
+		name string
+		rec  *RunRecord
+		want string
+	}{
+		{
+			name: "billed amount",
+			rec:  &RunRecord{CostUSD: 0.0123},
+			want: "$0.0123",
+		},
+		{
+			name: "billed zero",
+			rec:  &RunRecord{CostUSD: 0},
+			want: "$0.0000",
+		},
+		{
+			name: "unknown",
+			rec:  &RunRecord{CostUnknown: true},
+			want: CostUnknownLabel,
+		},
+		{
+			name: "nil record",
+			rec:  nil,
+			want: "$0.0000",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.rec.CostText(); got != tc.want {
+				t.Errorf("CostText() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// ReportedTokens is the guard that decides whether a run consumed tokens, so
+// it has to count every counter the cost formula prices. A run whose only
+// tokens were a cache write was still billed for them, and counting two of
+// the four priced counters would price that run as a known zero.
+func TestUsageReportedTokens(t *testing.T) {
+	cases := []struct {
+		name string
+		u    Usage
+		want bool
+	}{
+		{"nothing reported", Usage{}, false},
+		{"input", Usage{InputTokens: 10}, true},
+		{"output", Usage{OutputTokens: 10}, true},
+		{"cache read", Usage{CacheReadTokens: 10}, true},
+		{"cache write", Usage{CacheWriteTokens: 10}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.u.ReportedTokens(); got != tc.want {
+				t.Errorf("ReportedTokens() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
