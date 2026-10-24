@@ -73,7 +73,7 @@ func runCanary(args []string) error {
 		return err
 	}
 	st.apply()
-	legs := canaryLegs(st.Config.Config, st)
+	legs := canaryLegs(st.cfg(), st)
 	if len(legs) == 0 {
 		fmt.Println("canary: no providers or fallback chain configured — nothing to exercise")
 		return nil

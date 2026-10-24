@@ -490,9 +490,13 @@ func (c *Capture) body(text string) CapturedBody {
 	b.Text = string(cut)
 	b.Truncated = true
 	b.OriginalBytes = len(raw)
+	// The note names the ceiling and the setting that raises it. It carried a
+	// redaction placeholder in the ceiling's parenthetical for as long as the
+	// note existed, which read "ceiling ([redacted])" and pointed at nothing
+	// (issue #218 review). The setting name is the useful half.
 	b.TruncationNote = fmt.Sprintf(
-		"truncated to the %d-byte per-body capture ceiling (%s); the body was %d bytes, %d written; raise capture_max_bytes (--capture-max-bytes) or capture nothing",
-		c.maxBytes, Redacted, len(raw), len(cut))
+		"truncated to the %d-byte per-body capture ceiling; the body was %d bytes, %d written; raise capture_max_bytes (--capture-max-bytes) or capture nothing",
+		c.maxBytes, len(raw), len(cut))
 	return b
 }
 

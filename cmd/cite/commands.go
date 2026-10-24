@@ -61,7 +61,7 @@ func runValidate(args []string) error {
 		fmt.Print(effectiveReport(st))
 		return nil
 	}
-	cfg := st.Config.Config
+	cfg := st.cfg()
 	fmt.Printf("merged from %s: OK (gate=%s max_comments=%d nits=%t compat_profile=%s)\n",
 		strings.Join(namesOrNone(st.Config.Read), " + "), cfg.Gate, cfg.MaxComments, cfg.Nits, cfg.CompatProfile)
 	return nil

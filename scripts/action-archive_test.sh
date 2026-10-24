@@ -249,10 +249,18 @@ check_captures() {
     # writer resolved, and the single site that names the variable is the
     # settings table. Two settings naming one capture would still leave one of
     # them applying nothing, so the count stays at exactly one.
+    #
+    # Comment lines are skipped. A bare grep counted a comment that merely
+    # mentioned the variable as a second claim and failed the check, which is the
+    # false positive the RUNNER_TEMP check above was fixed for.
     local writers
     if grep -qE "^[[:space:]]*export ${var}_OUT=" "$action"; then
       # shellcheck disable=SC2086 # $gofiles is a deliberate word list
-      writers="$(grep -hoF "\"${var}_OUT\"" $gofiles 2>/dev/null | wc -l | tr -d ' ')"
+      writers="$(awk -v want="\"${var}_OUT\"" '
+        /^[[:space:]]*(\/\/|\*)/ { next }
+        { n += gsub(want, "") }
+        END { print n+0 }
+      ' $gofiles 2>/dev/null)"
       if [ "$writers" -ne 1 ]; then
         fail "$action: ${var}_OUT is exported but $writers sites read it; exactly one may claim a capture"
       fi

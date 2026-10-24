@@ -184,7 +184,7 @@ func parseBypassLog(body string, cutoff time.Time) []bypassEntry {
 // `cite review --pr`, but with no check run, no review posting, no sticky
 // state: GitHub surfaces are untouched. Only blocking findings come back.
 func rereviewMerged(ctx context.Context, c *githubclient.Client, st *settings, owner, repo string, mp githubclient.MergedPR, structuredOutput model.StructuredOutputMode) ([]model.ValidatedFinding, model.Verdict, string, error) {
-	cfg := st.Config.Config
+	cfg := st.cfg()
 	pr, err := c.GetPR(ctx, mp.Number)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("fetching #%d: %w", mp.Number, err)

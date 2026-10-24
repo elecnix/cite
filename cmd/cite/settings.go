@@ -288,7 +288,9 @@ type settings struct {
 	RelatedCode      bool
 	Debug            bool
 
-	// Config is the merged configuration, nil when no file was read.
+	// Config is the merged configuration. It is nil only for the zero settings a
+	// failed load produces, which review's check-run path carries as an error
+	// rather than a run, so read it through cfg().
 	Config *config.Loaded
 	// Sources maps a setting key to where its value came from.
 	Sources map[string]string
@@ -349,19 +351,24 @@ func (o *operatorFlags) resolve(given map[string]bool) (*settings, error) {
 	s.Sources["capture_wire"] = src
 	s.CaptureDir, src = o.captureDir.resolve(given, cfg.CaptureDir)
 	s.Sources["capture_dir"] = src
+	// A value that is not a byte count falls through to the next rung rather
+	// than to the default: a typo in a variable must not discard the ceiling the
+	// configuration file states.
 	raw, src := o.captureMax.resolve(given, "")
-	s.Sources["capture_max_bytes"] = src
 	if raw != "" {
 		n, perr := strconv.Atoi(strings.TrimSpace(raw))
 		if perr != nil {
-			logToStderr("cite: capture_max_bytes=%q is not a byte count; using the default", raw)
+			logToStderr("cite: capture_max_bytes=%q is not a byte count; falling back to the configuration file", raw)
+			raw = ""
 		} else {
 			s.CaptureMaxBytes = n
 		}
-	} else if cfg.CaptureMaxBytes != 0 {
-		s.CaptureMaxBytes = cfg.CaptureMaxBytes
-		s.Sources["capture_max_bytes"] = "config"
 	}
+	if raw == "" && cfg.CaptureMaxBytes != 0 {
+		s.CaptureMaxBytes = cfg.CaptureMaxBytes
+		src = "config"
+	}
+	s.Sources["capture_max_bytes"] = src
 	s.TruncatedOut, src = o.truncatedOut.resolve(given, cfg.TruncatedOut)
 	s.Sources["truncated_out"] = src
 
@@ -376,6 +383,15 @@ func (o *operatorFlags) resolve(given map[string]bool) (*settings, error) {
 		return nil, fmt.Errorf("structured_output (from %s): %w", s.Sources["structured_output"], err)
 	}
 	return s, nil
+}
+
+// cfg is the merged configuration, or nil when the load failed. Every reader
+// goes through here, so no site has to guess whether Config is set.
+func (s *settings) cfg() *config.Config {
+	if s == nil || s.Config == nil {
+		return nil
+	}
+	return s.Config.Config
 }
 
 // apply installs the two settings that live in the model package for the life of

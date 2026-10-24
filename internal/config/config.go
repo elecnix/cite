@@ -306,6 +306,10 @@ func (c *Config) checkOperatorSettings(probs *[]Problem) {
 		// dotfile as often as not, and a dotfiles repository publishes what it
 		// holds. The provider block keeps its four shapes for compatibility;
 		// this key starts with the strict one.
+		//
+		// The schema carries the same rule as a pattern, so a file is rejected a
+		// layer earlier. This check is the second one, and it is the one that
+		// reports a Config assembled without the schema.
 		switch {
 		case strings.HasPrefix(c.ModelAPIKey, "$"), strings.HasPrefix(c.ModelAPIKey, "!"):
 			if msg := credentialShapeProblem(c.ModelAPIKey); msg != "" {

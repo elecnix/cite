@@ -36,8 +36,8 @@ func newModelClient(st *settings) (model.Client, error) {
 		leg.Model = id
 		addLeg(&leg)
 	}
-	if st.Config != nil {
-		for _, l := range fallbackLegs(st.Config.Config, st) {
+	if cfg := st.cfg(); cfg != nil {
+		for _, l := range fallbackLegs(cfg, st) {
 			key, kerr := l.apiKey.Resolve()
 			if kerr != nil || string(key) == "" {
 				logToStderr("warning: fallback %s left out: its credential does not resolve", l.name)

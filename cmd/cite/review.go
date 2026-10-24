@@ -350,7 +350,7 @@ func reviewLocal(diffPath, descPath string, st *settings, structuredOutput model
 		}
 		description = string(b)
 	}
-	cfg := st.Config.Config
+	cfg := st.cfg()
 	diff, err := scope.ParseUnifiedDiff(string(raw))
 	if err != nil {
 		return fmt.Errorf("parsing diff: %w", err)
@@ -509,7 +509,7 @@ func reviewPR(spec string, st *settings, cfgErr error, dryRun, disabled, toolFai
 		// run to defaults — conclude COULD_NOT_EVALUATE, never green.
 		return concludeFailure(ctx, c, checkID, dryRun, gateOpts, model.VerdictCouldNotEvaluate, cfgErr.Error())
 	}
-	cfg := st.Config.Config
+	cfg := st.cfg()
 	if disabled {
 		v, reason := gate.DecideDisabled(cfg)
 		title, summary := gate.CheckRunPayload(&model.RunRecord{Samples: 0}, v, reason)

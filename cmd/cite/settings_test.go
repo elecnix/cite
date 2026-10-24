@@ -140,6 +140,24 @@ func TestBooleanSettingCanBeTurnedOffFromTheCommandLine(t *testing.T) {
 	}
 }
 
+// A variable that is not a byte count falls through to the configuration file
+// rather than to the built-in default: a typo must not discard a setting the
+// file states.
+func TestBadCaptureMaxFallsThroughToTheFile(t *testing.T) {
+	paths := writeFiles(t, "cfg.yml", "capture_max_bytes: 4096\n")
+	t.Setenv("CITE_CAPTURE_MAX_BYTES", "not-a-count")
+	st, err := testSettings(t, groupConfig|groupDiagnostics, paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.CaptureMaxBytes != 4096 {
+		t.Fatalf("capture_max_bytes = %d, want the file's 4096", st.CaptureMaxBytes)
+	}
+	if st.Sources["capture_max_bytes"] != "config" {
+		t.Errorf("source = %q, want config", st.Sources["capture_max_bytes"])
+	}
+}
+
 // --config given once behaves as it always has, and passing it at all replaces
 // the default list, so the home directory is never consulted behind a wrapper's
 // back.

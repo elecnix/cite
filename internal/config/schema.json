@@ -75,7 +75,8 @@
     "model_api_key": {
       "type": "string",
       "minLength": 1,
-      "description": "A credential reference: $VAR, ${VAR} or !command. Never a literal key, because this file is often a dotfile in a dotfiles repository."
+      "pattern": "^[$!]",
+      "description": "A credential reference: $VAR, ${VAR} or !command. The pattern rejects a literal key here as well as in the semantic check, because this file is often a dotfile in a dotfiles repository."
     },
     "fallback_models": {
       "type": "array",
