@@ -316,7 +316,7 @@ The tiers live in `CONFORMANCE.md`, which carries that date:
   Each has a fixture in the test suite, and a change to any of them is a breaking change.
 - **Best-effort:** behaviour the vendor has never documented, including overlapping glob precedence and whether
   a glob matches changed files or the tree. Cite picks an answer and prints it in the `doctor` output.
-- **Declared divergence:** the two above, plus any future case where copying the vendor would make
+- **Declared divergence:** the case above, plus any future case where copying the vendor would make
   a merge gate less safe. Divergences live in one page, `docs/instructions.md`, each with the
   reason. A divergence that is not written down is a bug.
 - **Out of scope:** anything configured only in a web UI rather than in a file or an export. It cannot be
