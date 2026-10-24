@@ -43,8 +43,9 @@ func runReview(args []string) error {
 	// finding (FOUND) always concludes "failure". Default is fail-closed.
 	toolFailureBlocks := fs.Bool("tool-failure-blocks", true,
 		"a COULD_NOT_EVALUATE tool failure blocks the merge (default); -tool-failure-blocks=false concludes neutral instead")
-	reportFmt := fs.String("report", "", "write a full report instead of publishing to GitHub: json or markdown")
-	outPath := fs.String("out", "", "report destination file (default stdout; requires --report)")
+	reportFmt := &reportTargets{}
+	fs.Var(reportFmt, "report", "write a full report instead of publishing to GitHub: json or markdown; repeat it for more than one report, as FORMAT or FORMAT=PATH")
+	fs.Var(reportOut{targets: reportFmt}, "out", "report destination file (default stdout; applies to the --report before it and requires --report)")
 	recordOut := fs.String("record-out", os.Getenv("CITE_RECORD_OUT"), "write the raw run record JSON to this path, even when the run fails (forensics; defaults to $CITE_RECORD_OUT)")
 	structuredOutput := fs.String("structured-output", os.Getenv("CITE_STRUCTURED_OUTPUT"),
 		"how the model returns schema-shaped JSON: response_format (default) or tools")
@@ -55,36 +56,14 @@ func runReview(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	sink, closeReports, err := reportFmt.build()
+	if err != nil {
+		return err
+	}
+	defer closeReports()
 	mode, err := model.ParseStructuredOutputMode(*structuredOutput)
 	if err != nil {
 		return fmt.Errorf("review: %w", err)
-	}
-	var sink publisher.Sink
-	switch *reportFmt {
-	case "":
-		if *outPath != "" {
-			return fmt.Errorf("review: --out requires --report")
-		}
-	case "json":
-		w, closer, err := reportWriter(*outPath)
-		if err != nil {
-			return err
-		}
-		if closer != nil {
-			defer closer()
-		}
-		sink = publisher.JSONReportSink(w)
-	case "markdown":
-		w, closer, err := reportWriter(*outPath)
-		if err != nil {
-			return err
-		}
-		if closer != nil {
-			defer closer()
-		}
-		sink = publisher.MarkdownReportSink(w)
-	default:
-		return fmt.Errorf("review: --report must be json or markdown")
 	}
 	switch {
 	case *diffPath != "" && *prSpec != "":
@@ -103,6 +82,124 @@ func runReview(args []string) error {
 		fs.Usage()
 		return fmt.Errorf("review: one of --diff or --pr is required")
 	}
+}
+
+// reportTarget is one requested report: a format and the file it writes. An
+// empty path writes to stdout.
+type reportTarget struct {
+	format string
+	path   string
+}
+
+// reportTargets collects the repeatable --report flag. Each value is FORMAT or
+// FORMAT=PATH. A bare FORMAT takes its path from the --out flag that follows
+// it, so the single-report spelling (--report json --out r.json) keeps working.
+//
+// One run can write every format asked for, which is the point: a second run
+// for a second format is a second review, and the model does not answer the
+// same twice (issue #215).
+type reportTargets struct {
+	targets []*reportTarget
+	pending *reportTarget // the last bare FORMAT, waiting for --out
+}
+
+func (r *reportTargets) String() string {
+	parts := make([]string, 0, len(r.targets))
+	for _, t := range r.targets {
+		parts = append(parts, t.format+"="+t.path)
+	}
+	return strings.Join(parts, ",")
+}
+
+func (r *reportTargets) Set(v string) error {
+	format, path, paired := strings.Cut(v, "=")
+	format = strings.ToLower(strings.TrimSpace(format))
+	if format != "json" && format != "markdown" {
+		return fmt.Errorf("review: --report must be json or markdown")
+	}
+	t := &reportTarget{format: format}
+	if paired {
+		if path == "" {
+			return fmt.Errorf("review: --report %s= has an empty report path", format)
+		}
+		t.path = path
+		r.pending = nil
+	} else {
+		r.pending = t
+	}
+	r.targets = append(r.targets, t)
+	return nil
+}
+
+// reportOut is the --out flag. It applies its value at parse time, not after
+// the whole command line, so it lands on the --report that precedes it and
+// stays paired when --report repeats.
+type reportOut struct{ targets *reportTargets }
+
+func (o reportOut) String() string { return "" }
+
+func (o reportOut) Set(v string) error { return o.targets.setOut(v) }
+
+// setOut hands --out to the report flag before it. The flag package parses in
+// command-line order, so "--out x --report json" leaves --out with nothing to
+// name and fails here rather than silently writing to stdout.
+func (r *reportTargets) setOut(path string) error {
+	if path == "" {
+		return nil
+	}
+	if r.pending == nil {
+		return fmt.Errorf("review: --out applies to the --report before it; put \"--report json\" or \"--report markdown\" before it")
+	}
+	r.pending.path = path
+	r.pending = nil
+	return nil
+}
+
+// build opens every report destination and returns the sink that writes them
+// all. With no --report it returns a nil sink, which is the publishing path.
+// The returned closer closes every file it opened, in any order.
+func (r *reportTargets) build() (publisher.Sink, func(), error) {
+	noop := func() {}
+	if len(r.targets) == 0 {
+		return nil, noop, nil
+	}
+	if len(r.targets) > 1 {
+		for _, t := range r.targets {
+			if t.path == "" {
+				return nil, noop, fmt.Errorf("review: only one report can go to stdout; give each of the %d --report flags a path", len(r.targets))
+			}
+		}
+		seen := make(map[string]bool, len(r.targets))
+		for _, t := range r.targets {
+			if seen[t.path] {
+				return nil, noop, fmt.Errorf("review: two reports write the same file: %s", t.path)
+			}
+			seen[t.path] = true
+		}
+	}
+	sinks := make([]publisher.Sink, 0, len(r.targets))
+	closers := make([]func(), 0, len(r.targets))
+	closeAll := func() {
+		for _, c := range closers {
+			c()
+		}
+	}
+	for _, t := range r.targets {
+		w, closer, err := reportWriter(t.path)
+		if err != nil {
+			closeAll()
+			return nil, noop, err
+		}
+		if closer != nil {
+			closers = append(closers, closer)
+		}
+		if t.format == "json" {
+			sinks = append(sinks, publisher.JSONReportSink(w))
+		} else {
+			sinks = append(sinks, publisher.MarkdownReportSink(w))
+		}
+	}
+	return publisher.MultiSink(sinks...), closeAll, nil
 }
 
 // reportWriter resolves the report destination: a file when one is given,

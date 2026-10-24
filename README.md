@@ -111,6 +111,7 @@ go with it (`CITE_CAPTURE_DIR`, `CITE_CAPTURE_MAX_BYTES`).
 cite review --diff <(git diff main...)        # local branch, nothing pushed
 cite review --pr owner/repo#123 --dry-run     # a real PR; prints, posts nothing
 cite review --pr owner/repo#123 --report markdown --out report.md  # full run, local report
+cite review --pr owner/repo#123 --report markdown --out r.md --report json --out r.json  # one run, two reports
 cite doctor                                   # which instruction files reached which paths
 cite validate                                 # schema-check the config
 cite soak bench/cases                         # pipeline regression harness
@@ -123,7 +124,7 @@ cite signals --pr owner/repo#N                # ingest 👎 reactions into the l
 cite re-review --repo owner/name              # re-review bypassed merges; one issue per finding
 ```
 
-The `--report json|markdown` path runs the reviewer against the real pull request and writes the outcome to stdout or `-o FILE`. Nothing on GitHub changes, and the check and comment already published keep their last state. It reviews all manifest files fresh (no incremental carry-forward) so reports stay reproducible. This lets you evaluate Cite on any repository your token can read without deploying the action there.
+The `--report json|markdown` path runs the reviewer against the real pull request and writes the outcome to stdout or `--out FILE`. Nothing on GitHub changes, and the check and comment already published keep their last state. It reviews all manifest files fresh (no incremental carry-forward) so reports stay reproducible. Repeat `--report` to write several formats of one review, as `--report FORMAT --out FILE` or `--report FORMAT=FILE`. Cite runs the reviewer once, so every report describes the same findings. This lets you evaluate Cite on any repository your token can read without deploying the action there.
 
 ## Documentation
 
