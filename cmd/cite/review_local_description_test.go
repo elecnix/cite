@@ -42,7 +42,7 @@ func TestReviewLocalPassesTheDescription(t *testing.T) {
 		t.Fatal(err)
 	}
 	var report bytes.Buffer
-	if err := reviewLocal(diffPath, descPath, cfgPath, model.StructuredOutputResponseFormat, "", false, publisher.JSONReportSink(&report)); err != nil {
+	if err := reviewLocal(diffPath, descPath, mustSettings(t, cfgPath), model.StructuredOutputResponseFormat, publisher.JSONReportSink(&report)); err != nil {
 		t.Fatalf("reviewLocal: %v", err)
 	}
 	mu.Lock()

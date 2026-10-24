@@ -60,7 +60,66 @@ func buildConfig(tree interface{}, probs *[]Problem) *Config {
 	if v, ok := m["roles"]; ok {
 		c.Roles = buildRoles(v, probs)
 	}
+	buildOperatorSettings(c, m)
 	return c
+}
+
+// buildOperatorSettings decodes the issue #217 keys. A pointer bool stays nil
+// when the key is absent, so "not set" and "set to false" stay distinguishable
+// all the way to the flag ladder.
+func buildOperatorSettings(c *Config, m map[string]interface{}) {
+	if v, ok := m["model_id"]; ok {
+		c.ModelID = asString(v)
+	}
+	if v, ok := m["model_base_url"]; ok {
+		c.ModelBaseURL = asString(v)
+	}
+	if v, ok := m["model_api_key"]; ok {
+		c.ModelAPIKey = asString(v)
+	}
+	if v, ok := m["fallback_models"]; ok {
+		c.FallbackModels = stringSlice(v)
+	}
+	if v, ok := m["capture_wire"]; ok {
+		if b, ok := v.(bool); ok {
+			c.CaptureWire = &b
+		}
+	}
+	if v, ok := m["capture_dir"]; ok {
+		c.CaptureDir = asString(v)
+	}
+	if v, ok := m["capture_max_bytes"]; ok {
+		if n, ok := asInt(v); ok {
+			c.CaptureMaxBytes = int(n)
+		}
+	}
+	if v, ok := m["truncated_out"]; ok {
+		c.TruncatedOut = asString(v)
+	}
+	if v, ok := m["record_out"]; ok {
+		c.RecordOut = asString(v)
+	}
+	if v, ok := m["structured_output"]; ok {
+		c.StructuredOutput = asString(v)
+	}
+	if v, ok := m["reasoning_effort"]; ok {
+		c.ReasoningEffort = asString(v)
+	}
+	if v, ok := m["verify"]; ok {
+		if b, ok := v.(bool); ok {
+			c.Verify = &b
+		}
+	}
+	if v, ok := m["related_code"]; ok {
+		if b, ok := v.(bool); ok {
+			c.RelatedCode = &b
+		}
+	}
+	if v, ok := m["debug"]; ok {
+		if b, ok := v.(bool); ok {
+			c.Debug = &b
+		}
+	}
 }
 
 func buildProviders(v interface{}, probs *[]Problem) map[string]*model.Provider {

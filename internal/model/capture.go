@@ -45,7 +45,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -102,14 +101,11 @@ const (
 // capture rather than by trusting the masker.
 const Redacted = "[redacted]"
 
-// CaptureEnvVar and friends are the environment surface of the feature. The
-// GitHub Action's capture_wire input sets the first and the directory is
-// pointed at $RUNNER_TEMP so the artifact step can find it.
-const (
-	CaptureEnvVar    = "CITE_CAPTURE_WIRE"
-	CaptureDirEnvVar = "CITE_CAPTURE_DIR"
-	CaptureMaxEnvVar = "CITE_CAPTURE_MAX_BYTES"
-)
+// Capture settings reach Cite as flags, environment variables and configuration
+// keys in that order (issue #217); the caller resolves them and hands the answer
+// here, so the capture has one source of truth. The GitHub Action's
+// capture_wire input sets the switch and points the directory at $RUNNER_TEMP
+// so the artifact step can find it.
 
 // capturedRequestHeaders is an ALLOWLIST of the request header values a
 // capture keeps, and it is an allowlist on purpose.
@@ -495,8 +491,8 @@ func (c *Capture) body(text string) CapturedBody {
 	b.Truncated = true
 	b.OriginalBytes = len(raw)
 	b.TruncationNote = fmt.Sprintf(
-		"truncated to the %d-byte per-body capture ceiling (%s); the body was %d bytes, %d written; raise %s or capture nothing",
-		c.maxBytes, Redacted, len(raw), len(cut), CaptureMaxEnvVar)
+		"truncated to the %d-byte per-body capture ceiling (%s); the body was %d bytes, %d written; raise capture_max_bytes (--capture-max-bytes) or capture nothing",
+		c.maxBytes, Redacted, len(raw), len(cut))
 	return b
 }
 
@@ -705,11 +701,7 @@ func ActiveCapture() *Capture {
 	defer activeMu.Unlock()
 	if !activeLoaded {
 		activeLoaded = true
-		active = captureFromEnv()
-		if active != nil {
-			fmt.Fprintf(os.Stderr, "cite: wire capture on: one masked document per model call in %s (ceiling %d bytes per body); a capture contains the prompt, so treat the directory as private review material\n",
-				active.Dir(), active.MaxBytes())
-		}
+		active = CaptureFromSettings(CaptureSettings{})
 	}
 	return active
 }
@@ -722,41 +714,52 @@ func SetActiveCapture(c *Capture) {
 	active, activeLoaded = c, true
 }
 
-// captureFromEnv builds the capture the environment asks for, or nil. Only
-// the true spellings enable it, so a typo leaves the feature off rather than
-// on: a mistyped input must never begin writing prompts to disk.
-func captureFromEnv() *Capture {
-	switch os.Getenv(CaptureEnvVar) {
-	case "1", "true", "TRUE", "True":
-	default:
+// CaptureSettings is the capture the operator asked for, already resolved.
+// Only On enables it, so a typo leaves the feature off rather than on: a
+// mistyped input must never begin writing prompts to disk.
+type CaptureSettings struct {
+	On       bool
+	Dir      string
+	MaxBytes int // 0 means the built-in default
+}
+
+// CaptureFromSettings builds the capture the settings ask for, or nil. A
+// directory is created lazily; a ceiling outside the supported range is clamped
+// to the bound the message names, so the log never under-reports the size of the
+// artifact.
+func CaptureFromSettings(want CaptureSettings) *Capture {
+	if !want.On {
 		return nil
 	}
-	dir := os.Getenv(CaptureDirEnvVar)
+	dir := want.Dir
 	if dir == "" {
 		dir = filepath.Join(os.TempDir(), "cite-wire")
 	}
 	maxBytes := DefaultCaptureMaxBytes
-	if v := os.Getenv(CaptureMaxEnvVar); v != "" {
-		n, err := strconv.Atoi(v)
+	if v := want.MaxBytes; v != 0 {
+		n := v
 		// Each branch assigns the value it announces. A message that says
 		// "using 67108864" while the caller's larger number survives into
 		// the capture is a log that lies about the artifact's size, which is
 		// the one thing an operator reading it needs to be true.
 		switch {
-		case err != nil || n <= 0:
-			fmt.Fprintf(os.Stderr, "cite: %s=%q is not a byte count; using %d\n", CaptureMaxEnvVar, v, DefaultCaptureMaxBytes)
+		case n <= 0:
+			fmt.Fprintf(os.Stderr, "cite: capture_max_bytes=%d is not a positive byte count; using %d\n", n, DefaultCaptureMaxBytes)
 			maxBytes = DefaultCaptureMaxBytes
 		case n > captureMaxBytesCeiling:
-			fmt.Fprintf(os.Stderr, "cite: %s=%d is above the %d-byte ceiling; using %d\n", CaptureMaxEnvVar, n, captureMaxBytesCeiling, captureMaxBytesCeiling)
+			fmt.Fprintf(os.Stderr, "cite: capture_max_bytes=%d is above the %d-byte ceiling; using %d\n", n, captureMaxBytesCeiling, captureMaxBytesCeiling)
 			maxBytes = captureMaxBytesCeiling
 		case n < captureMinMaxBytes:
-			fmt.Fprintf(os.Stderr, "cite: %s=%d is below the %d-byte floor; using %d\n", CaptureMaxEnvVar, n, captureMinMaxBytes, captureMinMaxBytes)
+			fmt.Fprintf(os.Stderr, "cite: capture_max_bytes=%d is below the %d-byte floor; using %d\n", n, captureMinMaxBytes, captureMinMaxBytes)
 			maxBytes = captureMinMaxBytes
 		default:
 			maxBytes = n
 		}
 	}
-	return NewCapture(dir, maxBytes)
+	capture := NewCapture(dir, maxBytes)
+	fmt.Fprintf(os.Stderr, "cite: wire capture on: one masked document per model call in %s (ceiling %d bytes per body); a capture contains the prompt, so treat the directory as private review material\n",
+		capture.Dir(), capture.MaxBytes())
+	return capture
 }
 
 // captureURL renders a request URL for a capture: host and path, never the

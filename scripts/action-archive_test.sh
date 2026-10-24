@@ -238,14 +238,21 @@ check_captures() {
       continue
     fi
     # Every producer must reach exactly one writer. An exported capture is
-    # written by the Go site that reads it, so that site must be unique; a
-    # tee'd capture is written by the tee in the step, so the tee must be.
-    # Checking only the exported case let a capture that was tee'd and read
-    # twice through Go pass without ever being counted.
+    # claimed by one place in the binary, so that claim must be unique; a tee'd
+    # capture is written by the tee in the step, so the tee must be. Checking
+    # only the exported case let a capture that was tee'd and read twice through
+    # Go pass without ever being counted.
+    #
+    # The claim is the variable's name appearing in the Go sources. It used to be
+    # an os.Getenv at the write site, until the operator settings became one
+    # table of flag, variable and key (issue #217): the path now reaches the
+    # writer resolved, and the single site that names the variable is the
+    # settings table. Two settings naming one capture would still leave one of
+    # them applying nothing, so the count stays at exactly one.
     local writers
     if grep -qE "^[[:space:]]*export ${var}_OUT=" "$action"; then
       # shellcheck disable=SC2086 # $gofiles is a deliberate word list
-      writers="$(grep -hoF "os.Getenv(\"${var}_OUT\")" $gofiles 2>/dev/null | wc -l | tr -d ' ')"
+      writers="$(grep -hoF "\"${var}_OUT\"" $gofiles 2>/dev/null | wc -l | tr -d ' ')"
       if [ "$writers" -ne 1 ]; then
         fail "$action: ${var}_OUT is exported but $writers sites read it; exactly one may claim a capture"
       fi

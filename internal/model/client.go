@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -471,9 +472,45 @@ type OpenAICompatClient struct {
 // githubModelsBase is the one endpoint the ambient GITHUB_TOKEN authenticates.
 const githubModelsBase = "https://models.github.ai/inference"
 
-// NewOpenAICompatClient infers the endpoint from the environment when no
-// explicit provider is configured: the provider is inferred from which key is
-// present (§1).
+// Endpoint is where a run sends its model calls, already resolved by the
+// caller from its flags, its environment variables and its configuration files.
+// An empty field means the operator named nothing, which is what makes the
+// inference below the documented default rather than a second source of truth.
+type Endpoint struct {
+	APIKey  string
+	BaseURL string
+	ModelID string
+}
+
+// Diagnostics is the process's debug surface, resolved by the caller like
+// Endpoint: a debug dump and a truncated-response path are operator settings and
+// reach here already decided, never read again from the environment here.
+type Diagnostics struct {
+	Debug        bool
+	TruncatedOut string
+}
+
+var (
+	diagMu      sync.Mutex
+	diagnostics Diagnostics
+)
+
+// SetDiagnostics installs the process's debug surface.
+func SetDiagnostics(d Diagnostics) {
+	diagMu.Lock()
+	defer diagMu.Unlock()
+	diagnostics = d
+}
+
+func currentDiagnostics() Diagnostics {
+	diagMu.Lock()
+	defer diagMu.Unlock()
+	return diagnostics
+}
+
+// NewOpenAICompatClient builds the client for ep, inferring the endpoint when
+// the operator named none: the provider is inferred from which key is present
+// (§1).
 //
 // GitHub Models zero-secret path (§1, "A first run without a key"): when
 // MODEL_API_KEY is unset but the ambient GITHUB_TOKEN is present, inference
@@ -482,13 +519,13 @@ const githubModelsBase = "https://models.github.ai/inference"
 // permission, is rate-limited, and exists only so the first review happens
 // before the user has configured anything; bring-your-own-key via
 // MODEL_API_KEY remains the serious path.
-func NewOpenAICompatClient() (*OpenAICompatClient, error) {
-	if k := os.Getenv("MODEL_API_KEY"); k != "" {
-		base := os.Getenv("MODEL_BASE_URL")
+func NewOpenAICompatClient(ep Endpoint) (*OpenAICompatClient, error) {
+	if k := ep.APIKey; k != "" {
+		base := ep.BaseURL
 		if base == "" {
 			base = "https://api.openai.com/v1"
 		}
-		model := os.Getenv("MODEL_ID")
+		model := ep.ModelID
 		if model == "" {
 			model = "gpt-5-mini"
 		}
@@ -503,11 +540,11 @@ func NewOpenAICompatClient() (*OpenAICompatClient, error) {
 	// third-party host and requested a model that host does not serve, which
 	// surfaced as an opaque provider error rather than as the misconfiguration
 	// it was.
-	if base := strings.TrimSuffix(os.Getenv("MODEL_BASE_URL"), "/"); base != "" {
+	if base := strings.TrimSuffix(ep.BaseURL, "/"); base != "" {
 		// The branch above returns whenever MODEL_API_KEY is set, so a key read
 		// here is always empty: what is left to decide is which credential this
 		// endpoint takes, and only GitHub Models takes the ambient token.
-		model := os.Getenv("MODEL_ID")
+		model := ep.ModelID
 		key := ""
 		ambient := false
 		if base == githubModelsBase {
@@ -524,7 +561,7 @@ func NewOpenAICompatClient() (*OpenAICompatClient, error) {
 	// Zero-secret first run: nothing is configured, so GitHub's models
 	// endpoint is inferred from the ambient token.
 	if k := os.Getenv("GITHUB_TOKEN"); k != "" {
-		model := os.Getenv("MODEL_ID")
+		model := ep.ModelID
 		if model == "" {
 			model = "openai/gpt-4o-mini"
 		}
@@ -715,7 +752,7 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 	if cc != nil {
 		cc.Request = CapturedBody{Text: string(body)}
 	}
-	if os.Getenv("CITE_DEBUG") != "" {
+	if currentDiagnostics().Debug {
 		// Debug aid: dump the exact request body (without the key, which is
 		// header-only) so a provider 400 can be replayed verbatim.
 		_ = os.WriteFile("/tmp/cite-last-request.json", body, 0o600)
@@ -879,7 +916,7 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		r := CapturedBody{Text: string(raw)}
 		cc.Response = &r
 	}
-	if os.Getenv("CITE_DEBUG") != "" {
+	if currentDiagnostics().Debug {
 		// Debug aid: dump the exact response body so a truncation or a
 		// decode failure can be replayed and inspected. Complements the
 		// request dump above. The body contains no credentials.
@@ -917,7 +954,7 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 	if ch.FinishReason == "length" {
 		// The path is overridable so a caller (the GitHub Action) can point
 		// it at a directory it archives for download.
-		capturePath := os.Getenv("CITE_TRUNCATED_OUT")
+		capturePath := currentDiagnostics().TruncatedOut
 		if capturePath == "" {
 			capturePath = "/tmp/cite-truncated-response.json"
 		}

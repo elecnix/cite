@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/elecnix/cite/internal/githubclient"
@@ -13,8 +11,9 @@ import (
 
 // Related code (internal/xref): each review call also carries the
 // definitions its changed lines use and the call sites of what they change,
-// from the rest of the repository at the head. CITE_RELATED_CODE=0 turns it
-// off, which is how an evaluation measures what it buys.
+// from the rest of the repository at the head. --no-related-code (or
+// CITE_RELATED_CODE=0) turns it off, which is how an evaluation measures what
+// it buys. Whether it is on is the caller's setting to resolve, not this file's.
 
 const (
 	relatedMaxFileBytes  = 256 << 10
@@ -22,19 +21,8 @@ const (
 	relatedFetchTimeout  = 60 * time.Second
 )
 
-func relatedEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("CITE_RELATED_CODE"))) {
-	case "0", "false", "off", "no":
-		return false
-	}
-	return true
-}
-
 // relatedFromDir indexes the working tree, for local mode.
 func relatedFromDir(dir string) reviewer.RelatedFinder {
-	if !relatedEnabled() {
-		return nil
-	}
 	snap, err := xref.LoadDir(dir, relatedMaxTotalBytes)
 	if err != nil {
 		logToStderr("warning: related code unavailable; files are reviewed alone: %v", err)
@@ -46,9 +34,6 @@ func relatedFromDir(dir string) reviewer.RelatedFinder {
 // relatedFromAPI indexes the head tree fetched as one tarball. A failed fetch
 // costs only the related code, so it warns and the review goes on without.
 func relatedFromAPI(ctx context.Context, c *githubclient.Client, owner, repo, sha string) reviewer.RelatedFinder {
-	if !relatedEnabled() {
-		return nil
-	}
 	ctx, cancel := context.WithTimeout(ctx, relatedFetchTimeout)
 	defer cancel()
 	files, truncated, err := c.Tarball(ctx, owner, repo, sha, xref.Searchable, relatedMaxFileBytes, relatedMaxTotalBytes)
@@ -60,14 +45,4 @@ func relatedFromAPI(ctx context.Context, c *githubclient.Client, owner, repo, sh
 		logToStderr("related code: the head tree passed %d MiB; definitions past that are not searched", relatedMaxTotalBytes>>20)
 	}
 	return xref.NewIndex(xref.MapSnapshot(files), xref.Limits{})
-}
-
-// verifyEnabled turns the verifier pass on unless CITE_VERIFY says off; an
-// evaluation sets it to 0 to measure what the pass buys.
-func verifyEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("CITE_VERIFY"))) {
-	case "0", "false", "off", "no":
-		return false
-	}
-	return true
 }

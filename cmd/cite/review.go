@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -35,7 +36,8 @@ func runReview(args []string) error {
 	descPath := fs.String("description", "", "path to a file holding the pull request description (local mode; the reviewer reads it as untrusted intent)")
 	prSpec := fs.String("pr", "", "pull request as owner/repo#N (API mode)")
 	dryRun := fs.Bool("dry-run", false, "print results, post nothing")
-	cfgPath := fs.String("config", ".github/cite.yml", "config file (optional)")
+	op := newOperatorFlags(fs, groupConfig|groupEndpoint|groupOutput|groupDiagnostics|groupBehaviour)
+	op.recordOut.register(fs, "record-out", "write the raw run record JSON to this path, even when the run fails (forensics; defaults to $"+recordOutEnvVar+")", recordOutEnvVar)
 	disabled := fs.Bool("disabled", false, "kill switch: conclude disabled-by-configuration")
 	// Issue #59: when true, COULD_NOT_EVALUATE concludes the check run as
 	// "neutral" (which GitHub counts as a satisfied required check) instead
@@ -46,38 +48,55 @@ func runReview(args []string) error {
 	reportFmt := &reportTargets{}
 	fs.Var(reportFmt, "report", "write a full report instead of publishing to GitHub: json or markdown; repeat it for more than one report, as FORMAT or FORMAT=PATH")
 	fs.Var(reportOut{targets: reportFmt}, "out", "report destination file (default stdout; applies to the --report before it and requires --report)")
-	recordOut := fs.String("record-out", os.Getenv("CITE_RECORD_OUT"), "write the raw run record JSON to this path, even when the run fails (forensics; defaults to $CITE_RECORD_OUT)")
-	structuredOutput := fs.String("structured-output", os.Getenv("CITE_STRUCTURED_OUTPUT"),
-		"how the model returns schema-shaped JSON: response_format (default) or tools")
-	reasoningEffort := fs.String("reasoning-effort", os.Getenv("CITE_REASONING_EFFORT"),
-		"reasoning_effort sent to the provider; empty omits the field")
-	requireParameters := fs.Bool("require-parameters", envBool("CITE_REQUIRE_PARAMETERS"),
-		"send the router-only provider.require_parameters field, so a router refuses endpoints that drop the request parameters")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	st, err := op.resolve(givenFlags(fs))
+	// A configuration problem must still land on the check run as
+	// COULD_NOT_EVALUATE (issue #59), so it travels on to reviewPR rather than
+	// ending the command before a check run exists.
+	var cfgErr error
+	var verr *config.ValidationError
+	var serr *config.SyntaxError
+	switch {
+	case err == nil:
+	case errors.As(err, &verr), errors.As(err, &serr):
+		// Fail closed and say why: substituting defaults would discard the
+		// whole roles block, including the timeouts an operator tuned.
+		cfgErr = fmt.Errorf("the configuration is invalid; refusing to fall back to defaults (the whole roles block, including explicit timeouts, would be silently discarded): %w", err)
+		st = &settings{}
+	default:
+		return err
+	}
+	mode, err := model.ParseStructuredOutputMode(st.StructuredOutput)
+	if err != nil && cfgErr == nil {
+		cfgErr = fmt.Errorf("review: %w", err)
 	}
 	sink, closeReports, err := reportFmt.build()
 	if err != nil {
 		return err
 	}
 	defer closeReports()
-	mode, err := model.ParseStructuredOutputMode(*structuredOutput)
-	if err != nil {
-		return fmt.Errorf("review: %w", err)
-	}
 	switch {
 	case *diffPath != "" && *prSpec != "":
 		return fmt.Errorf("use --diff or --pr, not both")
 	case *descPath != "" && *diffPath == "":
 		return fmt.Errorf("review: --description requires --diff")
 	case *diffPath != "":
-		return reviewLocal(*diffPath, *descPath, *cfgPath, mode, *reasoningEffort, *requireParameters, sink)
+		if cfgErr != nil {
+			return cfgErr
+		}
+		st.apply()
+		return reviewLocal(*diffPath, *descPath, st, mode, sink)
 	case *prSpec != "":
 		reviewerID, err := resolveReviewerID()
 		if err != nil {
 			return fmt.Errorf("review: %w", err)
 		}
-		return reviewPR(*prSpec, *cfgPath, *dryRun, *disabled, *toolFailureBlocks, mode, *reasoningEffort, *requireParameters, sink, *recordOut, reviewerID)
+		if cfgErr == nil {
+			st.apply()
+		}
+		return reviewPR(*prSpec, st, cfgErr, *dryRun, *disabled, *toolFailureBlocks, mode, sink, reviewerID)
 	default:
 		fs.Usage()
 		return fmt.Errorf("review: one of --diff or --pr is required")
@@ -215,17 +234,6 @@ func reportWriter(path string) (io.Writer, func(), error) {
 	return f, func() { _ = f.Close() }, nil
 }
 
-// envBool reads a boolean from an environment variable. Only the true
-// spellings are true; an unset or misspelled value stays off rather than
-// failing the run, so a typo cannot turn a setting on by accident.
-func envBool(name string) bool {
-	switch os.Getenv(name) {
-	case "1", "true", "TRUE", "True":
-		return true
-	}
-	return false
-}
-
 // writeRecordOut dumps the run record to recordOut for forensics, best-effort:
 // a failed archive write must never mask the real failure. A run killed
 // mid-flight still returns a partial record, so the call log, per-file
@@ -254,25 +262,6 @@ func writeRecordOut(rec *model.RunRecord, runErr error, recordOut string) {
 	} else {
 		fmt.Fprintf(os.Stderr, "cite: run record archived to %s for forensics\n", recordOut)
 	}
-}
-
-// loadConfig reads the Cite configuration, failing closed on an invalid file
-// (issue #59): a config that fails to parse or validate must never degrade to
-// defaults, because the fallback silently discards the entire roles block —
-// including the explicit per-call timeouts an operator tuned (a configured
-// roles.review.timeout was never in force for exactly this reason). A missing
-// file is the documented "no configuration" case and still yields defaults,
-// but it is logged so runs are honest about which dial was in force.
-func loadConfig(path string) (*config.Config, error) {
-	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-		logToStderr("config %s not found; using built-in defaults", path)
-		return config.Default(), nil
-	}
-	cfg, err := config.Load(path)
-	if err != nil {
-		return nil, fmt.Errorf("config %s is invalid; refusing to fall back to defaults (the whole roles block, including explicit timeouts, would be silently discarded): %w", path, err)
-	}
-	return cfg, nil
 }
 
 func newNonce() string {
@@ -348,7 +337,7 @@ func verifierSuffix(v string) string {
 
 // --- local mode -----------------------------------------------------------
 
-func reviewLocal(diffPath, descPath, cfgPath string, structuredOutput model.StructuredOutputMode, reasoningEffort string, requireParameters bool, sink publisher.Sink) error {
+func reviewLocal(diffPath, descPath string, st *settings, structuredOutput model.StructuredOutputMode, sink publisher.Sink) error {
 	raw, err := os.ReadFile(diffPath)
 	if err != nil {
 		return err
@@ -361,10 +350,7 @@ func reviewLocal(diffPath, descPath, cfgPath string, structuredOutput model.Stru
 		}
 		description = string(b)
 	}
-	cfg, err := loadConfig(cfgPath)
-	if err != nil {
-		return err
-	}
+	cfg := st.Config.Config
 	diff, err := scope.ParseUnifiedDiff(string(raw))
 	if err != nil {
 		return fmt.Errorf("parsing diff: %w", err)
@@ -396,9 +382,13 @@ func reviewLocal(diffPath, descPath, cfgPath string, structuredOutput model.Stru
 	}
 	printInstructionWarnings(warnings)
 
-	modelClient, err := newModelClient(cfg)
+	modelClient, err := newModelClient(st)
 	if err != nil {
 		return err
+	}
+	var related reviewer.RelatedFinder
+	if st.RelatedCode {
+		related = relatedFromDir(".")
 	}
 	r := reviewer.New(reviewer.Options{
 		Cfg:               cfg,
@@ -407,9 +397,9 @@ func reviewLocal(diffPath, descPath, cfgPath string, structuredOutput model.Stru
 		Verifier:          &gitVerifier{dir: "."},
 		Logger:            logToStderr,
 		StructuredOutput:  structuredOutput,
-		ReasoningEffort:   reasoningEffort,
-		RequireParameters: requireParameters,
-		Verify:            verifyEnabled(),
+		ReasoningEffort:   st.ReasoningEffort,
+		RequireParameters: st.RequireParams,
+		Verify:            st.Verify,
 	})
 	rec, err := r.Run(context.Background(), reviewer.Inputs{
 		Manifest:      manifest,
@@ -417,7 +407,7 @@ func reviewLocal(diffPath, descPath, cfgPath string, structuredOutput model.Stru
 		PostImage:     post,
 		PRDescription: description,
 		Nonce:         newNonce(),
-		Related:       relatedFromDir("."),
+		Related:       related,
 	})
 	if err != nil {
 		return err
@@ -477,7 +467,7 @@ type threadFinding struct {
 	Blocks bool `json:"blocks,omitempty"`
 }
 
-func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, structuredOutput model.StructuredOutputMode, reasoningEffort string, requireParameters bool, sink publisher.Sink, recordOut, reviewerID string) error {
+func reviewPR(spec string, st *settings, cfgErr error, dryRun, disabled, toolFailureBlocks bool, structuredOutput model.StructuredOutputMode, sink publisher.Sink, reviewerID string) error {
 	// Issue #59: the repository's opt-out reaches every conclusion site below
 	// as one gate option. Zero value (unset) keeps the fail-closed default.
 	gateOpts := gate.Options{NeutralToolFailure: !toolFailureBlocks}
@@ -492,10 +482,6 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 		return err
 	}
 	repoFull := owner + "/" + repo
-	// Issue #59: load before the run commits to anything review-shaped, but
-	// conclude only once the check run exists, so an invalid config surfaces
-	// as COULD_NOT_EVALUATE on the check run instead of a silent default run.
-	cfg, cfgErr := loadConfig(cfgPath)
 
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
@@ -523,6 +509,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 		// run to defaults — conclude COULD_NOT_EVALUATE, never green.
 		return concludeFailure(ctx, c, checkID, dryRun, gateOpts, model.VerdictCouldNotEvaluate, cfgErr.Error())
 	}
+	cfg := st.Config.Config
 	if disabled {
 		v, reason := gate.DecideDisabled(cfg)
 		title, summary := gate.CheckRunPayload(&model.RunRecord{Samples: 0}, v, reason)
@@ -596,7 +583,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 		diffs[e.Path] = df
 	}
 
-	modelClient, err := newModelClient(cfg)
+	modelClient, err := newModelClient(st)
 	if err != nil {
 		// Fail-closed: conclude COULD_NOT_EVALUATE, never green.
 		return concludeFailure(ctx, c, checkID, dryRun, gateOpts, model.VerdictCouldNotEvaluate, err.Error())
@@ -609,9 +596,9 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 		Verifier:          verifier,
 		Logger:            logToStderr,
 		StructuredOutput:  structuredOutput,
-		ReasoningEffort:   reasoningEffort,
-		RequireParameters: requireParameters,
-		Verify:            verifyEnabled(),
+		ReasoningEffort:   st.ReasoningEffort,
+		RequireParameters: st.RequireParams,
+		Verify:            st.Verify,
 	})
 
 	// Issue #168: each file's review call carries the earlier Cite threads
@@ -644,6 +631,10 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 		}
 	}
 
+	var related reviewer.RelatedFinder
+	if st.RelatedCode {
+		related = relatedFromAPI(ctx, c, owner, repo, pr.HeadSHA)
+	}
 	rec, err := r.Run(ctx, reviewer.Inputs{
 		Manifest:      entries,
 		Diffs:         diffs,
@@ -651,13 +642,13 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 		PRDescription: pr.Body,
 		Nonce:         newNonce(),
 		PriorThreads:  prior,
-		Related:       relatedFromAPI(ctx, c, owner, repo, pr.HeadSHA),
+		Related:       related,
 		Unchanged:     unchanged,
 	})
 	// Forensics first, whatever the run's fate: a failed or killed run still
 	// carries partial results, the call log and usage — exactly what an
 	// operator needs to answer "why did this take so long".
-	writeRecordOut(rec, err, recordOut)
+	writeRecordOut(rec, err, st.RecordOut)
 	runErr := err
 	if err != nil && rec == nil {
 		return concludeFailure(ctx, c, checkID, dryRun, gateOpts, model.VerdictCouldNotEvaluate, err.Error())
@@ -759,7 +750,7 @@ func reviewPR(spec, cfgPath string, dryRun, disabled, toolFailureBlocks bool, st
 	rec.Verdict, rec.VerdictReason = verdict, reason
 	// The forensics record was written before the gate decided; write it
 	// again so the archived copy carries the verdict and its reason.
-	writeRecordOut(rec, runErr, recordOut)
+	writeRecordOut(rec, runErr, st.RecordOut)
 
 	// Surface anchor_invalid drops on the Actions run page (issue #42): the
 	// raw CI log is truncated, ANSI-mangled, and not where a reviewer looks.

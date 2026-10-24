@@ -57,7 +57,8 @@ func itoa(n int) string {
 // response truncates identically on retry" -- is false for this shape.
 func TestCompleteRunawayGenerationIsNotTerminalDeterministic(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+	SetDiagnostics(Diagnostics{TruncatedOut: dir + "/captured.json"})
+	t.Cleanup(func() { SetDiagnostics(Diagnostics{}) })
 
 	h := &runawayHandler{body: runawayBody(4096)}
 	ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
@@ -83,7 +84,8 @@ func TestCompleteRunawayGenerationIsNotTerminalDeterministic(t *testing.T) {
 // the captured bytes are what made this look like runaway *output*.
 func TestRunawayMessageSteersOperatorAwayFromTheCap(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+	SetDiagnostics(Diagnostics{TruncatedOut: dir + "/captured.json"})
+	t.Cleanup(func() { SetDiagnostics(Diagnostics{}) })
 
 	h := &runawayHandler{body: runawayBody(4096)}
 	ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
@@ -141,7 +143,8 @@ func TestCompleteGenuineOverflowStaysDeterministic(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+			SetDiagnostics(Diagnostics{TruncatedOut: dir + "/captured.json"})
+			t.Cleanup(func() { SetDiagnostics(Diagnostics{}) })
 			h := &runawayHandler{body: tc.body}
 			ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
 			defer ts.Close()
@@ -193,7 +196,8 @@ func runawayWithReasoning(trace string) string {
 func completeAgainst(t *testing.T, body string) (*CompletionResponse, error) {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+	SetDiagnostics(Diagnostics{TruncatedOut: dir + "/captured.json"})
+	t.Cleanup(func() { SetDiagnostics(Diagnostics{}) })
 	ts := newTestServer(http.HandlerFunc((&runawayHandler{body: body}).ServeHTTP))
 	t.Cleanup(ts.Close)
 	return (&OpenAICompatClient{BaseURL: ts.URL, Model: "m"}).

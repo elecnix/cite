@@ -6,17 +6,30 @@ import (
 )
 
 // Problem is one validation failure, located by a dotted path into the
-// configuration ("providers.gateway.models[0].cost.input").
+// configuration ("providers.gateway.models[0].cost.input") and, when the load
+// knows them, by the file and line the offending key sits on.
 type Problem struct {
 	Path    string
+	File    string
+	Line    int
 	Message string
 }
 
 func (p Problem) String() string {
-	if p.Path == "" {
-		return p.Message
+	var sb strings.Builder
+	if p.File != "" {
+		sb.WriteString(p.File)
+		if p.Line > 0 {
+			fmt.Fprintf(&sb, ":%d", p.Line)
+		}
+		sb.WriteString(": ")
 	}
-	return p.Path + ": " + p.Message
+	if p.Path != "" {
+		sb.WriteString(p.Path)
+		sb.WriteString(": ")
+	}
+	sb.WriteString(p.Message)
+	return sb.String()
 }
 
 // ValidationError aggregates every problem found in a configuration file.

@@ -6,7 +6,8 @@ ambient key, and a comment budget plus the standard skip list apply. The
 current compatibility profile sets the instruction formats.
 
 When you do want to change something, the file is `.github/cite.yml`. This page
-is the complete v1 surface.
+is the complete v1 surface. A machine-level file accepts the same keys, and a
+run reads it after the repository one ([Operator settings](#operator-settings)).
 
 ## Configuration keys
 
@@ -40,6 +41,128 @@ failed. `capture_wire` is deliberately not a key here. It is a one-run
 debugging switch, the seven keys above are already spoken for, and Cite reads
 a config file from the base ref on every run, which is the wrong place for a
 switch an operator flips while diagnosing one failure.
+
+## Operator settings
+
+A repository file holds policy. The settings that say how a run reaches its
+model and what it writes live under the same schema, and each of them also has
+a flag and an environment variable. They resolve by one ladder, strongest
+first:
+
+1. the command-line flag;
+2. the environment variable;
+3. the configuration files, in the order given, later overriding earlier;
+4. the built-in default.
+
+Environment sits above the files so a one-off `MODEL_ID=… cite review` behaves
+the same way on a machine that has a configuration file.
+
+| Flag | Variable | Key |
+| -- | -- | -- |
+| `--model-id` | `MODEL_ID` | `model_id` |
+| `--model-base-url` | `MODEL_BASE_URL` | `model_base_url` |
+| `--model-api-key` | `MODEL_API_KEY` | `model_api_key` |
+| `--fallback-models` | `CITE_FALLBACK_MODELS` | `fallback_models` |
+| `--debug` / `--no-debug` | `CITE_DEBUG` | `debug` |
+| `--truncated-out` | `CITE_TRUNCATED_OUT` | `truncated_out` |
+| `--capture-wire` / `--no-capture-wire` | `CITE_CAPTURE_WIRE` | `capture_wire` |
+| `--capture-dir` | `CITE_CAPTURE_DIR` | `capture_dir` |
+| `--capture-max-bytes` | `CITE_CAPTURE_MAX_BYTES` | `capture_max_bytes` |
+| `--verify` / `--no-verify` | `CITE_VERIFY` | `verify` |
+| `--related-code` / `--no-related-code` | `CITE_RELATED_CODE` | `related_code` |
+| `--record-out` | `CITE_RECORD_OUT` | `record_out` |
+| `--structured-output` | `CITE_STRUCTURED_OUTPUT` | `structured_output` |
+| `--reasoning-effort` | `CITE_REASONING_EFFORT` | `reasoning_effort` |
+| `--require-parameters` | `CITE_REQUIRE_PARAMETERS` | `require_parameters` |
+
+The boolean settings take two flags, because a file may set a value that the
+command line wants to overturn. A boolean variable counts as on unless it is
+empty or one of `0`, `false`, `off` or `no`, which is how the variables behaved
+before the flags existed. `CITE_REQUIRE_PARAMETERS` is the exception: only `1`,
+`true`, `TRUE` and `True` turn it on, and it combines with the file's
+`require_parameters` key rather than replacing it, so a repository that requires
+the field keeps that requirement when the action passes its own default-off
+input.
+
+`--model-id` sets the id that the client sends. It is not the `model:` key: that
+key says which model a role resolves to for the capability table, while
+`--model-id` says what crosses the wire. A run that sets one and not the other
+can disagree with the file, and the GitHub Action's `model_id` input sets this
+flag's variable.
+
+### The file list
+
+`--config` takes a file, and the flag may appear more than once:
+
+```
+cite review --pr owner/repo#42 --config .github/cite.yml --config ~/.config/cite/config.yml
+```
+
+`CITE_CONFIG` supplies the same list, separated by the platform's path
+separator, and a `--config` flag takes precedence over it. With neither, a run
+reads `.github/cite.yml` and then `~/.config/cite/config.yml` when that file
+exists. Passing `--config` at all replaces the default list, so a wrapper reads
+exactly the files it names and nothing arrives from the home directory behind
+its back. In CI the action passes its own `--config`, which is the file it
+fetched from the base ref, so a runner never reads a home directory.
+
+Cite skips a file that is not on disk, which is the same "no configuration"
+case as before.
+
+### Merge rules
+
+- A scalar in a later file replaces the earlier value.
+- A mapping merges per entry and per field within an entry. A later file that
+  names one provider leaves the other providers alone.
+- A sequence replaces the earlier one wholesale. A file that cannot shorten a
+  list cannot undo an earlier one.
+
+### Validation
+
+Cite checks each file against the schema on its own. An unknown key, a duplicate
+key and a type error fail with the file's name and the line that holds the
+offending key. Cite validates the merged result once more, because a
+combination can be invalid while each part is fine. A `fallback` entry whose provider only the other file
+declares is valid, and a `max_comments` of 30 is not valid whichever file set it.
+
+### Provenance
+
+Layering has one cost: a value can come from a file nobody remembers writing.
+`--effective` and one log line make that cost visible.
+
+```
+cite validate --config .github/cite.yml --config ~/.config/cite/config.yml --effective
+```
+
+prints every key of the merged result with the file it came from, one key per
+line. Where no file set a value, the line says `built-in default`. Where a flag
+or a variable set one, the line names that source instead. Cite never prints a
+credential: an `api_key` line shows the reference, or says the value is a
+literal, and a header value appears as `[masked]`.
+
+A run also prints one line whenever a file other than the first one changes a
+key that decides the verdict:
+
+```
+config override: max_comments: 4 -> 8 (from /home/you/.config/cite/config.yml; ...)
+```
+
+Cite applies the value, because the file is the operator's own. A local run
+that judges a diff differently from CI has to say so out loud.
+
+### Secrets
+
+`model_api_key` accepts a pointer to a secret and nothing else. An operator
+file is often a dotfile, and a dotfiles repository publishes the contents of
+every file it tracks:
+
+```yaml
+model_api_key: $OPENROUTER_API_KEY   # $VAR, ${VAR} or !command
+```
+
+Validation rejects a literal in `model_api_key`. The
+`providers.<name>.api_key` key keeps every expression form, literal included,
+because provider blocks predate this rule.
 
 ## Providers
 
@@ -274,11 +397,14 @@ produces garbage that looks like a parse bug.
 
 ```
 cite validate
+cite validate .github/cite.yml ~/.config/cite/config.yml
 ```
 
-Schema-checks `.github/cite.yml`: unknown keys, bad enum values, `max_comments`
-above the hard cap, unresolvable credential expressions. It
-exits non-zero on any problem and prints what it found.
+Schema-checks each file and then the merged result: unknown keys, bad enum
+values, `max_comments` above the hard cap, unresolvable credential expressions.
+It exits non-zero on any problem and prints what it found, with the file and the
+line. `--effective` prints the merged configuration with its provenance
+([above](#provenance)).
 
 It does **not** check `paths_ignore` globs. A glob is not a schema error, and
 whether a pattern matches anything depends on the pull request rather than on
@@ -327,13 +453,11 @@ still fail the step. A failed fetch is never treated as "no config".
 ## What is deliberately absent
 
 - No severity thresholds. There is no severity scale; blocking is computed in
-## What is deliberately absent
-
-- No severity thresholds. There is no severity scale; blocking is computed in
   code from verifiable fields ([noise.md](noise.md)).
 - No prompt overrides. Prompts are versioned files in this repository, changed
   only with a benchmark delta ([CONTRIBUTING.md](../CONTRIBUTING.md)).
 - No suppressions file in v1. A file that does not exist cannot rot; dismissals
   live in a ledger governed by the dispute protocol
   ([security.md](security.md#the-dispute-protocol)).
-- No `with:` inputs beyond the API key. The happy path needs none.
+- No action input for the operator settings. The happy path runs without any
+  input, and an operator who wants one of them sets a flag or a variable.

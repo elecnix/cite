@@ -56,11 +56,11 @@ Usage:
 	for _, n := range names {
 		switch n {
 		case "review":
-			fmt.Fprintln(os.Stderr, "  cite review  [--diff FILE | --pr owner/repo#N] [--dry-run]")
+			fmt.Fprintln(os.Stderr, "  cite review  [--diff FILE | --pr owner/repo#N] [--config FILE]... [--dry-run]")
 		case "doctor":
 			fmt.Fprintln(os.Stderr, "  cite doctor  [path...]")
 		case "validate":
-			fmt.Fprintln(os.Stderr, "  cite validate [config-file]")
+			fmt.Fprintln(os.Stderr, "  cite validate [config-file]... [--effective]")
 		case "soak":
 			fmt.Fprintln(os.Stderr, "  cite soak    <cases-dir>")
 		default:

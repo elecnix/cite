@@ -44,7 +44,7 @@ fallback:
   - gateway/model-x      # duplicate of the provider's first model
   - other/backup-model   # also duplicate via other
 `)
-	legs := canaryLegs(cfg)
+	legs := canaryLegs(cfg, &settings{})
 	if len(legs) != 2 {
 		t.Fatalf("want 2 deduped legs, got %d: %+v", len(legs), legs)
 	}
@@ -56,21 +56,23 @@ fallback:
 	}
 }
 
-func TestCanaryLegsBareFallbackUsesEnv(t *testing.T) {
-	t.Setenv("MODEL_BASE_URL", "https://env.example/v1")
+func TestCanaryLegsBareFallbackUsesThePrimaryEndpoint(t *testing.T) {
+	// A bare model id has no provider of its own, so it is exercised against the
+	// endpoint and the credential reference the primary model resolved to.
 	cfg := testCfg(t, `
 fallback:
   - bare-model-id
 `)
-	legs := canaryLegs(cfg)
+	st := &settings{ModelBaseURL: "https://primary.example/v1", ModelAPIKey: "$PRIMARY_KEY"}
+	legs := canaryLegs(cfg, st)
 	if len(legs) != 1 {
 		t.Fatalf("want 1 leg, got %d", len(legs))
 	}
-	if legs[0].baseURL != "https://env.example/v1" {
-		t.Fatalf("env base url not used: %+v", legs[0])
+	if legs[0].baseURL != "https://primary.example/v1" {
+		t.Fatalf("primary base url not used: %+v", legs[0])
 	}
-	if legs[0].apiKey != model.CredentialExpr("$MODEL_API_KEY") {
-		t.Fatalf("expected $MODEL_API_KEY credential expr: %+v", legs[0])
+	if legs[0].apiKey != model.CredentialExpr("$PRIMARY_KEY") {
+		t.Fatalf("expected the resolved credential expr: %+v", legs[0])
 	}
 }
 
