@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -168,8 +169,23 @@ paths_ignore: ["docs/**"]
 	if len(got.Overrides) != 2 {
 		t.Fatalf("overrides = %d (%+v), want 2: max_comments and paths_ignore", len(got.Overrides), got.Overrides)
 	}
-	if got.Overrides[0].Key != "max_comments" || got.Overrides[0].Before != "4" || got.Overrides[0].After != "8" || got.Overrides[0].File != paths[1] {
-		t.Errorf("override 0 = %+v", got.Overrides[0])
+	// The list is sorted by key, not left in map order: a run's log lines are
+	// the operator's only view of a local-versus-CI difference, and they have to
+	// come out the same on every run.
+	if !sort.SliceIsSorted(got.Overrides, func(i, j int) bool { return got.Overrides[i].Key < got.Overrides[j].Key }) {
+		t.Errorf("overrides are not sorted by key: %+v", got.Overrides)
+	}
+	byKey := map[string]Override{}
+	for _, o := range got.Overrides {
+		byKey[o.Key] = o
+	}
+	if o := byKey["max_comments"]; o.Before != "4" || o.After != "8" || o.File != paths[1] {
+		t.Errorf("max_comments override = %+v, want 4 -> 8 from %s", o, paths[1])
+	}
+	// paths_ignore was absent before the second file, so the line states the
+	// built-in default it replaced rather than an empty value.
+	if o := byKey["paths_ignore"]; o.Before != "[]" || o.After != "[docs/**]" {
+		t.Errorf("paths_ignore override = %+v, want [] -> [docs/**]", o)
 	}
 
 	// A single file has nothing to override: the repository file setting a
