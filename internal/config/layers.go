@@ -278,14 +278,20 @@ func verdictOverrides(merged, next map[string]interface{}, file string) []Overri
 			sub = strings.TrimPrefix(sub, ".")
 			nleaf := valueAt(nv, sub)
 			bleaf := valueAt(before, sub)
-			if sameValue(nleaf, bleaf) {
+			// Where the earlier files say nothing, the value the key replaces is
+			// the built-in default, not "nothing". Restating a default is not a
+			// change, and a line claiming the run "judges the diff differently"
+			// because a file spelled out a default would be a false alarm on
+			// every run that does it.
+			b := defaultRender(p)
+			if bleaf != nil {
+				b = renderValue(bleaf)
+			}
+			after := renderValue(nleaf)
+			if b == after {
 				continue
 			}
-			b := renderValue(bleaf)
-			if bleaf == nil {
-				b = defaultRender(p)
-			}
-			out = append(out, Override{Key: p, File: file, Before: b, After: renderValue(nleaf)})
+			out = append(out, Override{Key: p, File: file, Before: b, After: after})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })

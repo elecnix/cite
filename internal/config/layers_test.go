@@ -199,6 +199,46 @@ paths_ignore: ["docs/**"]
 	}
 }
 
+// Restating a built-in default is not a change, and must not print the line that
+// says a local run judges the diff differently. Changing one away from its
+// default still does.
+func TestLoadFilesDoesNotReportRestatedDefaults(t *testing.T) {
+	restated, err := LoadFiles(writeFiles(t,
+		"repo.yml", "max_comments: 4\n",
+		"home.yml", "nits: false\nmax_comments: 10\n",
+	))
+	if err != nil {
+		t.Fatalf("LoadFiles: %v", err)
+	}
+	for _, o := range restated.Overrides {
+		if o.Key == "nits" {
+			t.Errorf("nits restated its default and was reported as an override: %+v", o)
+		}
+		// 10 is the built-in default too, so max_comments 4 -> 10 does change
+		// something and belongs in the list.
+		if o.Key == "max_comments" && (o.Before != "4" || o.After != "10") {
+			t.Errorf("max_comments override = %+v", o)
+		}
+	}
+	if len(restated.Overrides) != 1 {
+		t.Errorf("overrides = %+v, want just max_comments", restated.Overrides)
+	}
+
+	moved, err := LoadFiles(writeFiles(t,
+		"repo.yml", "max_comments: 4\n",
+		"home.yml", "nits: true\n",
+	))
+	if err != nil {
+		t.Fatalf("LoadFiles: %v", err)
+	}
+	if len(moved.Overrides) != 1 || moved.Overrides[0].Key != "nits" {
+		t.Fatalf("overrides = %+v, want nits", moved.Overrides)
+	}
+	if o := moved.Overrides[0]; o.Before != "false" || o.After != "true" {
+		t.Errorf("nits override = %+v, want false -> true", o)
+	}
+}
+
 // A file that is not on disk is skipped, so a machine with no user config and
 // a repository with no .github/cite.yml both behave as they do today.
 func TestLoadFilesSkipsMissingFiles(t *testing.T) {
