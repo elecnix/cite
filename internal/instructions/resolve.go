@@ -68,8 +68,7 @@ func (r *ResolvedInstructions) Usage() []model.InstructionUsage {
 	return out
 }
 
-// Warnings returns the disclosed observations gathered during resolution,
-// including truncation disclosures.
+// Warnings returns the non-fatal observations gathered during resolution.
 func (r *ResolvedInstructions) Warnings() []Warning {
 	out := make([]Warning, len(r.warnings))
 	copy(out, r.warnings)

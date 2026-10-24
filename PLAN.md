@@ -254,7 +254,7 @@ answer for any file.
 - `.github/AGENTS.md` versus root `AGENTS.md`: root is repository-wide; `.github/AGENTS.md` is
   the nearest file for paths under `.github/` only.
 
-### Both deliberate divergences
+### The deliberate divergence
 
 **1. Instructions come from the base ref, never the pull request head.** The reference product
 moved to the head branch in July 2026 so that authors can iterate on instructions without merging.
@@ -263,12 +263,10 @@ For a tool that blocks a merge, that convenience is a vulnerability: a pull requ
 pull request the author is a stranger. When a pull request modifies an instruction file, the
 review body says so in one line and specifies the version used.
 
-**2. Truncation is disclosed in either direction, never silent.** The reference product capped
-instruction files at 4,000 characters until that cap was removed in June 2026. So there is nothing
-to diverge from today, and this is kept as a *pattern* rather than a claim: if a cap returns, Cite
-reads the whole file and warns in the resolution table that another tool would have seen only the
-first N characters. Never silently truncate, and never silently un-truncate: tell a team their
-instruction file is ambiguous between two tools.
+**2. Instruction files are read whole.** The reference product capped instruction files at 4,000
+characters until that cap was removed in June 2026, and nothing caps them now. Cite reads every
+file whole, so every reader of an instruction file sees the same content and there is no
+truncation to disclose.
 
 ### Instructions are evidence, never a basis
 
@@ -318,7 +316,7 @@ The tiers live in `CONFORMANCE.md`, which carries that date:
   Each has a fixture in the test suite, and a change to any of them is a breaking change.
 - **Best-effort:** behaviour the vendor has never documented, including overlapping glob precedence and whether
   a glob matches changed files or the tree. Cite picks an answer and prints it in the `doctor` output.
-- **Declared divergence:** the two above, plus any future case where copying the vendor would make
+- **Declared divergence:** the case above, plus any future case where copying the vendor would make
   a merge gate less safe. Divergences live in one page, `docs/instructions.md`, each with the
   reason. A divergence that is not written down is a bug.
 - **Out of scope:** anything configured only in a web UI rather than in a file or an export. It cannot be

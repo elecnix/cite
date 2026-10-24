@@ -10,10 +10,9 @@
 // these names, and a tool that reads them has to spell them the way they
 // are on disk.
 //
-// Truncation is disclosed, never silent, in either direction: Cite reads
-// whole files, and emits a warning entry when a file exceeds the 4,000
-// character cap another tool used to apply, noting what that tool would
-// have seen (deliberate divergence §5).
+// Instruction files are read whole. The 4,000-character cap other tools
+// applied to them was removed in mid-2026, so no reader sees a truncated
+// view any more and Cite has no divergence to disclose.
 //
 // Applicability triage is plumbing-only here: the Classifier interface and
 // a NoopClassifier. The LLM-backed classifier arrives later; results are
@@ -81,8 +80,9 @@ func (NoopClassifier) Classify(_ string, sections []Section) ([]ClassifiedSectio
 	return out, nil
 }
 
-// Warning is a disclosed, non-fatal observation about resolution — most
-// importantly the truncation disclosure (§5 divergence 2).
+// Warning is a disclosed, non-fatal observation about resolution — an
+// unreadable file, or a malformed settings file, that leaves the rest of
+// resolution intact.
 type Warning struct {
 	File    string
 	Message string
