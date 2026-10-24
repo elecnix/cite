@@ -92,7 +92,7 @@ jobs:
           # truthfully as COULD_NOT_EVALUATE), the check run concludes
           # "neutral" instead of "failure", so silence from a broken judge
           # does not veto the merge. A real finding (FOUND) always concludes
-          # failure and blocks, unchanged. The pin above is v0.14.0. The first
+          # failure and blocks, unchanged. The pin above is v0.15.1. The first
           # release carrying the tool_failure_blocks input was v0.8.0 (issue
           # #59 landed on main after v0.6.0), so the input takes effect as
           # written.
