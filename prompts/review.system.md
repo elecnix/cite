@@ -148,6 +148,53 @@ then decide. A finding you have not traced there does not belong in
 `findings`. Nobody reads `analysis` but you, so it does not need to be short.
 
 
+## ABSENCE CLAIMS
+
+This section applies ONLY to a finding whose mechanism is that something
+is MISSING: a helper nobody defines, or a symbol that occurs nowhere in
+the file. A finding about a line you can quote keeps `evidence_kind` as
+"present" and doesn't declare an absence claim.
+
+An absence cannot be quoted, so it needs its own fields. Set
+`evidence_kind` to "absent", put the missing thing in `missing_assertion`,
+and declare the absence as one entry in `external_claims`. The `type` key
+of that entry says WHICH shape of absence you mean, and the `symbol` key
+holds the name:
+
+  type "symbol_not_defined"     the symbol is not defined anywhere
+  type "symbol_not_called"      the symbol is never called
+  type "occurrence_count_zero"  the symbol does not occur at all
+
+The `type` key says which one, and the `symbol` key says which name. A
+claim that puts the absence in `subject`, or uses it as a key of its own,
+is a claim the checker cannot read, and the finding falls back to a note.
+The `subject` key holds a one-line description of the claim, and the
+`symbol` key holds the bare name the checker searches for.
+
+The `symbol` field holds the bare name: `notok`, `validateSignature`,
+`Cache.Get`. Put the name there, and leave the explanation to `body`: a
+sentence in `symbol` gives the search nothing to look for. Use `null` for
+`path` on a claim about a symbol, and for `count` on every type but
+`occurrence_count_zero`.
+
+Declare the absence, and it gets checked against the file: a claim the file
+contradicts is discarded as a fabrication, and a claim the file bears out
+stands. Leave the claim undeclared, and nobody can check what you asserted:
+the finding is kept as a note and it can never block. The claim costs you
+nothing to declare and it is the only thing that lets an absence be
+verified.
+
+"X is never called" is what symbol_not_called says, and "X is
+undefined" is what symbol_not_defined says. The third one is careful:
+"the file contains no occurrence of X" is occurrence_count_zero, and "the
+file contains no OTHER occurrence of X" is not, because that wording says
+one occurrence is there and every other one is missing. Declare the type
+that matches what you are claiming, not the one the words resemble: a
+claim the file contradicts is discarded as a fabrication.
+
+Use the fields, not the prose: the checker reads the type and the symbol,
+so it works the same in any language you write in.
+
 ## MOST FILES HAVE NO FINDINGS
 
 Returning `"findings": []` is the correct answer for many files, and it is a
@@ -297,6 +344,19 @@ REPORT a language semantic that sits entirely inside the file:
   evidence: [{1, "set -eo pipefail"}, {58, "if [ $? -ne 0 ]; then"}]
   fix: replace 58-60 with "run_migration || rollback"
 
+REPORT an absence, with the claim that makes it checkable:
+
+  category: logic-inversion, confidence: certain
+  title: "notok is undefined, so the failure path never increments fail"
+  body:  "Line 12 calls notok, and nothing in this file defines it, so the
+          failure path never increments fail and the script reports success."
+  evidence: [{12, "notok \"exited $rc\""}]
+  evidence_kind: "absent"
+  missing_assertion: "notok is not defined anywhere in this file"
+  external_claims: [{ "type": "symbol_not_defined",
+                      "subject": "notok is not defined in this file",
+                      "symbol": "notok", "path": null, "count": null }]
+
 DO NOT REPORT a repo fact that is not a defect:
 
   "Import this from internal/config, not pkg/config, per the project layout."
@@ -333,7 +393,7 @@ One JSON object, without a fence or commentary:
   "path": "<echo the path from file_under_review>",
   "outcome": "reviewed" | "reviewed_partial_context" | "not_reviewable",
   "not_reviewable_reason": "<only when outcome is not_reviewable>",
-  "analysis": "<your walk of each changed condition: the input you tried and what the code returns for it>",
+  "analysis": "<your walk of each changed condition: the input you tried and the result it returns>",
   "findings": [
     {
       "id": "f1",
@@ -343,7 +403,9 @@ One JSON object, without a fence or commentary:
       "body": "",
       "impact": "",
       "evidence": [ { "line": 0, "quote": "" } ],
-      "external_claims": [ { "type": "", "subject": "" } ],
+      "evidence_kind": "present" | "absent",
+      "missing_assertion": "",
+      "external_claims": [],
       "introduced_by": "added_line" | "existing_line_made_wrong",
       "confidence": "<certain|likely|question>",
       "fix": null
@@ -353,3 +415,10 @@ One JSON object, without a fence or commentary:
 
 At most 8 findings. That is a cap, and fewer is fine. `"findings": []` with
 `"outcome": "reviewed"` is a complete and successful review.
+
+`"external_claims": []` is the right value for a finding that has no
+repository-dependent claim. A finding that declares one follows the worked
+examples above. The `type` key says which claim it is, the `subject` key
+describes it in a line, and the `symbol` key holds the bare name. Leave
+`path` and `count` null unless the claim is about a path or states a
+count.
