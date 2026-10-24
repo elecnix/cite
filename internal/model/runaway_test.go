@@ -55,10 +55,18 @@ func itoa(n int) string {
 // generation, not a capacity overflow. It must not be reported as the terminal
 // deterministic failure, because the premise behind that class -- "a truncated
 // response truncates identically on retry" -- is false for this shape.
-func TestCompleteRunawayGenerationIsNotTerminalDeterministic(t *testing.T) {
-	dir := t.TempDir()
+// captureTruncationIn points the truncated-response capture at dir for the rest
+// of the test. One call, so the seven tests that need it carry one line of
+// setup each rather than the same two.
+func captureTruncationIn(t *testing.T, dir string) {
+	t.Helper()
 	SetDiagnostics(Diagnostics{TruncatedOut: dir + "/captured.json"})
 	t.Cleanup(func() { SetDiagnostics(Diagnostics{}) })
+}
+
+func TestCompleteRunawayGenerationIsNotTerminalDeterministic(t *testing.T) {
+	dir := t.TempDir()
+	captureTruncationIn(t, dir)
 
 	h := &runawayHandler{body: runawayBody(4096)}
 	ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
@@ -84,8 +92,7 @@ func TestCompleteRunawayGenerationIsNotTerminalDeterministic(t *testing.T) {
 // the captured bytes are what made this look like runaway *output*.
 func TestRunawayMessageSteersOperatorAwayFromTheCap(t *testing.T) {
 	dir := t.TempDir()
-	SetDiagnostics(Diagnostics{TruncatedOut: dir + "/captured.json"})
-	t.Cleanup(func() { SetDiagnostics(Diagnostics{}) })
+	captureTruncationIn(t, dir)
 
 	h := &runawayHandler{body: runawayBody(4096)}
 	ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
@@ -143,8 +150,7 @@ func TestCompleteGenuineOverflowStaysDeterministic(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			SetDiagnostics(Diagnostics{TruncatedOut: dir + "/captured.json"})
-			t.Cleanup(func() { SetDiagnostics(Diagnostics{}) })
+			captureTruncationIn(t, dir)
 			h := &runawayHandler{body: tc.body}
 			ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
 			defer ts.Close()
@@ -196,8 +202,7 @@ func runawayWithReasoning(trace string) string {
 func completeAgainst(t *testing.T, body string) (*CompletionResponse, error) {
 	t.Helper()
 	dir := t.TempDir()
-	SetDiagnostics(Diagnostics{TruncatedOut: dir + "/captured.json"})
-	t.Cleanup(func() { SetDiagnostics(Diagnostics{}) })
+	captureTruncationIn(t, dir)
 	ts := newTestServer(http.HandlerFunc((&runawayHandler{body: body}).ServeHTTP))
 	t.Cleanup(ts.Close)
 	return (&OpenAICompatClient{BaseURL: ts.URL, Model: "m"}).
