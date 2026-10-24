@@ -276,7 +276,10 @@ func TestSettingsReviewSelectionInstructions(t *testing.T) {
 	}
 }
 
-func TestTruncationWarningDisclosed(t *testing.T) {
+// A long instruction file is read whole and warns about nothing. No reader
+// caps instruction files any more, so there is no second view to disclose
+// (issue #210).
+func TestLongInstructionFileReadWholeWithoutWarning(t *testing.T) {
 	long := "## Big\n" + strings.Repeat("x", 5000) + "\n"
 	tree := ft(map[string]string{"AGENTS.md": long})
 	r := mustResolveWithClassifier(t, nil, tree, "a.go")
@@ -284,22 +287,23 @@ func TestTruncationWarningDisclosed(t *testing.T) {
 	// Whole file read: the section text carries every character.
 	secs := r.For("a.go")
 	if len(secs) != 1 || len(secs[0].Text) < 5000 {
-		t.Fatalf("never truncate silently: expected full text, got %d chars", len(secs[0].Text))
+		t.Fatalf("expected the whole file: got %d chars", len(secs[0].Text))
 	}
-	found := false
-	for _, w := range r.Warnings() {
-		if w.File == "AGENTS.md" && strings.Contains(w.Message, "first 4000 characters") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("truncation must be disclosed with the cap note: %+v", r.Warnings())
+	if w := r.Warnings(); len(w) != 0 {
+		t.Fatalf("a long instruction file warns about nothing: %+v", w)
 	}
 
-	// Under the limit: no warning.
-	small := mustResolve(t, ft(map[string]string{"AGENTS.md": "## S\nshort\n"}), "a.go")
-	if len(small.Warnings()) != 0 {
-		t.Fatalf("no warning below the cap: %+v", small.Warnings())
+	// A long file referenced from .vscode/settings.json is quiet too.
+	settings := ft(map[string]string{
+		".vscode/settings.json": `{
+		  "github.copilot.chat.reviewSelection.instructions": [
+		    {"file": "guidelines/review.md"}
+		  ]
+		}`,
+		"guidelines/review.md": long,
+	})
+	if w := mustResolve(t, settings, "a.go").Warnings(); len(w) != 0 {
+		t.Fatalf("a long settings-referenced file warns about nothing: %+v", w)
 	}
 }
 

@@ -95,7 +95,6 @@ down is a bug.
 | Divergence | Reason |
 | -- | -- |
 | Instruction files are read from the **base ref**, never the pull request head | A pull request that edits an instruction file would otherwise rewrite the reviewer's own rules before it reads them, on fork pull requests authored by a stranger. See docs/instructions.md and docs/security.md (I3). |
-| **Truncation is disclosed, never silent, in either direction** | Never silently truncate an instruction file, and never silently un-truncate one. If a length cap applies, the resolution table says so and names how much another reader would have missed. |
 
 ## Tier 4: Out of scope
 

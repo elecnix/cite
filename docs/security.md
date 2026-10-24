@@ -82,7 +82,7 @@ from the pull request head or the merge ref, so consumer workflows do not
 hand-roll the fetch and cannot get the ref wrong.
 
 This is also why instruction files are read from the base ref
-([instructions.md](instructions.md#the-two-deliberate-divergences)): a pull
+([instructions.md](instructions.md#the-deliberate-divergence)): a pull
 request that edits an instruction file must not rewrite the reviewer's own rules
 before it reads them.
 

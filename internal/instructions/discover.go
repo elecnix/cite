@@ -20,11 +20,6 @@ const (
 	rankSettings       = 7 // .vscode/settings.json reviewSelection.instructions
 )
 
-// truncationLimit is the cap another tool applied to instruction files until
-// mid-2026. Cite reads whole files but discloses when a file exceeds it,
-// noting what that other tool would have seen (§5 divergence 2).
-const truncationLimit = 4000
-
 type scopeKind int
 
 const (
@@ -77,9 +72,6 @@ func discover(tree Tree) ([]sourceSpec, []Warning, error) {
 		if err != nil || !ok {
 			warns = append(warns, Warning{File: p, Message: readErrMessage(p, ok, err)})
 			return nil, false
-		}
-		if len(b) > truncationLimit {
-			warns = append(warns, truncationWarning(p, len(b)))
 		}
 		return b, true
 	}
@@ -256,13 +248,6 @@ func readErrMessage(p string, ok bool, err error) string {
 	return "unreadable; skipped"
 }
 
-func truncationWarning(p string, size int) Warning {
-	return Warning{
-		File:    p,
-		Message: fmt.Sprintf("%s is %d characters; Cite reads the whole file, but another tool capped at %d would have seen only the first %d characters.", p, size, truncationLimit, truncationLimit),
-	}
-}
-
 // settingsFile is the parsed subset of .vscode/settings.json Cite honours.
 type settingsFile struct {
 	found    bool
@@ -364,9 +349,6 @@ func (s *settingsFile) virtualContent(tree Tree) (string, []Warning) {
 				continue
 			}
 			body = string(raw)
-			if len(raw) > truncationLimit {
-				warns = append(warns, truncationWarning(e.file, len(raw)))
-			}
 		}
 		if body == "" {
 			continue

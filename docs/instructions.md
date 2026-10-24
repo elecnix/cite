@@ -49,13 +49,13 @@ silently would be the wrong move, so Cite specifies its answer here and
 - **`.github/AGENTS.md` versus root `AGENTS.md`:** root is repository-wide, and
   `.github/AGENTS.md` is the nearest file only for paths under `.github/`.
 
-## Both deliberate divergences
+## The deliberate divergence
 
 Compatibility is promised for inputs, not behaviour. Where copying an existing
 tool's behaviour would make a merge gate less safe, Cite diverges in writing,
 with the reason.
 
-### 1. Instructions come from the base ref, never the pull request head
+### Instructions come from the base ref, never the pull request head
 
 Reading instruction files from the head branch lets authors iterate without
 merging. For a merge gate, that convenience is a vulnerability: a
@@ -68,13 +68,11 @@ files, is read from the base ref; the head diff is data only
 When a pull request modifies an instruction file, the review body says so in one
 line and names the version used.
 
-### 2. Truncation is disclosed, never silent, in either direction
+### Instruction files are read whole
 
-Never silently truncate an instruction file, and never silently un-truncate one.
-If a length cap ever applies, Cite reads the whole file and warns in the
-resolution table that other tools would have seen only the first N characters.
-Cite tells a team their instruction file behaves ambiguously between two readers
-of it instead of letting each behave differently in silence.
+The tools Cite compares against stopped capping instruction files at 4,000
+characters in mid-2026, and nothing caps them now. Cite reads every file whole,
+so every reader sees the same content and there is no truncation to disclose.
 
 ## Instructions are evidence and not a basis
 
@@ -132,7 +130,7 @@ date:
    change.
 2. **Best-effort** covers behaviour no prior reader ever documented. Cite picks an
    answer, documents it, and prints it via `cite doctor`.
-3. **Declared divergence** covers the two cases above, plus anything future where
+3. **Declared divergence** covers the case above, plus anything future where
    copying would make the merge gate less safe. This page records each divergence
    with its reason.
 4. **Out of scope** covers settings that exist only in a web UI with no file to
