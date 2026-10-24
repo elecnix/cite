@@ -68,9 +68,14 @@ func runReview(args []string) error {
 	default:
 		return err
 	}
-	mode, err := model.ParseStructuredOutputMode(st.StructuredOutput)
-	if err != nil && cfgErr == nil {
-		cfgErr = fmt.Errorf("review: %w", err)
+	// Nothing reads the zeroed settings when the load failed: the mode is parsed
+	// only for a run that has them.
+	var mode model.StructuredOutputMode
+	if cfgErr == nil {
+		var modeErr error
+		if mode, modeErr = model.ParseStructuredOutputMode(st.StructuredOutput); modeErr != nil {
+			cfgErr = fmt.Errorf("review: %w", modeErr)
+		}
 	}
 	sink, closeReports, err := reportFmt.build()
 	if err != nil {

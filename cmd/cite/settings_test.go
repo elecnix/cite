@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -137,6 +138,23 @@ func TestBooleanSettingCanBeTurnedOffFromTheCommandLine(t *testing.T) {
 	}
 	if st.Verify {
 		t.Error("CITE_VERIFY=off did not turn verify off")
+	}
+}
+
+// A flag typed after a config path is reported, not read as a file name: the
+// flag package stops at the first positional argument.
+func TestValidateRejectsAFlagAfterAFile(t *testing.T) {
+	paths := writeFiles(t, "cfg.yml", "max_comments: 3\n")
+	err := runValidate([]string{paths[0], "--effective"})
+	if err == nil {
+		t.Fatal("a flag after a file path must be reported, not read as a file")
+	}
+	if !strings.Contains(err.Error(), "--effective") {
+		t.Fatalf("the error does not name the misplaced flag: %v", err)
+	}
+	// The documented order works.
+	if err := runValidate([]string{"--effective", paths[0]}); err != nil {
+		t.Fatalf("flags before the file must work: %v", err)
 	}
 }
 

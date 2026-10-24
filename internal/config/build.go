@@ -77,8 +77,8 @@ func buildOperatorSettings(c *Config, m map[string]interface{}) {
 	if v, ok := m["model_api_key"]; ok {
 		c.ModelAPIKey = asString(v)
 	}
-	if v, ok := m["fallback_models"]; ok {
-		c.FallbackModels = stringSlice(v)
+	if v, ok := m["fallback_model_ids"]; ok {
+		c.FallbackModelIDs = stringSlice(v)
 	}
 	if v, ok := m["capture_wire"]; ok {
 		if b, ok := v.(bool); ok {

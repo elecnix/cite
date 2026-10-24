@@ -209,10 +209,14 @@ type Config struct {
 	// environment variable. The zero value means "not set here", which is what
 	// lets the caller's ladder tell an unset key from one set to the value that
 	// happens to be its default.
-	ModelID          string
-	ModelBaseURL     string
-	ModelAPIKey      string
-	FallbackModels   []string
+	ModelID      string
+	ModelBaseURL string
+	ModelAPIKey  string
+	// FallbackModelIDs is the action's fallback_model_ids list: model ids at the
+	// primary endpoint, tried before the `fallback` chain. A bare id in
+	// `fallback` cannot express this once the file declares providers, because
+	// every reference there must resolve to one.
+	FallbackModelIDs []string
 	CaptureWire      *bool
 	CaptureDir       string
 	CaptureMaxBytes  int

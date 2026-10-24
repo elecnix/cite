@@ -96,13 +96,29 @@ const (
 // from the home directory.
 type configFlag struct {
 	paths []string
+	// fromFlag records that --config named at least one file, so the list a
+	// positional argument supplied is reported as an argument rather than as a
+	// flag nobody typed.
+	fromFlag bool
 }
 
 func (c *configFlag) String() string { return strings.Join(c.paths, string(os.PathListSeparator)) }
 
 func (c *configFlag) Set(v string) error {
+	if err := c.add(v); err != nil {
+		return fmt.Errorf("--config: %w", err)
+	}
+	c.fromFlag = true
+	return nil
+}
+
+// addArgument records one file named as a positional argument, the form
+// `cite validate .github/cite.yml` uses.
+func (c *configFlag) addArgument(v string) error { return c.add(v) }
+
+func (c *configFlag) add(v string) error {
 	if strings.TrimSpace(v) == "" {
-		return fmt.Errorf("--config needs a file path")
+		return fmt.Errorf("needs a file path")
 	}
 	c.paths = append(c.paths, v)
 	return nil
@@ -110,8 +126,11 @@ func (c *configFlag) Set(v string) error {
 
 // resolve returns the files to read, in order, and where the list came from.
 func (c *configFlag) resolve() ([]string, string) {
-	if len(c.paths) > 0 {
+	if c.fromFlag && len(c.paths) > 0 {
 		return c.paths, "flag --config"
+	}
+	if len(c.paths) > 0 {
+		return c.paths, "argument"
 	}
 	if v := strings.TrimSpace(os.Getenv(configListEnvVar)); v != "" {
 		return filepath.SplitList(v), "env:" + configListEnvVar
@@ -271,9 +290,11 @@ func newOperatorFlags(fs *flag.FlagSet, groups flagGroup) *operatorFlags {
 type settings struct {
 	Files []string
 
-	ModelID        string
-	ModelBaseURL   string
-	ModelAPIKey    string
+	ModelID      string
+	ModelBaseURL string
+	ModelAPIKey  string
+	// FallbackModels is the flag-and-variable list: model ids at the primary
+	// endpoint, tried before the configuration's fallback chain.
 	FallbackModels string
 
 	CaptureWire      bool
@@ -332,8 +353,8 @@ func (o *operatorFlags) resolve(given map[string]bool) (*settings, error) {
 	s.Sources["model_base_url"] = src
 	s.ModelAPIKey, src = o.modelAPIKey.resolve(given, cfg.ModelAPIKey)
 	s.Sources["model_api_key"] = src
-	s.FallbackModels, src = o.fallbackModels.resolve(given, strings.Join(cfg.FallbackModels, ","))
-	s.Sources["fallback_models"] = src
+	s.FallbackModels, src = o.fallbackModels.resolve(given, strings.Join(cfg.FallbackModelIDs, ","))
+	s.Sources["fallback_model_ids"] = src
 
 	s.RecordOut, src = o.recordOut.resolve(given, cfg.RecordOut)
 	s.Sources["record_out"] = src

@@ -36,7 +36,13 @@ func runValidate(args []string) error {
 	// A positional argument is a file, the form every existing invocation and
 	// the CI check use: `cite validate .github/cite.yml`.
 	for _, arg := range fs.Args() {
-		if err := op.config.Set(arg); err != nil {
+		// The flag package stops at the first non-flag argument, so a flag typed
+		// after a file arrives here as another file. Say so rather than trying to
+		// read a file named "--effective".
+		if strings.HasPrefix(arg, "-") {
+			return fmt.Errorf("validate: %q came after a file path, so the flag parser stopped there; put flags first: cite validate --effective <file>", arg)
+		}
+		if err := op.config.addArgument(arg); err != nil {
 			return err
 		}
 	}
@@ -138,7 +144,7 @@ func sourceValue(st *settings, key string) string {
 			return "(unset)"
 		}
 		return "[literal, masked]"
-	case "fallback_models":
+	case "fallback_model_ids":
 		return "[" + strings.Join(st.fallbackModelIDs(), ", ") + "]"
 	case "config":
 		return "[" + strings.Join(st.Files, ", ") + "]"

@@ -268,3 +268,29 @@ func TestModelAPIKeyRejectsALiteral(t *testing.T) {
 		}
 	}
 }
+
+// fallback_model_ids and fallback are two keys, and a file that declares
+// providers can use both: the first holds ids at the primary endpoint, which a
+// bare entry in `fallback` cannot express once providers are declared.
+func TestFallbackModelIDsIsNotTheFallbackChain(t *testing.T) {
+	paths := writeFiles(t, "cfg.yml", `
+fallback: [gateway/model-a]
+fallback_model_ids: [bare-model]
+providers:
+  gateway:
+    base_url: https://gw.example/v1
+    api: openai-completions
+    models:
+      - id: model-a
+`)
+	got, err := LoadFiles(paths)
+	if err != nil {
+		t.Fatalf("LoadFiles: %v", err)
+	}
+	if len(got.FallbackModelIDs) != 1 || got.FallbackModelIDs[0] != "bare-model" {
+		t.Errorf("fallback_model_ids = %v", got.FallbackModelIDs)
+	}
+	if len(got.Fallback) != 1 || got.Fallback[0] != "gateway/model-a" {
+		t.Errorf("fallback = %v", got.Fallback)
+	}
+}

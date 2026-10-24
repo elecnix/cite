@@ -33,14 +33,17 @@ compat_profile: "2026-08"     # which snapshot of the instruction formats to hon
 
 Seven keys. A v1 with more than ten has already lost.
 
-The action's inputs live in the workflow rather than in this file, and two of
-them decide what a run archives rather than how a review reads code.
-`archive_on_failure` uploads the forensics archive when the review fails, and
-`capture_wire` uploads the wire capture on every run, whether it passed or
-failed. `capture_wire` is deliberately not a key here. It is a one-run
-debugging switch, the seven keys above are already spoken for, and Cite reads
-a config file from the base ref on every run, which is the wrong place for a
-switch an operator flips while diagnosing one failure.
+The keys above say how a review reads code. The action's inputs live in the
+workflow instead, and two of them say what a run archives: `archive_on_failure`
+uploads the forensics archive when the review fails, and `capture_wire` uploads
+the wire capture on every run, whether it passed or failed.
+
+`capture_wire` is now also a key, under [Operator settings](#operator-settings).
+It was excluded from this list on purpose while a config file was the only place
+a setting could live, because a switch an operator flips while diagnosing one
+failure should not need a commit. A machine-level file and a flag are both
+outside the repository, so the reason no longer applies, and a repository that
+does want it can set it.
 
 ## Operator settings
 
@@ -62,7 +65,7 @@ the same way on a machine that has a configuration file.
 | `--model-id` | `MODEL_ID` | `model_id` |
 | `--model-base-url` | `MODEL_BASE_URL` | `model_base_url` |
 | `--model-api-key` | `MODEL_API_KEY` | `model_api_key` |
-| `--fallback-models` | `CITE_FALLBACK_MODELS` | `fallback_models` |
+| `--fallback-models` | `CITE_FALLBACK_MODELS` | `fallback_model_ids` |
 | `--debug` / `--no-debug` | `CITE_DEBUG` | `debug` |
 | `--truncated-out` | `CITE_TRUNCATED_OUT` | `truncated_out` |
 | `--capture-wire` / `--no-capture-wire` | `CITE_CAPTURE_WIRE` | `capture_wire` |
@@ -74,6 +77,13 @@ the same way on a machine that has a configuration file.
 | `--structured-output` | `CITE_STRUCTURED_OUTPUT` | `structured_output` |
 | `--reasoning-effort` | `CITE_REASONING_EFFORT` | `reasoning_effort` |
 | `--require-parameters` | `CITE_REQUIRE_PARAMETERS` | `require_parameters` |
+
+`fallback_model_ids` is not the `fallback` key. Both are lists of model ids to
+try after the primary, in that order, and they differ in the references they accept: an
+entry in `fallback_model_ids` is always a model id at the primary's own endpoint,
+while an entry in `fallback` may also be a `provider/modelid` reference to a
+provider you declared (see [Fallback](#fallback)). The flag and the action's `fallback_model_ids` input set
+this list, and the client tries it before the `fallback` chain.
 
 The boolean settings take two flags, because a file may set a value that the
 command line wants to overturn. A boolean variable counts as on unless it is
@@ -338,7 +348,10 @@ the default, declare its `max_tokens` under the provider's `models` entry.
 fallback: [gateway/vendor/model-x, other/backup-model]
 ```
 
-An ordered list. When the primary model fails a review call, the call moves to
+An ordered list. An entry here is a `provider/modelid` reference to a provider
+you declared, or a bare model id at the primary endpoint. The separate
+`fallback_model_ids` key ([Operator settings](#operator-settings)) holds bare
+ids only, and the client tries that list first. When the primary model fails a review call, the call moves to
 the next leg. A runaway generation moves it, and so does a model the endpoint no
 longer serves. An output overflow, a provider outage or rate limit, and an
 unreachable endpoint move it too.
@@ -459,5 +472,7 @@ still fail the step. A failed fetch is never treated as "no config".
 - No suppressions file in v1. A file that does not exist cannot rot; dismissals
   live in a ledger governed by the dispute protocol
   ([security.md](security.md#the-dispute-protocol)).
-- No action input for the operator settings. The happy path runs without any
-  input, and an operator who wants one of them sets a flag or a variable.
+- No new action input for the operator settings. The happy path runs without any
+  input. The action already has inputs for the ones that predate this page:
+  `model_id`, `model_base_url`, `model_api_key`, `fallback_model_ids` and
+  `capture_wire`. The rest are flags or variables.

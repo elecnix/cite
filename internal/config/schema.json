@@ -78,9 +78,9 @@
       "pattern": "^[$!]",
       "description": "A credential reference: $VAR, ${VAR} or !command. The pattern rejects a literal key here as well as in the semantic check, because this file is often a dotfile in a dotfiles repository."
     },
-    "fallback_models": {
+    "fallback_model_ids": {
       "type": "array",
-      "description": "Model ids at the primary endpoint, tried in order. The config's fallback references follow them.",
+      "description": "Model ids at the primary endpoint, tried before the `fallback` chain. The action's fallback_model_ids input fills the same list through CITE_FALLBACK_MODELS.",
       "items": { "type": "string", "minLength": 1 }
     },
     "capture_wire": {

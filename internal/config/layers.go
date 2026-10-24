@@ -387,8 +387,9 @@ var builtinDefaults = map[string]string{
 	"model_id":            "(unset)",
 	"model_base_url":      "(unset)",
 	"model_api_key":       "(unset)",
-	"fallback_models":     "[]",
 	"model":               DefaultModel,
+	"fallback":            "[]",
+	"fallback_model_ids":  "[]",
 }
 
 func renderCategories(cats []model.Category) string {

@@ -62,7 +62,16 @@ func newModelClient(st *settings) (model.Client, error) {
 // qualified reference takes its provider's endpoint, key and headers; a bare
 // model id takes the resolved primary endpoint and credential reference. The
 // canary pings these legs and the review path walks them.
+//
+// A nil cfg is "no configuration file", which is a real state and means no
+// configured chain: the two call sites reach cfg differently (the canary takes
+// it from the settings it resolved, the review path asks st.cfg()), so the rule
+// lives here instead of in each of them. st is never nil: it is what resolve
+// returned.
 func fallbackLegs(cfg *config.Config, st *settings) []canaryLeg {
+	if cfg == nil {
+		return nil
+	}
 	var legs []canaryLeg
 	for _, ref := range cfg.Fallback {
 		pn, mid, qualified := config.SplitModelRef(ref)
