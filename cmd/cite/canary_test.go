@@ -56,6 +56,14 @@ fallback:
 	}
 }
 
+// No configuration file is a real state: the canary has nothing to exercise and
+// says so, rather than panicking on the absent list.
+func TestCanaryLegsWithoutConfigIsEmpty(t *testing.T) {
+	if got := canaryLegs(nil, &settings{}); len(got) != 0 {
+		t.Fatalf("legs = %+v, want none", got)
+	}
+}
+
 func TestCanaryLegsBareFallbackUsesThePrimaryEndpoint(t *testing.T) {
 	// A bare model id has no provider of its own, so it is exercised against the
 	// endpoint and the credential reference the primary model resolved to.

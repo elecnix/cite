@@ -32,7 +32,13 @@ type canaryLeg struct {
 
 // canaryLegs builds the ordered, de-duplicated leg list from declared
 // providers plus the fallback chain.
+//
+// A nil cfg is no configuration file, which has no legs to exercise, the same
+// rule fallbackLegs states.
 func canaryLegs(cfg *config.Config, st *settings) []canaryLeg {
+	if cfg == nil {
+		return nil
+	}
 	var legs []canaryLeg
 	seen := map[string]bool{}
 	add := func(l canaryLeg) {
