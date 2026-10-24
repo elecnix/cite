@@ -2,6 +2,7 @@ package publisher
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -173,4 +174,31 @@ func writeFindings(w io.Writer, fs []model.ValidatedFinding) {
 			fmt.Fprint(w, "\n")
 		}
 	}
+}
+
+// MultiSink fans one finished run out to every sink, in order, and reports
+// what failed. Writing two reports of one review is the reason it exists: a
+// second run for a second format is a second review, and the model does not
+// answer the same twice (issue #215).
+//
+// Every sink runs even when an earlier one failed, so one unwritable file does
+// not cost the user the report formats that did write. The returned error
+// joins each failure.
+func MultiSink(sinks ...Sink) Sink {
+	if len(sinks) == 1 {
+		return sinks[0]
+	}
+	return multiSink(sinks)
+}
+
+type multiSink []Sink
+
+func (m multiSink) Publish(rec *model.RunRecord, payload ReportPayload) error {
+	errs := make([]error, 0, len(m))
+	for _, s := range m {
+		if err := s.Publish(rec, payload); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
