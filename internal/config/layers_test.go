@@ -269,28 +269,34 @@ func TestModelAPIKeyRejectsALiteral(t *testing.T) {
 	}
 }
 
-// fallback_model_ids and fallback are two keys, and a file that declares
-// providers can use both: the first holds ids at the primary endpoint, which a
-// bare entry in `fallback` cannot express once providers are declared.
-func TestFallbackModelIDsIsNotTheFallbackChain(t *testing.T) {
-	paths := writeFiles(t, "cfg.yml", `
-fallback: [gateway/model-a]
-fallback_model_ids: [bare-model]
+// fallback_model_ids exists because `fallback` cannot hold a bare id once the
+// file declares providers: every reference there must resolve to one. The
+// separate key takes the id at the primary endpoint.
+func TestBareFallbackIDNeedsItsOwnKeyWhenProvidersAreDeclared(t *testing.T) {
+	const providers = `
 providers:
   gateway:
     base_url: https://gw.example/v1
     api: openai-completions
     models:
       - id: model-a
-`)
-	got, err := LoadFiles(paths)
+`
+	_, err := LoadFiles(writeFiles(t, "cfg.yml", "fallback: [bare-model]"+providers))
+	if err == nil {
+		t.Fatal("a bare id in fallback must be rejected once providers are declared")
+	}
+	if !strings.Contains(err.Error(), `must be "provider/modelid"`) {
+		t.Fatalf("error does not explain the requirement: %v", err)
+	}
+
+	got, err := LoadFiles(writeFiles(t, "cfg.yml", "fallback: [gateway/model-a]\nfallback_model_ids: [bare-model]"+providers))
 	if err != nil {
-		t.Fatalf("LoadFiles: %v", err)
+		t.Fatalf("both keys must be accepted together: %v", err)
 	}
 	if len(got.FallbackModelIDs) != 1 || got.FallbackModelIDs[0] != "bare-model" {
-		t.Errorf("fallback_model_ids = %v", got.FallbackModelIDs)
+		t.Errorf("fallback_model_ids = %v, want the bare id", got.FallbackModelIDs)
 	}
 	if len(got.Fallback) != 1 || got.Fallback[0] != "gateway/model-a" {
-		t.Errorf("fallback = %v", got.Fallback)
+		t.Errorf("fallback = %v, want the qualified reference", got.Fallback)
 	}
 }
