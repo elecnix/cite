@@ -65,12 +65,22 @@ func splitPathRefs(s string) []string {
 }
 
 // schemaCheck walks the parsed tree against the embedded schema and appends
-// every key-name/type violation to probs.
+// every key-name/type violation to probs, including a missing required field.
+// It is what the merged result is checked with.
 func schemaCheck(tree interface{}, probs *[]Problem) {
-	checkNode(tree, rootSchema(), "", probs)
+	checkNode(tree, rootSchema(), "", probs, true)
 }
 
-func checkNode(v interface{}, sch map[string]interface{}, path string, probs *[]Problem) {
+// schemaCheckFile walks ONE file of a layered list. A key this file does not
+// name may still be supplied by another file, so required fields are not
+// enforced here: an unknown key, a duplicate and a type error are this file's
+// own mistakes, and they are caught. Completeness belongs to the merged result,
+// which schemaCheck checks.
+func schemaCheckFile(tree interface{}, probs *[]Problem) {
+	checkNode(tree, rootSchema(), "", probs, false)
+}
+
+func checkNode(v interface{}, sch map[string]interface{}, path string, probs *[]Problem, requireFields bool) {
 	if r, ok := sch["$ref"].(string); ok {
 		resolved, err := resolveRef(r)
 		if err != nil {
@@ -102,7 +112,7 @@ func checkNode(v interface{}, sch map[string]interface{}, path string, probs *[]
 				if _, known := props[k]; known {
 					continue
 				}
-				checkNode(m[k], ap, joinPath(path, k), probs)
+				checkNode(m[k], ap, joinPath(path, k), probs, requireFields)
 			}
 		}
 		for _, k := range sortedKeys(m) {
@@ -117,9 +127,12 @@ func checkNode(v interface{}, sch map[string]interface{}, path string, probs *[]
 			if !ok {
 				continue
 			}
-			checkNode(m[k], sm, joinPath(path, k), probs)
+			checkNode(m[k], sm, joinPath(path, k), probs, requireFields)
 		}
 		for _, req := range stringList(sch["required"]) {
+			if !requireFields {
+				break
+			}
 			if _, ok := m[req]; !ok {
 				addf(probs, joinPath(path, req), "required field is missing")
 			}
@@ -135,7 +148,7 @@ func checkNode(v interface{}, sch map[string]interface{}, path string, probs *[]
 			return
 		}
 		for idx, el := range arr {
-			checkNode(el, items, fmt.Sprintf("%s[%d]", path, idx), probs)
+			checkNode(el, items, fmt.Sprintf("%s[%d]", path, idx), probs, requireFields)
 		}
 	case "string":
 		s, ok := v.(string)

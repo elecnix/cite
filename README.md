@@ -87,8 +87,8 @@ Read the privacy cost before turning it on: a capture contains the prompt, and
 the prompt contains the diff under review. A capture of a private repository is
 private review material, and the masking covers credentials only. The input is
 off by default for that reason. [docs/troubleshooting.md](docs/troubleshooting.md)
-has the field list, the masking rules, and the two environment settings that
-go with it (`CITE_CAPTURE_DIR`, `CITE_CAPTURE_MAX_BYTES`).
+has the field list, the masking rules, and the two settings that go with it
+(`--capture-dir` and `--capture-max-bytes`, or their environment variables).
 
 ## The noise contract
 
@@ -112,8 +112,10 @@ cite review --diff <(git diff main...)        # local branch, nothing pushed
 cite review --pr owner/repo#123 --dry-run     # a real PR; prints, posts nothing
 cite review --pr owner/repo#123 --report markdown --out report.md  # full run, local report
 cite review --pr owner/repo#123 --report markdown --out r.md --report json --out r.json  # one run, two reports
+cite review --pr owner/repo#123 --config .github/cite.yml --config ~/.config/cite/config.yml  # layering
 cite doctor                                   # which instruction files reached which paths
 cite validate                                 # schema-check the config
+cite validate --effective --config .github/cite.yml --config ~/.config/cite/config.yml  # merged, with sources
 cite soak bench/cases                         # pipeline regression harness
 cite canary                                   # ping every provider/fallback leg
 cite bypass --pr owner/repo#N                 # break-glass: conclude + log (§11)

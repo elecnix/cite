@@ -110,11 +110,12 @@ func TestCompleteTruncatedIsDeterministic(t *testing.T) {
 }
 
 func TestCompleteTruncatedCapturePathFromEnv(t *testing.T) {
-	// The capture file must be archivable by the caller, so the path is
-	// overridable by env: the GitHub Action points it at $RUNNER_TEMP,
-	// which the forensics artifact step already uploads.
+	// The capture file must be archivable by the caller, so the path is a
+	// setting: the GitHub Action points it at $RUNNER_TEMP, which the forensics
+	// artifact step already uploads.
 	dir := t.TempDir()
-	t.Setenv("CITE_TRUNCATED_OUT", filepath.Join(dir, "captured.json"))
+	SetDiagnostics(Diagnostics{TruncatedOut: filepath.Join(dir, "captured.json")})
+	t.Cleanup(func() { SetDiagnostics(Diagnostics{}) })
 	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
@@ -195,12 +196,13 @@ func TestCompleteTruncatedAlwaysCapturesFile(t *testing.T) {
 }
 
 func TestCompleteDebugDumpsRawResponse(t *testing.T) {
-	// CITE_DEBUG must capture the raw response body too, not just the
+	// The debug setting must capture the raw response body too, not just the
 	// request. Otherwise a finish_reason=length truncation, where the
 	// partial content is discarded by design, is unobservable after the
 	// fact: nothing in the logs or artifacts shows what the model was
 	// emitting when it hit the cap.
-	t.Setenv("CITE_DEBUG", "1")
+	SetDiagnostics(Diagnostics{Debug: true})
+	t.Cleanup(func() { SetDiagnostics(Diagnostics{}) })
 	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
@@ -321,11 +323,10 @@ func TestRequestCarriesProviderRequireParameters(t *testing.T) {
 }
 
 func TestNewClientPrefersModelAPIKey(t *testing.T) {
-	// The bring-your-own-key path is unchanged: MODEL_API_KEY wins over the
-	// ambient GITHUB_TOKEN.
-	t.Setenv("MODEL_API_KEY", "sk-test")
+	// The bring-your-own-key path is unchanged: the key the operator resolved
+	// wins over the ambient GITHUB_TOKEN.
 	t.Setenv("GITHUB_TOKEN", "gh-token")
-	c, err := NewOpenAICompatClient()
+	c, err := NewOpenAICompatClient(Endpoint{APIKey: "sk-test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,11 +339,8 @@ func TestNewClientFallsBackToGitHubModels(t *testing.T) {
 	// Zero-secret first run (§1): no MODEL_API_KEY, ambient GITHUB_TOKEN
 	// present → GitHub's models endpoint with the default model id. Pure
 	// construction assertions; no network.
-	t.Setenv("MODEL_API_KEY", "")
-	t.Setenv("MODEL_BASE_URL", "")
-	t.Setenv("MODEL_ID", "")
 	t.Setenv("GITHUB_TOKEN", "gh-ambient")
-	c, err := NewOpenAICompatClient()
+	c, err := NewOpenAICompatClient(Endpoint{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,10 +356,8 @@ func TestNewClientFallsBackToGitHubModels(t *testing.T) {
 }
 
 func TestNewClientGitHubModelsHonoursModelID(t *testing.T) {
-	t.Setenv("MODEL_API_KEY", "")
-	t.Setenv("MODEL_ID", "openai/gpt-4.1-mini")
 	t.Setenv("GITHUB_TOKEN", "gh-ambient")
-	c, err := NewOpenAICompatClient()
+	c, err := NewOpenAICompatClient(Endpoint{ModelID: "openai/gpt-4.1-mini"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,11 +367,8 @@ func TestNewClientGitHubModelsHonoursModelID(t *testing.T) {
 }
 
 func TestNewClientErrorsWithoutAnyKey(t *testing.T) {
-	t.Setenv("MODEL_API_KEY", "")
-	t.Setenv("MODEL_BASE_URL", "")
-	t.Setenv("MODEL_ID", "")
 	t.Setenv("GITHUB_TOKEN", "")
-	c, err := NewOpenAICompatClient()
+	c, err := NewOpenAICompatClient(Endpoint{})
 	if err == nil || c != nil {
 		t.Fatalf("want error with no key at all, got %v %v", c, err)
 	}
@@ -522,7 +515,6 @@ func TestSessionIDSentAsHeaderNeverAsBodyField(t *testing.T) {
 func TestCompleteAuthErrorHintsAtMissingKey(t *testing.T) {
 	// A 401 with no key configured is the Dependabot case: the run cannot
 	// read Actions secrets, so the hint has to say where the key has to live.
-	t.Setenv("MODEL_API_KEY", "")
 	srv := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte(`{"error":{"message":"invalid api key"}}`))
@@ -558,13 +550,8 @@ func TestNewClientConfiguredEndpointIsNeverRedirected(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, k := range []string{"MODEL_API_KEY", "MODEL_BASE_URL", "MODEL_ID", "GITHUB_TOKEN"} {
-				t.Setenv(k, "")
-			}
-			t.Setenv("MODEL_BASE_URL", tc.base)
-			t.Setenv("MODEL_ID", tc.id)
 			t.Setenv("GITHUB_TOKEN", tc.token)
-			c, err := NewOpenAICompatClient()
+			c, err := NewOpenAICompatClient(Endpoint{BaseURL: tc.base, ModelID: tc.id})
 			if err != nil {
 				t.Fatalf("a configured endpoint must not fail construction: %v", err)
 			}

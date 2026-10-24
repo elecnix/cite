@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +8,6 @@ import (
 	"time"
 
 	"github.com/elecnix/cite/internal/model"
-	"github.com/elecnix/cite/internal/publisher"
 )
 
 // Issue #59: the per-call deadline is only as truthful as the config that
@@ -96,11 +94,8 @@ func TestValidConfigExplicitTimeoutWinsWhenLoaded(t *testing.T) {
     timeout: 1500s
     max_output_tokens: 32768
 `)
-	cfg, err := loadConfig(cfgPath)
-	if err != nil {
-		t.Fatalf("valid config must load: %v", err)
-	}
-	rc := cfg.Role(model.RoleReview)
+	st := mustSettings(t, cfgPath)
+	rc := st.Config.Role(model.RoleReview)
 	if rc.Timeout != 1500*time.Second {
 		t.Fatalf("explicit roles.review.timeout not in force after load: got %v, want 1500s", rc.Timeout)
 	}
@@ -109,9 +104,9 @@ func TestValidConfigExplicitTimeoutWinsWhenLoaded(t *testing.T) {
 	}
 }
 
-// TestInvalidConfigFailsClosed is the REPRO: it fails on main because
-// loadConfig silently substitutes defaults for an invalid config and the run
-// proceeds (contacting the model) as if the config had loaded.
+// TestInvalidConfigFailsClosed is the REPRO: it fails on main because an invalid
+// config silently substituted defaults and the run proceeded (contacting the
+// model) as if the config had loaded.
 func TestInvalidConfigFailsClosed(t *testing.T) {
 	chdirTempWithPostImage(t)
 
@@ -129,16 +124,15 @@ func TestInvalidConfigFailsClosed(t *testing.T) {
   bogus_role_key: true
 `)
 
-	var report bytes.Buffer
-	err := reviewLocal(diffPath, "", cfgPath, model.StructuredOutputResponseFormat, "", false, publisher.JSONReportSink(&report))
-	t.Logf("reviewLocal error: %v (model called=%v)", err, called)
+	err := runReview([]string{"--diff", diffPath, "--config", cfgPath, "--report", "json"})
+	t.Logf("runReview error: %v (model called=%v)", err, called)
 	if called {
-		t.Fatalf("invalid config must fail the run BEFORE any model call, but the reviewer ran against the fake provider (deadline would be the derived default, not the configured one)")
+		t.Fatalf("invalid config must fail the run BEFORE any model call, but the reviewer ran against the fake provider")
 	}
 	if err == nil {
 		t.Fatal("invalid config must fail the run (fail closed), not conclude cleanly on defaults")
 	}
-	if !strings.Contains(err.Error(), "config") {
+	if !strings.Contains(err.Error(), "config") && !strings.Contains(err.Error(), "bogus_role_key") {
 		t.Fatalf("failure must name the config as the cause, got: %v", err)
 	}
 }

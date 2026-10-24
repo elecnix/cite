@@ -79,7 +79,10 @@ version. The action enforces this without a checkout: it fetches the config file
 named by `config_path` from the base ref before the review step
 ([configuration.md](configuration.md#where-the-config-file-comes-from)), never
 from the pull request head or the merge ref, so consumer workflows do not
-hand-roll the fetch and cannot get the ref wrong.
+hand-roll the fetch and cannot get the ref wrong. The action passes that file as
+`--config`, and naming a file replaces the default list, so a runner reads
+exactly one configuration file and never one from its home directory
+([configuration.md](configuration.md#the-file-list)).
 
 This is also why instruction files are read from the base ref
 ([instructions.md](instructions.md#the-deliberate-divergence)): a pull

@@ -11,7 +11,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/elecnix/cite/internal/config"
@@ -33,7 +32,13 @@ type canaryLeg struct {
 
 // canaryLegs builds the ordered, de-duplicated leg list from declared
 // providers plus the fallback chain.
-func canaryLegs(cfg *config.Config) []canaryLeg {
+//
+// A nil cfg is no configuration file, which has no legs to exercise, the same
+// rule fallbackLegs states.
+func canaryLegs(cfg *config.Config, st *settings) []canaryLeg {
+	if cfg == nil {
+		return nil
+	}
 	var legs []canaryLeg
 	seen := map[string]bool{}
 	add := func(l canaryLeg) {
@@ -56,7 +61,7 @@ func canaryLegs(cfg *config.Config) []canaryLeg {
 			primary: len(legs) == 0,
 		})
 	}
-	for _, l := range fallbackLegs(cfg) {
+	for _, l := range fallbackLegs(cfg, st) {
 		add(l)
 	}
 	return legs
@@ -64,16 +69,17 @@ func canaryLegs(cfg *config.Config) []canaryLeg {
 
 func runCanary(args []string) error {
 	fs := flag.NewFlagSet("canary", flag.ContinueOnError)
-	cfgPath := fs.String("config", ".github/cite.yml", "config file with providers/fallback")
+	op := newOperatorFlags(fs, groupConfig|groupEndpoint|groupDiagnostics)
 	timeout := fs.Duration("timeout", 15*time.Second, "per-leg deadline")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, err := loadConfig(*cfgPath)
+	st, err := op.resolve(givenFlags(fs))
 	if err != nil {
 		return err
 	}
-	legs := canaryLegs(cfg)
+	st.apply()
+	legs := canaryLegs(st.cfg(), st)
 	if len(legs) == 0 {
 		fmt.Println("canary: no providers or fallback chain configured — nothing to exercise")
 		return nil
@@ -123,33 +129,4 @@ func runCanary(args []string) error {
 		fmt.Println("note: a fallback leg is down — an untested (or broken) fallback is not a fallback")
 	}
 	return nil
-}
-
-// fallbackLegs resolves the config's fallback chain, in order: a qualified
-// reference takes its provider's endpoint, key and headers; a bare model id
-// takes the MODEL_BASE_URL endpoint with MODEL_API_KEY. The canary pings
-// these legs and the review path walks them.
-func fallbackLegs(cfg *config.Config) []canaryLeg {
-	var legs []canaryLeg
-	for _, ref := range cfg.Fallback {
-		pn, mid, qualified := config.SplitModelRef(ref)
-		base, key := "", model.CredentialExpr("")
-		var headers map[string]string
-		if p, ok := cfg.Providers[pn]; ok && qualified {
-			base, key, headers = p.BaseURL, p.APIKey, p.Headers
-		} else {
-			if pn != "" {
-				// Unknown provider while providers are declared: config
-				// validation rejects this earlier; skip defensively.
-				continue
-			}
-			base = os.Getenv("MODEL_BASE_URL")
-			if base == "" {
-				base = "https://api.openai.com/v1"
-			}
-			key = "$MODEL_API_KEY"
-		}
-		legs = append(legs, canaryLeg{name: ref, baseURL: base, apiKey: key, headers: headers, modelID: mid})
-	}
-	return legs
 }
