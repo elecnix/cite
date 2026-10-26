@@ -91,6 +91,9 @@ A local run that stops before writing the report has nothing to copy. Read
 The directories are 0700 and the files are 0600. The wire capture stores the
 prompt, and that prompt contains the reviewed diff.
 
+The owner, the repository and the model id become directory names, so the script
+rejects a `..` in any of them. A run cannot write outside the history directory.
+
 ## Read the verdict from the record, not from the exit code
 
 `cite` exits 1 for a gate verdict and for a run error alike, so the exit code

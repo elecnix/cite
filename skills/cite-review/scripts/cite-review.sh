@@ -35,9 +35,10 @@
 #
 # Flags this script owns: --pr, --local, --base (with --local only), --diff,
 # --report, --out, --record-out, --capture-dir, --truncated-out. Every other
-# `cite review` flag passes through unchanged, after the target; anything after
-# `--` passes through verbatim. A literal model key on the command line reaches
-# meta.json as REDACTED, and MODEL_API_KEY is never printed.
+# `cite review` flag passes through unchanged, after the target; `--` passes the
+# rest through verbatim. An owned flag stays rejected either way. A literal
+# model key on the command line reaches meta.json as REDACTED, and
+# MODEL_API_KEY is never printed.
 #
 # Set CITE_BIN to use a binary that is not on PATH.
 #
@@ -184,6 +185,15 @@ else
      || [ "$repo_name" = "$rest" ] || ! printf '%s' "${rest##*#}" | grep -Eq '^[0-9]+$'; then
     die "pull request must be owner/repo#N, got $PR"
   fi
+  # owner and repo become directory names below, so `..` in either one would
+  # climb out of the history directory and a `/` would open a level.
+  for part in "$owner" "$repo_name"; do
+    case "$part" in
+      .|..) die "pull request must be owner/repo#N, got $PR" ;;
+    esac
+    printf '%s' "$part" | grep -Eq '^[A-Za-z0-9._-]+$' \
+      || die "pull request must be owner/repo#N, got $PR"
+  done
   group=pr-${rest##*#}
 fi
 
@@ -225,6 +235,10 @@ while [ "$i" -lt ${#PASSTHROUGH[@]} ]; do
 done
 model_slug=${model_arg:-${MODEL_ID:-default}}
 slug=$(printf '%s' "$model_slug" | tr -c 'A-Za-z0-9._-' '-' | sed 's/-\{2,\}/-/g; s/-$//')
+# The slug names a directory, so a `.` or `..` there would leave the run behind.
+case "$slug" in
+  ''|.|..) slug=default ;;
+esac
 
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 dir="$ROOT/$owner/$repo_name/$group/$stamp-$slug"
