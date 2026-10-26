@@ -33,7 +33,7 @@ func measuredRunawayBody() string {
 // the requested cap, so no number Cite chose can be the test.
 func TestCompleteRunawayUnderProviderCapIsNotTerminal(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+	captureTruncationIn(t, dir)
 
 	h := &runawayHandler{body: measuredRunawayBody()}
 	ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
@@ -60,7 +60,7 @@ func TestCompleteRunawayUnderProviderCapIsNotTerminal(t *testing.T) {
 // terminal outcome as before, never a runaway.
 func TestCompleteEmptyAnswerWithoutEvidenceStaysOverflow(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+	captureTruncationIn(t, dir)
 
 	body := `{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":"length"}],` +
 		`"usage":{"prompt_tokens":100,"completion_tokens":64}}`
@@ -84,7 +84,7 @@ func TestCompleteEmptyAnswerWithoutEvidenceStaysOverflow(t *testing.T) {
 // no answer existed at all.
 func TestCompleteTruncatedToolCallStaysOverflow(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+	captureTruncationIn(t, dir)
 
 	body := `{"choices":[{"message":{"role":"assistant","content":"","reasoning":"` +
 		strings.Repeat("thinking ", 40) + `","tool_calls":[{"id":"c1","type":"function",` +
@@ -116,7 +116,7 @@ func TestCompleteTruncatedToolCallStaysOverflow(t *testing.T) {
 // false, the provider stopped at 65536 and never got there.
 func TestRunawayMessageNamesTheReasoningItActuallyHas(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+	captureTruncationIn(t, dir)
 
 	h := &runawayHandler{body: measuredRunawayBody()}
 	ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
@@ -157,7 +157,7 @@ func TestRunawayMessageNamesTheReasoningItActuallyHas(t *testing.T) {
 // predicate itself. This is the case Cite's reviewer caught on PR #166.
 func TestCompleteTruncatedToolCallWithFullBudgetStaysOverflow(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+	captureTruncationIn(t, dir)
 
 	body := `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1",` +
 		`"type":"function","function":{"name":"submit_review","arguments":""}}]},` +
@@ -203,7 +203,7 @@ func TestCompletionResponseCarriesReasoning(t *testing.T) {
 // this name and not only into the response struct.
 func TestCompleteRunawayUnderReasoningContentWireName(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+	captureTruncationIn(t, dir)
 
 	body := `{"choices":[{"message":{"role":"assistant","content":"","reasoning_content":"` +
 		strings.Repeat("Hmm. ", 2000) + `"},"finish_reason":"length"}],` +
@@ -245,7 +245,7 @@ func TestCompleteReasoningContentSurvivesAnEmptyReasoningField(t *testing.T) {
 // stopped at, so the message says the count is missing.
 func TestRunawayMessageWithoutUsageDoesNotQuoteZero(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CITE_TRUNCATED_OUT", dir+"/captured.json")
+	captureTruncationIn(t, dir)
 	body := `{"choices":[{"message":{"role":"assistant","content":"","reasoning":"` +
 		strings.Repeat("Hmm. ", 200) + `"},"finish_reason":"length"}]}`
 	ts := newTestServer(http.HandlerFunc((&runawayHandler{body: body}).ServeHTTP))

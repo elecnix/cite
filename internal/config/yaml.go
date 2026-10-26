@@ -30,35 +30,64 @@ type yline struct {
 type yamlParser struct {
 	ls []yline
 	i  int
+	// lines maps the dotted path of every key and sequence element to the
+	// source line it starts on, in the same path syntax schemaCheck reports
+	// ("providers.gateway.models[0].id"). It is what lets a problem found
+	// after parsing name the line that caused it.
+	lines map[string]int
+}
+
+// SyntaxError is a YAML syntax error at one line of one file. File is empty
+// when the bytes did not come from a named file; the message then says
+// "cite.yml", the name the file has everywhere in the documentation.
+type SyntaxError struct {
+	File string
+	Line int
+	Msg  string
+}
+
+func (e *SyntaxError) Error() string {
+	name := e.File
+	if name == "" {
+		name = "cite.yml"
+	}
+	return fmt.Sprintf("%s line %d: %s", name, e.Line, e.Msg)
 }
 
 func yamlErrf(l yline, format string, args ...interface{}) error {
-	return fmt.Errorf("cite.yml line %d: %s", l.num, fmt.Sprintf(format, args...))
+	return &SyntaxError{Line: l.num, Msg: fmt.Sprintf(format, args...)}
 }
 
 // parseYAML parses src into a generic tree of
 // map[string]interface{} / []interface{} / string / int / float64 / bool / nil.
 // An empty document (no content lines) returns (nil, nil).
 func parseYAML(src []byte) (interface{}, error) {
+	tree, _, err := parseYAMLLines(src)
+	return tree, err
+}
+
+// parseYAMLLines is parseYAML that also returns the source line of every key
+// and sequence element, keyed by dotted path.
+func parseYAMLLines(src []byte) (interface{}, map[string]int, error) {
 	p, err := newYAMLLines(src)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(p.ls) == 0 {
-		return nil, nil
+		return nil, p.lines, nil
 	}
-	root, err := p.node(p.ls[0].indent)
+	root, err := p.node("")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if p.i < len(p.ls) {
-		return nil, yamlErrf(p.ls[p.i], "unexpected content (bad indentation?)")
+		return nil, nil, yamlErrf(p.ls[p.i], "unexpected content (bad indentation?)")
 	}
-	return root, nil
+	return root, p.lines, nil
 }
 
 func newYAMLLines(src []byte) (*yamlParser, error) {
-	p := &yamlParser{}
+	p := &yamlParser{lines: map[string]int{}}
 	for n, raw := range strings.Split(string(src), "\n") {
 		raw = strings.TrimRight(raw, "\r")
 		if strings.TrimSpace(raw) == "" {
@@ -67,7 +96,7 @@ func newYAMLLines(src []byte) (*yamlParser, error) {
 		j := 0
 		for j < len(raw) && (raw[j] == ' ' || raw[j] == '\t') {
 			if raw[j] == '\t' {
-				return nil, fmt.Errorf("cite.yml line %d: tab in indentation (spaces only)", n+1)
+				return nil, &SyntaxError{Line: n + 1, Msg: "tab in indentation (spaces only)"}
 			}
 			j++
 		}
@@ -106,16 +135,17 @@ func stripComment(s string) string {
 	return s
 }
 
-// node parses the collection or scalar starting at the current line.
-func (p *yamlParser) node(indent int) (interface{}, error) {
+// node parses the collection or scalar starting at the current line. path
+// is the dotted path of the value being parsed, "" for the document root.
+func (p *yamlParser) node(path string) (interface{}, error) {
 	l := p.ls[p.i]
 	if l.text == "-" || strings.HasPrefix(l.text, "- ") {
-		return p.sequence(l.indent)
+		return p.sequence(l.indent, path)
 	}
-	return p.mapping(l.indent)
+	return p.mapping(l.indent, path)
 }
 
-func (p *yamlParser) mapping(indent int) (interface{}, error) {
+func (p *yamlParser) mapping(indent int, path string) (interface{}, error) {
 	m := map[string]interface{}{}
 	for p.i < len(p.ls) {
 		l := p.ls[p.i]
@@ -132,11 +162,13 @@ func (p *yamlParser) mapping(indent int) (interface{}, error) {
 		if _, dup := m[key]; dup {
 			return nil, yamlErrf(l, "duplicate key %q", key)
 		}
+		kp := joinPath(path, key)
+		p.lines[kp] = l.num
 		p.i++
 		if rest == "" {
 			// Value is a nested block (or nothing).
 			if p.i < len(p.ls) && p.ls[p.i].indent > indent {
-				v, err := p.node(p.ls[p.i].indent)
+				v, err := p.node(kp)
 				if err != nil {
 					return nil, err
 				}
@@ -146,7 +178,7 @@ func (p *yamlParser) mapping(indent int) (interface{}, error) {
 			}
 			continue
 		}
-		v, err := p.scalarOrFlow(rest, l)
+		v, err := p.scalarOrFlow(rest, l, kp)
 		if err != nil {
 			return nil, err
 		}
@@ -155,19 +187,21 @@ func (p *yamlParser) mapping(indent int) (interface{}, error) {
 	return m, nil
 }
 
-func (p *yamlParser) sequence(indent int) (interface{}, error) {
+func (p *yamlParser) sequence(indent int, path string) (interface{}, error) {
 	var s []interface{}
 	for p.i < len(p.ls) {
 		l := p.ls[p.i]
 		if l.indent != indent || (l.text != "-" && !strings.HasPrefix(l.text, "- ")) {
 			break
 		}
+		ep := fmt.Sprintf("%s[%d]", path, len(s))
+		p.lines[ep] = l.num
 		body := strings.TrimLeft(strings.TrimPrefix(l.text, "-"), " ")
 		if body == "" {
 			// Nested block on following, deeper-indented lines.
 			p.i++
 			if p.i < len(p.ls) && p.ls[p.i].indent > indent {
-				v, err := p.node(p.ls[p.i].indent)
+				v, err := p.node(ep)
 				if err != nil {
 					return nil, err
 				}
@@ -181,7 +215,7 @@ func (p *yamlParser) sequence(indent int) (interface{}, error) {
 		if _, _, err := splitKey(yline{num: l.num, text: body}); err == nil {
 			keyIndent := l.indent + (len(l.text) - len(body))
 			p.ls[p.i] = yline{num: l.num, indent: keyIndent, text: body}
-			v, err := p.mapping(keyIndent)
+			v, err := p.mapping(keyIndent, ep)
 			if err != nil {
 				return nil, err
 			}
@@ -189,7 +223,7 @@ func (p *yamlParser) sequence(indent int) (interface{}, error) {
 			continue
 		}
 		p.i++
-		v, err := p.scalarOrFlow(body, l)
+		v, err := p.scalarOrFlow(body, l, ep)
 		if err != nil {
 			return nil, err
 		}
@@ -232,14 +266,14 @@ func splitKey(l yline) (key, rest string, err error) {
 	return "", "", yamlErrf(l, "expected \"key: value\", got %q", l.text)
 }
 
-func (p *yamlParser) scalarOrFlow(s string, l yline) (interface{}, error) {
+func (p *yamlParser) scalarOrFlow(s string, l yline, path string) (interface{}, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil, nil
 	}
 	switch s[0] {
 	case '[':
-		v, rest, err := parseFlow(s, l)
+		v, rest, err := p.parseFlow(s, l, path)
 		if err != nil {
 			return nil, err
 		}
@@ -248,7 +282,7 @@ func (p *yamlParser) scalarOrFlow(s string, l yline) (interface{}, error) {
 		}
 		return v, nil
 	case '{':
-		v, rest, err := parseFlow(s, l)
+		v, rest, err := p.parseFlow(s, l, path)
 		if err != nil {
 			return nil, err
 		}
@@ -262,8 +296,9 @@ func (p *yamlParser) scalarOrFlow(s string, l yline) (interface{}, error) {
 }
 
 // parseFlow parses a flow sequence or mapping, returning the value and the
-// unconsumed remainder.
-func parseFlow(s string, l yline) (interface{}, string, error) {
+// unconsumed remainder. A flow collection sits on one line, so every path
+// inside it records that line.
+func (p *yamlParser) parseFlow(s string, l yline, path string) (interface{}, string, error) {
 	switch s[0] {
 	case '[':
 		var out []interface{}
@@ -275,7 +310,9 @@ func parseFlow(s string, l yline) (interface{}, string, error) {
 			if rest[0] == ']' {
 				return out, rest[1:], nil
 			}
-			v, r, err := parseFlowItem(rest, l)
+			ep := fmt.Sprintf("%s[%d]", path, len(out))
+			p.lines[ep] = l.num
+			v, r, err := p.parseFlowItem(rest, l, ep)
 			if err != nil {
 				return nil, "", err
 			}
@@ -302,7 +339,9 @@ func parseFlow(s string, l yline) (interface{}, string, error) {
 			if _, dup := out[k]; dup {
 				return nil, "", yamlErrf(l, "duplicate key %q in flow mapping", k)
 			}
-			v, r2, err := parseFlowItem(strings.TrimSpace(r), l)
+			kp := joinPath(path, k)
+			p.lines[kp] = l.num
+			v, r2, err := p.parseFlowItem(strings.TrimSpace(r), l, kp)
 			if err != nil {
 				return nil, "", err
 			}
@@ -345,13 +384,13 @@ func splitFlowKey(s string, l yline) (string, string, error) {
 	return "", "", yamlErrf(l, "expected \"key: value\" in flow mapping, got %q", s)
 }
 
-func parseFlowItem(s string, l yline) (interface{}, string, error) {
+func (p *yamlParser) parseFlowItem(s string, l yline, path string) (interface{}, string, error) {
 	if s == "" {
 		return nil, "", yamlErrf(l, "missing value in flow collection")
 	}
 	switch s[0] {
 	case '[', '{':
-		return parseFlow(s, l)
+		return p.parseFlow(s, l, path)
 	case '"', '\'':
 		str, rest, err := scanQuoted(s, l)
 		if err != nil {

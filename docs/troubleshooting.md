@@ -125,16 +125,17 @@ the coverage, the bounded per-file retry budget, or the fail-closed
 `tool_failure_blocks` behaviour; a run with the capture on and a run with it off
 reach the same conclusion.
 
-`CITE_CAPTURE_DIR` sets where the documents go (the action points it at
-`$RUNNER_TEMP/cite-wire`), and `CITE_CAPTURE_MAX_BYTES` sets the per-body
-ceiling, 256 KiB by default. A body over the ceiling is cut with `truncated`,
-`original_bytes` and a note that says which setting cut it, and the manifest
+`--capture-dir` (or `CITE_CAPTURE_DIR`) sets where the documents go, and the
+action points it at `$RUNNER_TEMP/cite-wire`. `--capture-max-bytes` (or
+`CITE_CAPTURE_MAX_BYTES`) sets the per-body ceiling, 256 KiB by default. A body
+over the ceiling arrives cut, with `truncated`, `original_bytes` and a note
+naming the setting that cut it, and the manifest
 row carries `request_omitted_bytes` and `response_omitted_bytes`, so a cut is
 never silent. Set either in the workflow's own `env:`. Neither needs an
 input.
 
-Outside CI, `CITE_CAPTURE_WIRE=1 cite review --diff patch.diff` writes the
-same directory under the system temp directory, which is the quickest way to
+Outside CI, `cite review --diff patch.diff --capture-wire` (`CITE_CAPTURE_WIRE=1`
+works too) writes the same directory under the system temp directory, which is the quickest way to
 see what your provider actually answered.
 
 A successful run uploads `cite-run-record-<run id>-…` instead, kept for 14

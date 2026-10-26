@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -27,27 +28,160 @@ func init() {
 
 func runValidate(args []string) error {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
-	path := fs.String("config", ".github/cite.yml", "config file to check")
+	effective := fs.Bool("effective", false, "print the merged configuration, one key per line, naming the file each value came from")
+	op := newOperatorFlags(fs, groupConfig|groupEndpoint|groupOutput|groupDiagnostics|groupBehaviour)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() > 0 {
-		*path = fs.Arg(0)
+	// A positional argument is a file, the form every existing invocation and
+	// the CI check use: `cite validate .github/cite.yml`.
+	for _, arg := range fs.Args() {
+		// The flag package stops at the first non-flag argument, so a flag typed
+		// after a file arrives here as another file. Say so rather than trying to
+		// read a file named "--effective".
+		if strings.HasPrefix(arg, "-") {
+			return fmt.Errorf("validate: %q came after a file path, so the flag parser stopped there; put flags first: cite validate --effective <file>", arg)
+		}
+		if err := op.config.addArgument(arg); err != nil {
+			return err
+		}
 	}
-	cfg, err := config.Load(*path)
+	st, err := op.resolve(givenFlags(fs))
 	if err != nil {
 		var ve *config.ValidationError
 		if errors.As(err, &ve) {
 			for _, p := range ve.Problems {
 				fmt.Printf("error: %s\n", p)
 			}
-			return fmt.Errorf("%s is not valid (%d problem(s))", *path, len(ve.Problems))
+			return fmt.Errorf("%s is not valid (%d problem(s))", strings.Join(loadedNames(ve), ", "), len(ve.Problems))
 		}
 		return err
 	}
-	fmt.Printf("%s: OK (gate=%s max_comments=%d nits=%t compat_profile=%s)\n",
-		*path, cfg.Gate, cfg.MaxComments, cfg.Nits, cfg.CompatProfile)
+	for _, p := range st.Config.Read {
+		fmt.Printf("%s: OK\n", p)
+	}
+	for _, p := range st.Config.Missing {
+		fmt.Printf("%s: not found (skipped)\n", p)
+	}
+	if *effective {
+		fmt.Print(effectiveReport(st))
+		return nil
+	}
+	cfg := st.cfg()
+	fmt.Printf("merged from %s: OK (gate=%s max_comments=%d nits=%t compat_profile=%s)\n",
+		strings.Join(namesOrNone(st.Config.Read), " + "), cfg.Gate, cfg.MaxComments, cfg.Nits, cfg.CompatProfile)
 	return nil
+}
+
+// loadedNames names the files a validation error came from, so the summary line
+// points at what the reader has to open.
+func loadedNames(ve *config.ValidationError) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, p := range ve.Problems {
+		if p.File != "" && !seen[p.File] {
+			seen[p.File] = true
+			out = append(out, p.File)
+		}
+	}
+	if len(out) == 0 {
+		return []string{"configuration"}
+	}
+	return out
+}
+
+func namesOrNone(files []string) []string {
+	if len(files) == 0 {
+		return []string{"built-in defaults"}
+	}
+	return files
+}
+
+// effectiveReport renders the merged configuration with its provenance. A value
+// that a flag or an environment variable set is named too: --effective answers
+// "where did this come from" for every setting, not only the file-borne ones.
+func effectiveReport(st *settings) string {
+	// A flag or a variable outranks the files, so its value is the one that
+	// applies: print it once, in place of the file's, never both.
+	type row struct{ key, value, source string }
+	overridden := map[string]row{}
+	for key, src := range st.Sources {
+		if strings.HasPrefix(src, "flag --") || strings.HasPrefix(src, "env:") {
+			overridden[key] = row{key, sourceValue(st, key), src}
+		}
+	}
+	var rows []row
+	for _, e := range st.Config.Effective() {
+		if _, ok := overridden[e.Key]; ok {
+			continue
+		}
+		rows = append(rows, row{e.Key, e.Value, e.Source})
+	}
+	for _, r := range overridden {
+		rows = append(rows, r)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].key < rows[j].key })
+	var sb strings.Builder
+	for _, r := range rows {
+		fmt.Fprintf(&sb, "%-24s %-40s %s\n", r.key, r.value, r.source)
+	}
+	return sb.String()
+}
+
+// sourceValue renders one resolved setting, masking a literal credential the way
+// --effective masks the file's.
+func sourceValue(st *settings, key string) string {
+	switch key {
+	case "model_id":
+		return st.ModelID
+	case "model_base_url":
+		return st.ModelBaseURL
+	case "model_api_key":
+		if strings.HasPrefix(st.ModelAPIKey, "$") || strings.HasPrefix(st.ModelAPIKey, "!") {
+			return st.ModelAPIKey
+		}
+		if st.ModelAPIKey == "" {
+			return "(unset)"
+		}
+		return "[literal, masked]"
+	case "fallback_model_ids":
+		return "[" + strings.Join(st.fallbackModelIDs(), ", ") + "]"
+	case "config":
+		return "[" + strings.Join(st.Files, ", ") + "]"
+	case "record_out":
+		return orUnset(st.RecordOut)
+	case "structured_output":
+		return st.StructuredOutput
+	case "reasoning_effort":
+		return orUnset(st.ReasoningEffort)
+	case "require_parameters":
+		return fmt.Sprintf("%t", st.RequireParams)
+	case "capture_wire":
+		return fmt.Sprintf("%t", st.CaptureWire)
+	case "capture_dir":
+		return orUnset(st.CaptureDir)
+	case "capture_max_bytes":
+		if st.CaptureMaxBytes == 0 {
+			return "(unset)"
+		}
+		return fmt.Sprintf("%d", st.CaptureMaxBytes)
+	case "truncated_out":
+		return orUnset(st.TruncatedOut)
+	case "verify":
+		return fmt.Sprintf("%t", st.Verify)
+	case "related_code":
+		return fmt.Sprintf("%t", st.RelatedCode)
+	case "debug":
+		return fmt.Sprintf("%t", st.Debug)
+	}
+	return "(unset)"
+}
+
+func orUnset(s string) string {
+	if s == "" {
+		return "(unset)"
+	}
+	return s
 }
 
 func runSoak(args []string) error {

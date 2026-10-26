@@ -114,8 +114,7 @@ func testClient(url string) *OpenAICompatClient {
 // manifest. This is the property that lets the feature ship opt-in.
 func TestCaptureOffWritesNothing(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "never-created")
-	t.Setenv(CaptureEnvVar, "")
-	t.Setenv(CaptureDirEnvVar, dir)
+	SetActiveCapture(CaptureFromSettings(CaptureSettings{Dir: dir}))
 	freshActive(t)
 
 	srv := newTestServer(func(w http.ResponseWriter, r *http.Request) {
@@ -470,7 +469,7 @@ func TestCaptureCapsBodyAndSaysSo(t *testing.T) {
 	if !doc.Request.Truncated || doc.Request.OriginalBytes <= captureMinMaxBytes {
 		t.Errorf("the request body was not truncated with a recorded original size: %+v", doc.Request)
 	}
-	if doc.Request.TruncationNote == "" || !strings.Contains(doc.Request.TruncationNote, CaptureMaxEnvVar) {
+	if doc.Request.TruncationNote == "" || !strings.Contains(doc.Request.TruncationNote, "capture_max_bytes") {
 		t.Errorf("truncation_note = %q, want a note naming the setting", doc.Request.TruncationNote)
 	}
 	if doc.Response == nil || !doc.Response.Truncated {
@@ -479,7 +478,7 @@ func TestCaptureCapsBodyAndSaysSo(t *testing.T) {
 	// The note travels with the body, and the body is still the body: the
 	// two masking passes are separate assignments, so neither can overwrite
 	// the other.
-	if doc.Response.TruncationNote == "" || !strings.Contains(doc.Response.TruncationNote, CaptureMaxEnvVar) {
+	if doc.Response.TruncationNote == "" || !strings.Contains(doc.Response.TruncationNote, "capture_max_bytes") {
 		t.Errorf("the response truncation note = %q, want a note naming the setting", doc.Response.TruncationNote)
 	}
 	if !strings.Contains(doc.Response.Text, big) && !strings.Contains(doc.Response.Text, strings.Repeat("x", captureMinMaxBytes/2)) {
@@ -588,37 +587,30 @@ func TestCaptureOneDocumentPerCall(t *testing.T) {
 	}
 }
 
-// The opt-in itself: only the true spellings enable the capture, and the
-// ceiling is the default unless the environment names one. A typo must leave
-// the feature off rather than start writing prompts to disk.
-func TestCaptureFromEnv(t *testing.T) {
+// The settings decide the capture: off unless asked for, the default ceiling
+// unless one is given, and a ceiling outside the supported range clamped to the
+// bound the message names. A typo must leave the feature off rather than start
+// writing prompts to disk.
+func TestCaptureFromSettings(t *testing.T) {
 	dir := t.TempDir()
 	for _, tc := range []struct {
-		env       string
+		on        bool
+		maxBytes  int
 		wantOn    bool
-		maxEnv    string
 		wantBytes int
 	}{
-		{env: "", wantOn: false, wantBytes: DefaultCaptureMaxBytes},
-		{env: "false", wantOn: false, wantBytes: DefaultCaptureMaxBytes},
-		{env: "yes-please", wantOn: false, wantBytes: DefaultCaptureMaxBytes},
-		{env: "1", wantOn: true, wantBytes: DefaultCaptureMaxBytes},
-		{env: "true", wantOn: true, wantBytes: DefaultCaptureMaxBytes},
-		{env: "True", wantOn: true, wantBytes: DefaultCaptureMaxBytes},
-		{env: "true", maxEnv: "4096", wantOn: true, wantBytes: 4096},
-		{env: "true", maxEnv: "16", wantOn: true, wantBytes: captureMinMaxBytes},
-		// Above the ceiling: the message says the ceiling, so the ceiling is
-		// what the capture uses. A log that under-reports the artifact's
-		// size is worse than no log.
-		{env: "true", maxEnv: "1000000000", wantOn: true, wantBytes: captureMaxBytesCeiling},
-		{env: "true", maxEnv: "not-a-number", wantOn: true, wantBytes: DefaultCaptureMaxBytes},
-		{env: "true", maxEnv: "0", wantOn: true, wantBytes: DefaultCaptureMaxBytes},
+		{on: false, wantOn: false, wantBytes: DefaultCaptureMaxBytes},
+		{on: true, wantOn: true, wantBytes: DefaultCaptureMaxBytes},
+		{on: true, maxBytes: 4096, wantOn: true, wantBytes: 4096},
+		// Below the floor and above the ceiling: the message says the bound, so
+		// the bound is what the capture uses. A log that under-reports the
+		// artifact's size is worse than no log.
+		{on: true, maxBytes: 16, wantOn: true, wantBytes: captureMinMaxBytes},
+		{on: true, maxBytes: 1000000000, wantOn: true, wantBytes: captureMaxBytesCeiling},
+		{on: true, maxBytes: -1, wantOn: true, wantBytes: DefaultCaptureMaxBytes},
 	} {
-		t.Run("CITE_CAPTURE_WIRE="+tc.env+"/"+tc.maxEnv, func(t *testing.T) {
-			t.Setenv(CaptureEnvVar, tc.env)
-			t.Setenv(CaptureDirEnvVar, dir)
-			t.Setenv(CaptureMaxEnvVar, tc.maxEnv)
-			got := captureFromEnv()
+		t.Run(fmt.Sprintf("on=%t/%d", tc.on, tc.maxBytes), func(t *testing.T) {
+			got := CaptureFromSettings(CaptureSettings{On: tc.on, Dir: dir, MaxBytes: tc.maxBytes})
 			if tc.wantOn != (got != nil) {
 				t.Fatalf("capture on = %t, want %t", got != nil, tc.wantOn)
 			}
@@ -641,10 +633,8 @@ func TestCaptureFromEnv(t *testing.T) {
 func TestCaptureNeverPrintsItsContents(t *testing.T) {
 	const marker = "a-source-line-that-must-not-be-logged"
 	dir := t.TempDir()
-	t.Setenv(CaptureEnvVar, "true")
-	t.Setenv(CaptureDirEnvVar, dir)
-	t.Setenv(CaptureMaxEnvVar, "")
 	freshActive(t)
+	t.Cleanup(func() { SetActiveCapture(nil) })
 
 	srv := newTestServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(completionBody(marker)))
@@ -654,6 +644,9 @@ func TestCaptureNeverPrintsItsContents(t *testing.T) {
 	c.HTTP = srv.Client()
 
 	stdout, stderr := captureOutput(t, func() {
+		// The one line Cite prints about the capture is printed where the
+		// capture is installed, so that is what this window has to cover.
+		SetActiveCapture(CaptureFromSettings(CaptureSettings{On: true, Dir: dir}))
 		if _, err := c.Complete(context.Background(), CompletionRequest{
 			System: "s", User: marker, MaxOutputTokens: 8,
 		}); err != nil {

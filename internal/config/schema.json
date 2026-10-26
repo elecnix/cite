@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Cite configuration (.github/cite.yml)",
+  "title": "Cite configuration (.github/cite.yml, and any file layered after it)",
   "description": "The complete v1 surface: seven top-level keys plus the extended model block (PLAN §6). Unknown keys are errors, never silently ignored.",
   "type": "object",
   "additionalProperties": false,
@@ -61,6 +61,64 @@
       "type": "array",
       "description": "Ordered model references, exercised by a canary.",
       "items": { "type": "string", "minLength": 1 }
+    },
+    "model_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The model id the client sends. The flag --model-id and the variable MODEL_ID shadow it."
+    },
+    "model_base_url": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The endpoint the client calls. The flag --model-base-url and the variable MODEL_BASE_URL shadow it. In a repository file the base ref governs, never the pull request head (security.md, I3)."
+    },
+    "model_api_key": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[$!]",
+      "description": "A credential reference: $VAR, ${VAR} or !command. The pattern rejects a literal key here as well as in the semantic check, because this file is often a dotfile in a dotfiles repository."
+    },
+    "fallback_model_ids": {
+      "type": "array",
+      "description": "Model ids at the primary endpoint, tried before the `fallback` chain. The action's fallback_model_ids input fills the same list through CITE_FALLBACK_MODELS.",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "capture_wire": {
+      "type": "boolean",
+      "description": "Write one masked document per model call. Off by default; a capture holds the prompt, so treat the directory as private review material."
+    },
+    "capture_dir": {
+      "type": "string",
+      "minLength": 1
+    },
+    "capture_max_bytes": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "truncated_out": {
+      "type": "string",
+      "minLength": 1
+    },
+    "record_out": {
+      "type": "string",
+      "minLength": 1
+    },
+    "structured_output": {
+      "type": "string",
+      "enum": ["response_format", "tools"]
+    },
+    "reasoning_effort": {
+      "type": "string",
+      "minLength": 1
+    },
+    "verify": {
+      "type": "boolean"
+    },
+    "related_code": {
+      "type": "boolean"
+    },
+    "debug": {
+      "type": "boolean"
     }
   },
   "definitions": {

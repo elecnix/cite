@@ -11,7 +11,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -203,6 +202,31 @@ type Config struct {
 	Providers map[string]*model.Provider
 	Roles     map[model.Role]RoleSpec
 	Fallback  []string // ordered model references, exercised by a canary
+
+	// Operator settings (issue #217): how a run reaches its model and what it
+	// writes while doing so. They are legal keys in any file, so a machine
+	// file can carry them, and every one of them also has a flag and an
+	// environment variable. The zero value means "not set here", which is what
+	// lets the caller's ladder tell an unset key from one set to the value that
+	// happens to be its default.
+	ModelID      string
+	ModelBaseURL string
+	ModelAPIKey  string
+	// FallbackModelIDs is the action's fallback_model_ids list: model ids at the
+	// primary endpoint, tried before the `fallback` chain. A bare id in
+	// `fallback` cannot express this once the file declares providers, because
+	// every reference there must resolve to one.
+	FallbackModelIDs []string
+	CaptureWire      *bool
+	CaptureDir       string
+	CaptureMaxBytes  int
+	TruncatedOut     string
+	RecordOut        string
+	StructuredOutput string
+	ReasoningEffort  string
+	Verify           *bool
+	RelatedCode      *bool
+	Debug            *bool
 }
 
 // DefaultBlockingCategories returns the categories eligible to block a merge
@@ -234,15 +258,15 @@ func Default() *Config {
 // Load reads path and returns the parsed configuration. The file is optional:
 // a missing or empty file yields Default(). Parsing is strict and validation
 // aggregates every problem into a single typed error (*ValidationError).
+//
+// It is LoadFiles with one file, so every load names the file and the line a
+// problem sits on.
 func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	l, err := LoadFiles([]string{path})
 	if err != nil {
-		if os.IsNotExist(err) {
-			return Default(), nil
-		}
 		return nil, err
 	}
-	return Parse(data)
+	return l.Config, nil
 }
 
 // Parse parses raw bytes as a Cite configuration.
@@ -270,11 +294,45 @@ func Parse(data []byte) (*Config, error) {
 // credential expression shapes). Problems are appended, never returned early:
 // the user fixes everything in one pass.
 func (c *Config) validate(probs *[]Problem) {
+	c.checkOperatorSettings(probs)
 	c.checkBudgetAndGate(probs)
 	c.checkBlockingSet(probs)
 	c.checkCredentialShapes(probs)
 	c.checkModelRefs(probs)
 	c.checkRoleSpecs(probs)
+}
+
+// checkOperatorSettings validates the issue #217 keys: the ones that say how a
+// run reaches its model rather than how it judges a diff.
+func (c *Config) checkOperatorSettings(probs *[]Problem) {
+	if c.ModelAPIKey != "" {
+		// A reference, never a literal: the file that holds this key is a
+		// dotfile as often as not, and a dotfiles repository publishes what it
+		// holds. The provider block keeps its four shapes for compatibility;
+		// this key starts with the strict one.
+		//
+		// The schema carries the same rule as a pattern, so a file is rejected a
+		// layer earlier. This check is the second one, and it is the one that
+		// reports a Config assembled without the schema.
+		switch {
+		case strings.HasPrefix(c.ModelAPIKey, "$"), strings.HasPrefix(c.ModelAPIKey, "!"):
+			if msg := credentialShapeProblem(c.ModelAPIKey); msg != "" {
+				addf(probs, "model_api_key", "%s", msg)
+			}
+		default:
+			addf(probs, "model_api_key",
+				"must be a reference ($VAR, ${VAR} or !command), never the key itself: this file is often a dotfile in a dotfiles repository, which publishes what it holds")
+		}
+	}
+	if c.CaptureMaxBytes < 0 {
+		addf(probs, "capture_max_bytes", "must not be negative")
+	}
+	switch c.StructuredOutput {
+	case "", string(model.StructuredOutputResponseFormat), string(model.StructuredOutputTools):
+	default:
+		addf(probs, "structured_output", "%q must be %q or %q", c.StructuredOutput,
+			model.StructuredOutputResponseFormat, model.StructuredOutputTools)
+	}
 }
 
 func (c *Config) checkBudgetAndGate(probs *[]Problem) {

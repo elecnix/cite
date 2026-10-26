@@ -221,6 +221,7 @@ func runSignals(args []string) error {
 	prSpec := fs.String("pr", "", "pull request as owner/repo#N")
 	noClassify := fs.Bool("no-classify-replies", false, "skip classifying prose replies with the model")
 	dryRun := fs.Bool("dry-run", false, "report what would be recorded, persist nothing")
+	op := newOperatorFlags(fs, groupConfig|groupEndpoint|groupOutput|groupDiagnostics)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -228,6 +229,11 @@ func runSignals(args []string) error {
 		fs.Usage()
 		return fmt.Errorf("signals: --pr is required")
 	}
+	st, err := op.resolve(givenFlags(fs))
+	if err != nil {
+		return err
+	}
+	st.apply()
 	owner, repo, num, err := parsePRSpec(*prSpec)
 	if err != nil {
 		return err
@@ -339,7 +345,14 @@ func runSignals(args []string) error {
 	// already has its verdicts.
 	classifiedNew := 0
 	if !*noClassify && citeThreads > 0 {
-		mc, merr := model.NewOpenAICompatClient()
+		ep, eperr := st.endpoint()
+		var mc *model.OpenAICompatClient
+		var merr error
+		if eperr == nil {
+			mc, merr = model.NewOpenAICompatClient(ep)
+		} else {
+			merr = eperr
+		}
 		if merr != nil {
 			fmt.Fprintln(os.Stderr, "warning: reply classification skipped:", merr)
 		} else {

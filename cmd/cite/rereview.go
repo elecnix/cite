@@ -29,7 +29,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/elecnix/cite/internal/config"
 	"github.com/elecnix/cite/internal/gate"
 	"github.com/elecnix/cite/internal/githubclient"
 	"github.com/elecnix/cite/internal/instructions"
@@ -64,17 +63,16 @@ func runReReview(args []string) error {
 	repoFlag := fs.String("repo", "", "repository as owner/name")
 	since := fs.Duration("since", 24*time.Hour, "look-back window for merges and bypass-log entries (e.g. 720h)")
 	dryRun := fs.Bool("dry-run", false, "print findings instead of creating issues")
-	cfgPath := fs.String("config", ".github/cite.yml", "config file (optional)")
-	structuredOutput := fs.String("structured-output", os.Getenv("CITE_STRUCTURED_OUTPUT"),
-		"how the model returns schema-shaped JSON: response_format (default) or tools")
-	reasoningEffort := fs.String("reasoning-effort", os.Getenv("CITE_REASONING_EFFORT"),
-		"reasoning_effort sent to the provider; empty omits the field")
-	requireParameters := fs.Bool("require-parameters", envBool("CITE_REQUIRE_PARAMETERS"),
-		"send the router-only provider.require_parameters field, so a router refuses endpoints that drop the request parameters")
+	op := newOperatorFlags(fs, groupConfig|groupEndpoint|groupOutput|groupDiagnostics|groupBehaviour)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	mode, err := model.ParseStructuredOutputMode(*structuredOutput)
+	st, err := op.resolve(givenFlags(fs))
+	if err != nil {
+		return err
+	}
+	st.apply()
+	mode, err := model.ParseStructuredOutputMode(st.StructuredOutput)
 	if err != nil {
 		return fmt.Errorf("re-review: %w", err)
 	}
@@ -91,10 +89,6 @@ func runReReview(args []string) error {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
 		return fmt.Errorf("GITHUB_TOKEN is required for re-review")
-	}
-	cfg, err := loadConfig(*cfgPath)
-	if err != nil {
-		return err
 	}
 	c := githubclient.New(token, "", nil).WithRepo(owner, repo)
 	ctx := context.Background()
@@ -120,7 +114,7 @@ func runReReview(args []string) error {
 		if len(entries) == 0 {
 			continue // bypass log exists but nothing inside the window
 		}
-		findings, verdict, reason, err := rereviewMerged(ctx, c, cfg, owner, repo, mp, mode, *reasoningEffort, *requireParameters)
+		findings, verdict, reason, err := rereviewMerged(ctx, c, st, owner, repo, mp, mode)
 		if err != nil {
 			logToStderr("warning: re-reviewing #%d failed: %v", mp.Number, err)
 			failed++
@@ -189,7 +183,8 @@ func parseBypassLog(body string, cutoff time.Time) []bypassEntry {
 // from the base ref, reviewer.New + gate.Decide — exactly like
 // `cite review --pr`, but with no check run, no review posting, no sticky
 // state: GitHub surfaces are untouched. Only blocking findings come back.
-func rereviewMerged(ctx context.Context, c *githubclient.Client, cfg *config.Config, owner, repo string, mp githubclient.MergedPR, structuredOutput model.StructuredOutputMode, reasoningEffort string, requireParameters bool) ([]model.ValidatedFinding, model.Verdict, string, error) {
+func rereviewMerged(ctx context.Context, c *githubclient.Client, st *settings, owner, repo string, mp githubclient.MergedPR, structuredOutput model.StructuredOutputMode) ([]model.ValidatedFinding, model.Verdict, string, error) {
+	cfg := st.cfg()
 	pr, err := c.GetPR(ctx, mp.Number)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("fetching #%d: %w", mp.Number, err)
@@ -232,7 +227,7 @@ func rereviewMerged(ctx context.Context, c *githubclient.Client, cfg *config.Con
 	// as `cite review --pr` assembles it.
 	diffs := buildRereviewDiffs(entries, extras, logToStderr)
 
-	modelClient, err := newModelClient(cfg)
+	modelClient, err := newModelClient(st)
 	if err != nil {
 		return nil, model.VerdictCouldNotEvaluate, err.Error(), err
 	}
@@ -243,9 +238,9 @@ func rereviewMerged(ctx context.Context, c *githubclient.Client, cfg *config.Con
 		Verifier:          &apiVerifier{c: c, owner: owner, repo: repo, ref: pr.BaseRef, tree: baseTree},
 		Logger:            logToStderr,
 		StructuredOutput:  structuredOutput,
-		ReasoningEffort:   reasoningEffort,
-		RequireParameters: requireParameters,
-		Verify:            verifyEnabled(),
+		ReasoningEffort:   st.ReasoningEffort,
+		RequireParameters: st.RequireParams,
+		Verify:            st.Verify,
 	})
 	rec, err := r.Run(ctx, reviewer.Inputs{
 		Manifest:      entries,
