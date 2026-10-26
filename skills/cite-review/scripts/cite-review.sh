@@ -97,8 +97,10 @@ while [ $# -gt 0 ]; do
       ;;
     *)
       # The value of the pass-through flag just read. It stays in order, and it
-      # is never mistaken for the pull request or for an extra argument.
-      if [ "$after_flag" -eq 1 ]; then
+      # is never mistaken for the pull request or for an extra argument. Before
+      # the target is known, the positional is the target itself, so that
+      # `--verify owner/repo#1` still names a pull request.
+      if [ "$after_flag" -eq 1 ] && [ "$have_target" -eq 1 ]; then
         PASSTHROUGH+=("$1")
         after_flag=0
         shift
