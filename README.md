@@ -136,6 +136,7 @@ The `--report json|markdown` path runs the reviewer against the real pull reques
 - [docs/security.md](docs/security.md) covers the invariants, the fork case, and the capabilities Cite works without.
 - [docs/downstream-contract.md](docs/downstream-contract.md): what an agent consuming these comments must be told
 - [docs/troubleshooting.md](docs/troubleshooting.md): the diagnostic chain, the forensics archive and the opt-in wire capture
+- [skills/cite-review/](skills/cite-review/SKILL.md): an Agent Skill that runs `cite review` in report mode and keeps one directory per run, with a guide to triaging the record
 - [CONFORMANCE.md](CONFORMANCE.md): the compatibility tiers, dated
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 
