@@ -143,5 +143,9 @@ Every field in `record.json`, and what each one answers, is in
 - `no model key found`: set `MODEL_API_KEY`, or pass `--model-api-key`.
 - A provider error: `--debug` writes request and response dumps to `/tmp`, and
   `truncated.json` holds a response the output cap cut off.
+- The cap ran out before the model wrote an answer: every character the provider
+  returned is reasoning, so `record.json` has no `verdict` and the run exits 3.
+  Read the closing line of `run.log`. A larger cap makes this response larger,
+  not smaller, so lower `--reasoning-effort` or review fewer files.
 - A model id on a router needs the prefix that router sells:
   `openai/gpt-5-mini`, not `gpt-5-mini`.
