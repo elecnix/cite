@@ -15,6 +15,7 @@ meaning from a report sentence.
 | `repository`, `pr_number` | what Cite reviewed; `pr_number` is absent in local mode |
 | `head_sha`, `base_ref`, `base_sha`, `merge_base_sha` | which commits the diff came from |
 | `input_hash` | the identity of the reviewed input, so you can compare two runs |
+| `model`, `temperature`, `seed` | the model that answered, and the sampling it ran with |
 
 ## The verdict
 
