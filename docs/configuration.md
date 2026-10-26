@@ -100,6 +100,30 @@ key says which model a role resolves to for the capability table, while
 can disagree with the file, and the GitHub Action's `model_id` input sets this
 flag's variable.
 
+When a run compares models that differ in the capabilities it reads, it has to
+move both. The flag sets the id that crosses the wire, and the file sets the
+capability row: its output cap, its cost rates and its role models.
+
+```yaml
+# .github/cite.yml
+model: gateway/vendor/model-x   # the capability row the run reads
+providers:
+  gateway:
+    base_url: https://gw.example/v1
+    api: openai-completions
+    models:
+      - id: vendor/model-x
+        max_tokens: 65536
+        cost: { input: 1, output: 4 }
+```
+
+```console
+cite review --pr owner/repo#42 --model-id vendor/model-x
+```
+
+A flag alone sends the new id's requests while the run keeps the old row's cap
+and rates, and the cost report follows the row rather than the response.
+
 ### The file list
 
 `--config` takes a file, and the flag may appear more than once:
