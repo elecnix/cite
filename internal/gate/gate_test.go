@@ -506,3 +506,35 @@ func TestGateValuesAreAcceptedButReserved(t *testing.T) {
 		}
 	}
 }
+
+// The context pass shows in the check-run summary, so a comment that failed to
+// post still leaves its answer in the Actions log, and a failed pass says why.
+// None of it touches the verdict or the conclusion.
+func TestCheckRunPayloadShowsTheContextPassWithoutTouchingTheVerdict(t *testing.T) {
+	rec := &model.RunRecord{
+		ContextVerdict:   "MISSING_CONTEXT",
+		ContextQuestions: []string{"Why is the retry limited to one attempt?", "How long was the crash live?"},
+	}
+	title, summary := CheckRunPayload(rec, model.VerdictPass, "ok")
+	if title != "cite: PASS" {
+		t.Errorf("title = %q", title)
+	}
+	for _, want := range []string{"Context: MISSING_CONTEXT", "1. Why is the retry limited to one attempt?", "2. How long was the crash live?"} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("summary lacks %q\n%s", want, summary)
+		}
+	}
+
+	_, summary = CheckRunPayload(&model.RunRecord{ContextVerdict: "COMPLETE"}, model.VerdictPass, "ok")
+	if !strings.Contains(summary, "Context: COMPLETE") {
+		t.Errorf("summary lacks the COMPLETE line\n%s", summary)
+	}
+	_, summary = CheckRunPayload(&model.RunRecord{ContextError: "provider error: 502"}, model.VerdictPass, "ok")
+	if !strings.Contains(summary, "Context: could not run (provider error: 502)") {
+		t.Errorf("summary lacks the failure line\n%s", summary)
+	}
+	_, summary = CheckRunPayload(&model.RunRecord{}, model.VerdictPass, "ok")
+	if strings.Contains(summary, "Context") {
+		t.Errorf("a run that skipped the pass must not mention it\n%s", summary)
+	}
+}

@@ -74,21 +74,30 @@ func fallbackLegs(cfg *config.Config, st *settings) []canaryLeg {
 	}
 	var legs []canaryLeg
 	for _, ref := range cfg.Fallback {
-		pn, mid, qualified := config.SplitModelRef(ref)
-		base := st.ModelBaseURL
-		if base == "" {
-			base = "https://api.openai.com/v1"
+		if l, ok := legFor(cfg, st, ref); ok {
+			legs = append(legs, l)
 		}
-		key := model.CredentialExpr(st.ModelAPIKey)
-		var headers map[string]string
-		if p, ok := cfg.Providers[pn]; ok && qualified {
-			base, key, headers = p.BaseURL, p.APIKey, p.Headers
-		} else if qualified {
-			// An unknown provider while providers are declared: config
-			// validation rejects this earlier; skip defensively.
-			continue
-		}
-		legs = append(legs, canaryLeg{name: ref, baseURL: base, apiKey: key, headers: headers, modelID: mid})
 	}
 	return legs
+}
+
+// legFor resolves one model reference to the endpoint that serves it: a
+// qualified reference takes its provider's base URL, key and headers, and a
+// bare id takes the resolved primary endpoint and credential reference. It
+// reports false for an unknown provider while providers are declared; config
+// validation rejects that earlier, so this is defensive.
+func legFor(cfg *config.Config, st *settings, ref string) (canaryLeg, bool) {
+	pn, mid, qualified := config.SplitModelRef(ref)
+	base := st.ModelBaseURL
+	if base == "" {
+		base = "https://api.openai.com/v1"
+	}
+	key := model.CredentialExpr(st.ModelAPIKey)
+	var headers map[string]string
+	if p, ok := cfg.Providers[pn]; ok && qualified {
+		base, key, headers = p.BaseURL, p.APIKey, p.Headers
+	} else if qualified {
+		return canaryLeg{}, false
+	}
+	return canaryLeg{name: ref, baseURL: base, apiKey: key, headers: headers, modelID: mid}, true
 }

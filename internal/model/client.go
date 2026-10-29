@@ -136,13 +136,17 @@ type Provider struct {
 	Models  []ModelEntry      `json:"models,omitempty"`
 }
 
-// Role names the three roles a reviewer needs (§6).
+// Role names the roles a reviewer needs (§6): review, triage and assemble,
+// and the context pass that reads the pull request description.
 type Role string
 
 const (
 	RoleReview   Role = "review"
 	RoleTriage   Role = "triage"
 	RoleAssemble Role = "assemble"
+	// RoleContext is the pull-request context pass: one call that reads the
+	// description and never the diff.
+	RoleContext Role = "context"
 )
 
 // RoleConfig carries per-role settings, because a slow local model and a fast
@@ -716,8 +720,13 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 	httpReq := map[string]any{
 		"model":       c.Model,
 		"temperature": req.Temperature,
-		"max_tokens":  req.MaxOutputTokens,
 		"messages":    messages,
+	}
+	// An unset cap leaves the field out: a provider then applies its own
+	// ceiling. Only the context pass sets none, to match the request its
+	// classifier was measured with.
+	if req.MaxOutputTokens > 0 {
+		httpReq["max_tokens"] = req.MaxOutputTokens
 	}
 	if req.Seed != nil {
 		httpReq["seed"] = *req.Seed

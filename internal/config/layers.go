@@ -379,6 +379,7 @@ var builtinDefaults = map[string]string{
 	"gate":                "(unset)",
 	"compat_profile":      DefaultCompatProfile,
 	"require_parameters":  "false",
+	"pr_context":          "comment",
 	"blocking_categories": renderCategories(DefaultBlockingCategories()),
 	"verify":              "true",
 	"related_code":        "true",

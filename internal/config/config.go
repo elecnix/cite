@@ -28,6 +28,10 @@ const (
 	GateComment = "comment"
 	GateBlock   = "block"
 
+	// pr_context values. The pass never reaches the gate under either one.
+	PRContextOff     = "off"
+	PRContextComment = "comment"
+
 	MaxCommentsCap = 20 // hard cap enforced by the schema
 )
 
@@ -52,8 +56,13 @@ const (
 // genuinely exceeds these has its failure archived for forensics by the
 // GitHub Action.
 const (
-	DefaultTriageTimeout     = 15 * time.Minute
-	DefaultAssembleTimeout   = 15 * time.Minute
+	DefaultTriageTimeout   = 15 * time.Minute
+	DefaultAssembleTimeout = 15 * time.Minute
+	// DefaultContextTimeout is the context pass's deadline. It is the two
+	// minutes the classifier the pass reproduces gives its own request. The
+	// pass is non-fatal, so a short bound costs a retry on the next run and
+	// nothing else.
+	DefaultContextTimeout    = 2 * time.Minute
 	DefaultReviewConcurrency = 8
 
 	// DefaultReviewTimeout floors the derived review deadline: whatever the
@@ -188,6 +197,11 @@ type Config struct {
 	Gate          string
 	CompatProfile string
 
+	// PRContext is "off" or "comment" (default): whether each review run also
+	// asks the author, in one comment, about facts the description leaves
+	// unexplained. It never reaches the verdict.
+	PRContext string
+
 	// RequireParameters asks OpenRouter-style routers to pick only endpoints
 	// that support every request parameter (notably response_format
 	// json_schema). Off by default; see docs/configuration.md.
@@ -251,6 +265,7 @@ func Default() *Config {
 		MaxComments:        DefaultMaxComments,
 		Gate:               "", // reserved key (issue #86): accepted, selects nothing
 		CompatProfile:      DefaultCompatProfile,
+		PRContext:          PRContextComment,
 		BlockingCategories: DefaultBlockingCategories(),
 	}
 }
@@ -296,6 +311,7 @@ func Parse(data []byte) (*Config, error) {
 func (c *Config) validate(probs *[]Problem) {
 	c.checkOperatorSettings(probs)
 	c.checkBudgetAndGate(probs)
+	c.checkPRContext(probs)
 	c.checkBlockingSet(probs)
 	c.checkCredentialShapes(probs)
 	c.checkModelRefs(probs)
@@ -352,6 +368,14 @@ func (c *Config) checkBudgetAndGate(probs *[]Problem) {
 	case "", GateComment, GateBlock:
 	default:
 		addf(probs, "gate", "%q must be %q or %q", c.Gate, GateComment, GateBlock)
+	}
+}
+
+func (c *Config) checkPRContext(probs *[]Problem) {
+	switch c.PRContext {
+	case PRContextOff, PRContextComment:
+	default:
+		addf(probs, "pr_context", "%q must be %q or %q", c.PRContext, PRContextOff, PRContextComment)
 	}
 }
 
@@ -609,6 +633,8 @@ func configDefaultRoleTimeout(role model.Role) time.Duration {
 		return DefaultTriageTimeout
 	case model.RoleAssemble:
 		return DefaultAssembleTimeout
+	case model.RoleContext:
+		return DefaultContextTimeout
 	}
 	return 0
 }

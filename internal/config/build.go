@@ -39,6 +39,9 @@ func buildConfig(tree interface{}, probs *[]Problem) *Config {
 			c.RequireParameters = b
 		}
 	}
+	if v, ok := m["pr_context"]; ok {
+		c.PRContext = asString(v)
+	}
 	if v, ok := m["gate"]; ok {
 		c.Gate = asString(v)
 	}

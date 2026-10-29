@@ -594,6 +594,23 @@ func reviewPR(spec string, st *settings, cfgErr error, dryRun, disabled, toolFai
 		return concludeFailure(ctx, c, checkID, dryRun, gateOpts, model.VerdictCouldNotEvaluate, err.Error())
 	}
 	verifier := &apiVerifier{c: c, owner: owner, repo: repo, ref: pr.BaseRef, tree: baseTree}
+
+	// The context pass runs beside the review, whether or not the review finds
+	// anything: a diff with no findings and a thin description is the case it
+	// exists for. A failure is recorded and never fatal.
+	var contextDone chan contextOutcome
+	if cfg.PRContext != config.PRContextOff {
+		contextDone = make(chan contextOutcome, 1)
+		go func() {
+			cc, cerr := newContextClient(st, cfg, modelClient)
+			if cerr != nil {
+				contextDone <- contextOutcome{Err: cerr.Error()}
+				return
+			}
+			contextDone <- runContextPass(ctx, cc, cfg, st.RequireParams, pr.Body)
+		}()
+	}
+
 	r := reviewer.New(reviewer.Options{
 		Cfg:               cfg,
 		Client:            modelClient,
@@ -650,6 +667,17 @@ func reviewPR(spec string, st *settings, cfgErr error, dryRun, disabled, toolFai
 		Related:       related,
 		Unchanged:     unchanged,
 	})
+	// The pass finishes before the record is written, so the record carries
+	// it. Its answer is information for the author and is never read by the
+	// gate below.
+	var ctxOutcome contextOutcome
+	if contextDone != nil {
+		ctxOutcome = <-contextDone
+		logContextOutcome(ctxOutcome)
+		if rec != nil {
+			applyContextOutcome(rec, ctxOutcome)
+		}
+	}
 	// Forensics first, whatever the run's fate: a failed or killed run still
 	// carries partial results, the call log and usage — exactly what an
 	// operator needs to answer "why did this take so long".
@@ -809,9 +837,11 @@ func reviewPR(spec string, st *settings, cfgErr error, dryRun, disabled, toolFai
 			}
 		}
 		writeSticky(ctx, c, num, stickyMarkerFor(reviewerID), rec, ledger, completedSHAs(rec.Files, curSHAs), standingFindings(rec.Findings, plan))
+		postContextComment(ctx, c, num, reviewerID, ctxOutcome, false)
 	} else {
 		fmt.Printf("dry-run: would post %d comment(s), resolve %d thread(s), minimise %d\n",
 			len(comments), len(plan.ThreadsToResolve), len(plan.ThreadsToMinimise))
+		postContextComment(ctx, c, num, reviewerID, ctxOutcome, true)
 	}
 
 	title, summary := gate.CheckRunPayload(rec, verdict, reason)
