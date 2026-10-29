@@ -241,17 +241,23 @@ case "$slug" in
 esac
 
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
-dir="$ROOT/$owner/$repo_name/$group/$stamp-$slug"
-n=1
-while [ -e "$dir" ]; do            # two runs inside one second never share a directory
-  n=$((n + 1))
-  dir="$ROOT/$owner/$repo_name/$group/$stamp-$slug-$n"
-done
+parent="$ROOT/$owner/$repo_name/$group"
 
 # The wire capture carries the prompt and therefore the reviewed diff, so the
 # whole run directory is private: 0700 directories, 0600 files.
 umask 077
-mkdir -p "$dir/wire" || die "cannot create $dir"
+mkdir -p "$parent" || die "cannot create $parent"
+
+# mkdir without -p is the claim: it fails when the directory exists, so two runs
+# inside one second never share one, and no check-then-create gap remains.
+dir="$parent/$stamp-$slug"
+n=1
+until mkdir "$dir" 2>/dev/null; do
+  [ -d "$dir" ] || die "cannot create $dir"
+  n=$((n + 1))
+  dir="$parent/$stamp-$slug-$n"
+done
+mkdir "$dir/wire" || die "cannot create $dir/wire"
 
 report="$dir/report.md"
 report_json="$dir/report.json"
