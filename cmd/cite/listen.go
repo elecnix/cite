@@ -265,7 +265,7 @@ func runSignals(args []string) error {
 		assocByID[cm.ID] = cm.AuthorAssociation
 	}
 
-	prevState := readSticky(ctx, c, num, stickyMarkerFor(defaultReviewerID))
+	prevState := readSticky(ctx, c, num, stickyMarkerFor(defaultReviewerID), pr.AuthorLogin)
 	ledger := publisher.DismissalLedger{}
 	replyVerdicts := map[string]string{}
 	if prevState.ReplyVerdicts != nil {
@@ -404,7 +404,7 @@ func runSignals(args []string) error {
 	}
 
 	if classifiedNew > 0 || dismissals > 0 || accepted > 0 || byResolution > 0 {
-		if err := updateStickyLedger(ctx, c, num, ledger, replyVerdicts); err != nil {
+		if err := updateStickyLedger(ctx, c, num, pr.AuthorLogin, ledger, replyVerdicts); err != nil {
 			return err
 		}
 		fmt.Printf("ledger persisted: %d entr(y/ies), %d classified repl(y/ies)\n",
@@ -417,12 +417,12 @@ func runSignals(args []string) error {
 // the sticky comment's state blob, preserving BlobSHAs and Findings written
 // by the last review run. writeSticky cannot be reused here: it rebuilds the
 // whole state from a RunRecord, which signals does not have.
-func updateStickyLedger(ctx context.Context, c *githubclient.Client, prNum int, ledger publisher.DismissalLedger, replyVerdicts map[string]string) error {
+func updateStickyLedger(ctx context.Context, c *githubclient.Client, prNum int, prAuthor string, ledger publisher.DismissalLedger, replyVerdicts map[string]string) error {
 	blob, err := ledger.MarshalBlob()
 	if err != nil {
 		return fmt.Errorf("marshalling ledger: %w", err)
 	}
-	st := readSticky(ctx, c, prNum, stickyMarkerFor(defaultReviewerID))
+	st := readSticky(ctx, c, prNum, stickyMarkerFor(defaultReviewerID), prAuthor)
 	st.Ledger = blob
 	if len(replyVerdicts) > 0 {
 		st.ReplyVerdicts = replyVerdicts

@@ -29,3 +29,35 @@ func TestUnchangedFileIsSkippedWithoutAModelCall(t *testing.T) {
 		t.Fatal("an unchanged file must count toward coverage")
 	}
 }
+
+// A second push that touches one of two files sends only that file to the
+// model; the other file is recorded as an approved skip, so coverage still
+// spans the whole pull request.
+func TestSecondPushSendsOnlyTheTouchedFileToTheModel(t *testing.T) {
+	c := &fakeClient{fn: defaultScript("a.go", "b.go")}
+	in := baseInputs()
+	b := *in.Diffs["a.go"]
+	b.Path = "b.go"
+	in.Manifest = append(in.Manifest, scope.ManifestEntry{Status: "M", Path: "b.go"})
+	in.Diffs["b.go"] = &b
+	in.PostImage["b.go"] = in.PostImage["a.go"]
+	in.Unchanged = map[string]bool{"a.go": true}
+
+	rec, err := runOnce(t, in, baseOptions(c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewed := map[string]bool{}
+	for _, call := range c.calls {
+		if !isTriageCall(call) {
+			reviewed[requestPath(call)] = true
+		}
+	}
+	if reviewed["a.go"] || !reviewed["b.go"] {
+		t.Fatalf("files sent for review = %v, want only b.go", reviewed)
+	}
+	cov := scope.ComputeCoverage(rec.Files, len(in.Manifest))
+	if !cov.Complete {
+		t.Fatalf("coverage = %+v, want every file accounted for", cov)
+	}
+}

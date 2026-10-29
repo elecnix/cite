@@ -461,6 +461,47 @@ func (c *Client) FindIssueComment(ctx context.Context, prNum int, marker string)
 	return 0, "", false, nil
 }
 
+// FindTrustedIssueComment is FindIssueComment for state the reviewer acts on.
+// Anyone can comment on a public pull request, and the pull request's author
+// controls its diff, so a comment carries the marker only if its author is a
+// bot or holds a repository role (owner, member or collaborator) and is not
+// the pull request's author (§12, I2). The newest such comment wins; when none
+// qualifies the answer is not found, which a caller reads as a missing state.
+func (c *Client) FindTrustedIssueComment(ctx context.Context, prNum int, marker, prAuthor string) (id int64, body string, found bool, err error) {
+	raws, err := c.listPaginated(ctx, fmt.Sprintf("repos/%s/%s/issues/%d/comments", c.owner, c.repo, prNum))
+	if err != nil {
+		return 0, "", false, err
+	}
+	for i := len(raws) - 1; i >= 0; i-- {
+		var cm struct {
+			ID   int64  `json:"id"`
+			Body string `json:"body"`
+			User struct {
+				Login string `json:"login"`
+				Type  string `json:"type"`
+			} `json:"user"`
+			AuthorAssociation string `json:"author_association"`
+		}
+		if err := json.Unmarshal(raws[i], &cm); err != nil {
+			return 0, "", false, fmt.Errorf("decoding github response: %w", err)
+		}
+		if marker == "" || !strings.Contains(cm.Body, marker) {
+			continue
+		}
+		if cm.User.Login == "" || strings.EqualFold(cm.User.Login, prAuthor) {
+			continue
+		}
+		switch {
+		case cm.User.Type == "Bot":
+		case cm.AuthorAssociation == "OWNER", cm.AuthorAssociation == "MEMBER", cm.AuthorAssociation == "COLLABORATOR":
+		default:
+			continue
+		}
+		return cm.ID, cm.Body, true, nil
+	}
+	return 0, "", false, nil
+}
+
 // findStickyComment scans the issue comments for one whose body contains
 // marker, following pagination; later pages win so the newest duplicate is
 // updated.

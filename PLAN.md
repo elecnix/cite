@@ -961,6 +961,18 @@ pull request event at all, and carried-forward findings must not survive it.
 When in doubt, incremental **fails toward re-review**, never toward carry-forward. A silently
 un-raised finding is the failure mode that ends the tool's credibility in one afternoon.
 
+A file whose blob SHA matches the one a completed earlier review recorded is not sent to the model
+again. It counts toward coverage as an approved skip, and its earlier findings carry forward with the
+block they earned when posted, so the verdict still covers the whole pull request. The sticky state
+also records the head and the merge base it was written for. A run reuses the state only when the
+merge base is unchanged and the compare API reports the earlier head as an ancestor of the current
+one. A force push, a reset, a rebase onto a new base, a missing commit, a failed comparison, and a
+state without these fields all answer with a full review.
+
+Only the sticky comment of a bot or a repository collaborator is read, and never one written by the
+pull request's author (I2). The state decides which files the reviewer skips, so a forged marker
+comment from the author would otherwise let them hide a file from review.
+
 ### State storage and the ledger
 
 GitHub is the source of truth, and the ledger is a rebuildable cache. It is persisted as a base64
