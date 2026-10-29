@@ -48,7 +48,7 @@ func localRun(t *testing.T, response string) (stdout string, published string, r
 
 	var report bytes.Buffer
 	stdout = captureStdout(t, func() {
-		err := reviewLocal(diffPath, "", cfgPath, model.StructuredOutputResponseFormat, "", false, publisher.MarkdownReportSink(&report))
+		err := reviewLocal(diffPath, "", mustSettings(t, cfgPath), model.StructuredOutputResponseFormat, publisher.MarkdownReportSink(&report))
 		if err != nil {
 			t.Fatalf("reviewLocal: %v", err)
 		}
@@ -63,7 +63,7 @@ func localRun(t *testing.T, response string) (stdout string, published string, r
 	// same shape, which is where the record is written in production.
 	var jsonReport bytes.Buffer
 	_ = captureStdout(t, func() {
-		err := reviewLocal(diffPath, "", cfgPath, model.StructuredOutputResponseFormat, "", false, publisher.JSONReportSink(&jsonReport))
+		err := reviewLocal(diffPath, "", mustSettings(t, cfgPath), model.StructuredOutputResponseFormat, publisher.JSONReportSink(&jsonReport))
 		if err != nil {
 			t.Fatalf("reviewLocal: %v", err)
 		}
