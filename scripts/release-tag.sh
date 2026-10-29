@@ -226,7 +226,10 @@ else
   before="$(grep -c -E '^const version = "[^"]+"$' cmd/cite/main.go || true)"
   [ "$before" = "1" ] ||
     fail "cmd/cite/main.go has $before 'const version' lines, expected exactly one"
-  sed -i -E "s|^const version = \"[^\"]+\"$|const version = \"$version\"|" cmd/cite/main.go
+  # No `sed -i`: BSD sed (macOS) reads the next argument as the backup suffix, so
+  # `-i -E` wrote cmd/cite/main.go-E and left the version line unchanged.
+  sed -E "s|^const version = \"[^\"]+\"$|const version = \"$version\"|" cmd/cite/main.go >cmd/cite/main.go.new &&
+    mv cmd/cite/main.go.new cmd/cite/main.go
   # `-F -x` and not an ERE built from the version: `version_re` above allows
   # `1.0.0+build1`, and interpolated into a pattern the `+` is a quantifier, so the
   # assertion counted zero lines and failed *after* both files were written, leaving a
