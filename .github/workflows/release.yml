@@ -116,3 +116,93 @@ jobs:
         with:
           files: assets/cite-*
           generate_release_notes: true
+
+  # After the binaries are attached, because everything above can succeed and still
+  # leave a release nobody can use: an asset missing from the release, an upload that
+  # produced an empty file, a binary built from a tree naming a different version.
+  # Each of those is indistinguishable from a good release until a consumer's
+  # workflow fails on it, which is the worst place to find out.
+  #
+  # No `uses:` step on purpose: `gh` and `curl` are already on the runner, and every
+  # action added here would be another pin to keep current for a job that only reads.
+  verify:
+    name: verify the attached binaries
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Every binary is attached and downloadable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          # A release nobody can use is the failure this job exists to name, so it names
+          # every problem it finds rather than the first: one run should be enough to
+          # know what to fix. Each failure below marks the run and continues, and the
+          # step fails once at the end.
+          failed=0
+          gh release view "$tag" -R "$GITHUB_REPOSITORY" --json assets >/dev/null || {
+            echo "release $tag does not exist"
+            exit 1
+          }
+          for arch in linux-amd64 linux-arm64 darwin-arm64; do
+            name="cite-$arch"
+            json="$(gh release view "$tag" -R "$GITHUB_REPOSITORY" --json assets \
+              --jq ".assets[] | select(.name == \"$name\") | {url, size, state}")"
+            if [ -z "$json" ]; then
+              echo "$name is not attached to $tag"
+              failed=1
+              continue
+            fi
+            url="$(printf '%s' "$json" | jq -r .url)"
+            size="$(printf '%s' "$json" | jq -r .size)"
+            state="$(printf '%s' "$json" | jq -r .state)"
+            if [ "$state" != "uploaded" ]; then
+              echo "$name is in state $state"
+              failed=1
+              continue
+            fi
+            if [ "$size" -le 0 ]; then
+              echo "$name is empty"
+              failed=1
+              continue
+            fi
+            # The URL a consumer's action downloads from, and a real status code: the
+            # release knowing the asset exists is not the same thing as it being
+            # fetchable, and that difference shows up in somebody else's CI. A transport
+            # failure is reported rather than left to curl, so the diagnostic survives.
+            code="$(curl -sS -o /dev/null -w '%{http_code}' -L "$url" 2>/dev/null)" || code=""
+            if [ -z "$code" ]; then
+              echo "$name could not be fetched from $url"
+              failed=1
+              continue
+            fi
+            if [ "$code" != "200" ]; then
+              echo "$name answered HTTP $code"
+              failed=1
+              continue
+            fi
+            echo "$name: HTTP 200, $size bytes"
+          done
+          [ "$failed" -eq 0 ]
+
+      - name: The binary reports the version it was released under
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The artifact of record, run rather than listed: a release whose binary
+          # prints a different version than its tag is the same disagreement the pins
+          # job checks for in the tree, asked here of what was actually published.
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" \
+            --pattern 'cite-linux-amd64' --clobber
+          chmod +x cite-linux-amd64
+          reported="$(./cite-linux-amd64 version)"
+          expected="cite ${GITHUB_REF_NAME#v}"
+          [ "$reported" = "$expected" ] || {
+            echo "the attached binary reports '$reported', the tag names '$expected'"
+            exit 1
+          }
+          echo "$reported"
