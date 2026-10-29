@@ -997,7 +997,15 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 			// Printing the cap wording for a response that never reached the
 			// cap states a number Cite cannot verify and then tells the
 			// operator it does not matter.
-			where := fmt.Sprintf("the whole %d-token output cap was spent and no answer was written", req.MaxOutputTokens)
+			//
+			// A request that set no cap (the context pass) has no cap to
+			// have spent, so its wording names the limit the provider
+			// applied instead.
+			capSpent := fmt.Sprintf("the whole %d-token output cap was spent", req.MaxOutputTokens)
+			if req.MaxOutputTokens == 0 {
+				capSpent = fmt.Sprintf("the provider's own output limit of %d tokens was reached (the request set no cap)", usage.OutputTokens)
+			}
+			where := capSpent + " and no answer was written"
 			switch {
 			case usage.ReasoningTokens > 0:
 				where = fmt.Sprintf("%d of %d output tokens went to reasoning and no answer was written",
@@ -1015,8 +1023,9 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 				// A response with no usage object reads as zero output
 				// tokens, and zero is not a ceiling anyone stopped at, so
 				// that case says the count is missing instead of quoting it.
-				spent := fmt.Sprintf("the whole %d-token output cap was spent", req.MaxOutputTokens)
+				spent := capSpent
 				switch {
+				case req.MaxOutputTokens == 0:
 				case usage.OutputTokens == 0:
 					spent = fmt.Sprintf("the provider reported no output token count against the %d requested", req.MaxOutputTokens)
 				case usage.OutputTokens < req.MaxOutputTokens:

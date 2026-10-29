@@ -276,7 +276,7 @@ Cite has never heard of. With neither, the run reports $0.
 
 ## Roles
 
-One model string is enough for small teams. A reviewer actually runs three
+One model string is enough for small teams. A reviewer actually runs four
 distinct jobs, and they have different tolerances:
 
 ```yaml
@@ -284,6 +284,7 @@ roles:
   review:   { model: gateway/vendor/model-x, timeout: 90s, max_output_tokens: 8192, concurrency: 8 }
   triage:   { model: gateway/cheap-model,    timeout: 30s }
   assemble: { model: gateway/cheap-model,    timeout: 60s }
+  context:  { model: gateway/cheap-model,    timeout: 30s }
 ```
 
 - **`review`**: the expensive pass over flagged files. Longest timeout, largest

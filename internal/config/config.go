@@ -603,7 +603,7 @@ func (c *Config) roleModel(role model.Role) string {
 	return c.Model
 }
 
-// Role resolves the effective settings for one of the three roles (review,
+// Role resolves the effective settings for one of the roles (review,
 // triage, assemble), stating the built-in defaults this package owns:
 // review concurrency DefaultReviewConcurrency, the review output cap
 // DefaultReviewMaxOutputTokens, and the triage and assemble timeouts of 15
