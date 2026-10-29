@@ -453,6 +453,12 @@ type stickyState struct {
 	// errored ones included, so its SHAs never decide that a file may be
 	// skipped as unchanged.
 	DeltaSafe bool `json:"delta_safe,omitempty"`
+	// HeadSHA and MergeBaseSHA name the head the state was written for and
+	// the merge base it was reviewed against. A later run reuses the state
+	// only when the old head is an ancestor of the new one on the same merge
+	// base (deltaBasisHolds); a state without them is never reused.
+	HeadSHA      string `json:"head_sha,omitempty"`
+	MergeBaseSHA string `json:"merge_base_sha,omitempty"`
 }
 
 const stickyMarker = "<!-- cite-sticky -->"
@@ -618,13 +624,15 @@ func reviewPR(spec string, st *settings, cfgErr error, dryRun, disabled, toolFai
 	// review, and an untouched file cannot surface new findings because a
 	// model answered differently the second time (issue #132).
 	var prevState *stickyState
+	deltaOK := false
 	unchanged := map[string]bool{}
 	if !reportMode {
-		prevState = readSticky(ctx, c, num, stickyMarkerFor(reviewerID))
-		for _, e := range entries {
-			if x, ok := extras[e.Path]; ok && prevState.DeltaSafe && e.Status != "D" && x.BlobSHA != "" && prevState.BlobSHAs[e.Path] == x.BlobSHA {
-				unchanged[e.Path] = true
-			}
+		prevState = readSticky(ctx, c, num, stickyMarkerFor(reviewerID), pr.AuthorLogin)
+		deltaOK = deltaBasisHolds(ctx, c, prevState, pr.HeadSHA, mergeBase)
+		if deltaOK {
+			unchanged = unchangedFiles(entries, extras, prevState)
+		} else if len(prevState.BlobSHAs) > 0 {
+			logToStderr("delta: the earlier head is not an ancestor of this one on the same merge base, or its state is unusable; reviewing every file")
 		}
 		if len(unchanged) > 0 {
 			logToStderr("delta: %d of %d files are unchanged since a completed review and carry their findings forward", len(unchanged), len(entries))
@@ -698,7 +706,7 @@ func reviewPR(spec string, st *settings, cfgErr error, dryRun, disabled, toolFai
 		// re-review: carried findings re-enter the plan so their threads stay
 		// alive.
 		toReview := publisher.FilesToReview(prevState.BlobSHAs, curSHAs)
-		if len(prevState.BlobSHAs) > 0 && len(toReview) < len(entries) {
+		if deltaOK && len(prevState.BlobSHAs) > 0 && len(toReview) < len(entries) {
 			logToStderr("incremental: %d of %d files changed content since last review", len(toReview), len(entries))
 			manifestSet := make(map[string]bool, len(entries))
 			for _, e := range entries {
@@ -1007,6 +1015,50 @@ func carryBlockingSet(cfg *config.Config) map[model.Category]bool {
 		set[c] = true
 	}
 	return set
+}
+
+// headComparer is the slice of the GitHub client that deltaBasisHolds needs.
+type headComparer interface {
+	CompareStatus(ctx context.Context, base, head string) (string, error)
+}
+
+// deltaBasisHolds reports whether the earlier run's state may stand in for a
+// review of the files it covers. It holds only when the state records a head
+// and a merge base, the merge base is the one this run computed, and GitHub
+// says the earlier head is an ancestor of the current one. A force push
+// replaces history, and a rebase or a base change moves the merge base; both
+// change what the reviewer is shown, so the answer is a full review. Every
+// doubt, a failed comparison included, answers false (§10: fail toward
+// re-review). Nothing here reads a value the pull request's author writes:
+// the SHAs come from the trusted state comment and the GitHub API (§12).
+func deltaBasisHolds(ctx context.Context, cmp headComparer, prev *stickyState, headSHA, mergeBase string) bool {
+	if prev == nil || !prev.DeltaSafe || prev.HeadSHA == "" || prev.MergeBaseSHA == "" || mergeBase == "" || headSHA == "" {
+		return false
+	}
+	if prev.MergeBaseSHA != mergeBase {
+		return false
+	}
+	status, err := cmp.CompareStatus(ctx, prev.HeadSHA, headSHA)
+	if err != nil {
+		return false
+	}
+	return status == "ahead" || status == "identical"
+}
+
+// unchangedFiles names the files whose content equals what a completed
+// earlier review recorded. A deleted file has no content to skip.
+func unchangedFiles(entries []scope.ManifestEntry, extras map[string]githubclient.FileExtra, prev *stickyState) map[string]bool {
+	out := map[string]bool{}
+	for _, e := range entries {
+		x, ok := extras[e.Path]
+		if ok && e.Status != "D" && x.BlobSHA != "" && prev.BlobSHAs[e.Path] == x.BlobSHA {
+			out[e.Path] = true
+		}
+	}
+	if len(out) > 0 {
+		logToStderr("delta: %d of %d files are unchanged since a completed review and carry their findings forward", len(out), len(entries))
+	}
+	return out
 }
 
 // completedSHAs keeps the blob SHA of each file whose review completed, or

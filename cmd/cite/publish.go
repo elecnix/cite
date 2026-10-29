@@ -276,13 +276,16 @@ func modifiedInstructionsNote(rec *model.RunRecord) string {
 
 // --- sticky comment state ---------------------------------------------------
 
-func readSticky(ctx context.Context, c *githubclient.Client, prNum int, marker string) *stickyState {
+// readSticky reads the state block of the sticky comment. The state decides
+// which files the reviewer skips and which dismissals hold, so only a comment
+// by a bot or a collaborator is read, never one by the pull request's author
+// (§12, I2). Anything else reads as an empty state: a full review.
+func readSticky(ctx context.Context, c *githubclient.Client, prNum int, marker, prAuthor string) *stickyState {
 	st := &stickyState{}
-	id, body, found, err := c.FindIssueComment(ctx, prNum, marker)
+	_, body, found, err := c.FindTrustedIssueComment(ctx, prNum, marker, prAuthor)
 	if err != nil || !found {
 		return st
 	}
-	_ = id
 	i := strings.Index(body, "<!-- cite-state=")
 	j := strings.Index(body, " -->")
 	if i < 0 || j < 0 || j <= i {
@@ -309,7 +312,7 @@ func writeSticky(ctx context.Context, c *githubclient.Client, prNum int, marker 
 			Title: f.Title, Evidence: f.Evidence, Blocks: f.Blocks,
 		})
 	}
-	st := stickyState{Ledger: blob, BlobSHAs: shas, Findings: tfs, DeltaSafe: true}
+	st := stickyState{Ledger: blob, BlobSHAs: shas, Findings: tfs, DeltaSafe: true, HeadSHA: rec.HeadSHA, MergeBaseSHA: rec.MergeBaseSHA}
 	raw, _ := json.Marshal(st)
 	var sb strings.Builder
 	sb.WriteString(marker + "\n")

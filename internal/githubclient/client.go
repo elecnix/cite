@@ -488,6 +488,23 @@ func (c *Client) GetMergeBase(ctx context.Context, base, head string) (string, e
 	return raw.MergeBaseCommit.SHA, nil
 }
 
+// CompareStatus returns how head relates to base according to the compare
+// API: "ahead" or "identical" when base is an ancestor of head, "behind" or
+// "diverged" when history was replaced. A base that GitHub no longer has is
+// an error, so a caller cannot read a missing commit as an ancestor.
+func (c *Client) CompareStatus(ctx context.Context, base, head string) (string, error) {
+	var raw struct {
+		Status string `json:"status"`
+	}
+	err := c.do(ctx, http.MethodGet,
+		fmt.Sprintf("repos/%s/%s/compare/%s...%s", c.owner, c.repo, url.PathEscape(base), url.PathEscape(head)),
+		nil, nil, &raw)
+	if err != nil {
+		return "", err
+	}
+	return raw.Status, nil
+}
+
 // sortStrings sorts in place; used by the tree adapters to keep List output
 // lexically ordered as the Tree contract requires.
 func sortStrings(s []string) { sort.Strings(s) }
