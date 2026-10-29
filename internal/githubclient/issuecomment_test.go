@@ -17,7 +17,8 @@ func TestFindIssueCommentWithNodeCarriesBothIDs(t *testing.T) {
 		fmt.Fprint(w, `[
 			{"id":1,"node_id":"IC_one","body":"unrelated"},
 			{"id":2,"node_id":"IC_two","body":"<!-- cite-context -->\nold"},
-			{"id":3,"node_id":"IC_three","body":"<!-- cite-context -->\nnewer duplicate"}
+			{"id":3,"node_id":"IC_three","body":"<!-- cite-context -->\nnewer duplicate"},
+			{"id":4,"node_id":"IC_four","body":"> <!-- cite-context -->\nquote-reply by a person"}
 		]`)
 	}))
 	got, found, err := c.FindIssueCommentWithNode(context.Background(), 7, "<!-- cite-context -->")
@@ -25,7 +26,7 @@ func TestFindIssueCommentWithNodeCarriesBothIDs(t *testing.T) {
 		t.Fatalf("found=%v err=%v", found, err)
 	}
 	if got.ID != 3 || got.NodeID != "IC_three" || !strings.Contains(got.Body, "newer duplicate") {
-		t.Fatalf("the newest match wins, got %+v", got)
+		t.Fatalf("the newest comment that opens with the marker wins, not a quote-reply, got %+v", got)
 	}
 	if _, found, _ := c.FindIssueCommentWithNode(context.Background(), 7, "<!-- absent -->"); found {
 		t.Fatal("an absent marker must report not found")

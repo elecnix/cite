@@ -31,12 +31,7 @@ const (
 // contextMarkerFor is the context-comment marker for this identity, derived the
 // way stickyMarkerFor derives its own: the identity goes in before the closing,
 // so no marker is a substring of another.
-func contextMarkerFor(id string) string {
-	if id == defaultReviewerID {
-		return contextMarker
-	}
-	return contextMarker[:len(contextMarker)-len(" -->")] + " " + id + " -->"
-}
+func contextMarkerFor(id string) string { return markerFor(contextMarker, id) }
 
 // contextOutcome is what one pass produced. Err set means the pass failed and
 // Verdict is empty. Questions are already cleaned for rendering.

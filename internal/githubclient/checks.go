@@ -470,7 +470,7 @@ type IssueComment struct {
 	Body   string
 }
 
-// FindIssueCommentWithNode returns the newest issue comment containing marker,
+// FindIssueCommentWithNode returns the newest issue comment that opens with marker,
 // with both of its ids. FindIssueComment drops the node id, and a caller that
 // minimizes the comment afterwards needs it.
 func (c *Client) FindIssueCommentWithNode(ctx context.Context, prNum int, marker string) (IssueComment, bool, error) {
@@ -487,7 +487,9 @@ func (c *Client) FindIssueCommentWithNode(ctx context.Context, prNum int, marker
 		if err := json.Unmarshal(raws[i], &cm); err != nil {
 			return IssueComment{}, false, fmt.Errorf("decoding github response: %w", err)
 		}
-		if marker != "" && strings.Contains(cm.Body, marker) {
+		// The marker must open the body: a quote-reply carries it too, after
+		// a "> ", and must not displace the comment Cite wrote.
+		if marker != "" && strings.HasPrefix(cm.Body, marker) {
 			return IssueComment{ID: cm.ID, NodeID: cm.NodeID, Body: cm.Body}, true, nil
 		}
 	}

@@ -32,7 +32,7 @@ compat_profile: "2026-08"     # which snapshot of the instruction formats to hon
 | `require_parameters` | `false` | Ask OpenRouter-style routers to route only to endpoints that support every request parameter. See [Require parameters](#require-parameters). |
 | `pr_context` | `comment` | `comment` posts the author one comment of questions about facts the pull request description leaves unexplained. `off` skips the pass. It never reaches the verdict. See [Pull request context](#pull-request-context). |
 
-Seven keys. A v1 with more than ten has already lost.
+Eight keys. A v1 with more than ten has already lost.
 
 The keys above say how a review reads code. The action's inputs live in the
 workflow instead, and two of them say what a run archives: `archive_on_failure`
@@ -440,7 +440,7 @@ the pass uses the review's model.
 **The comment.** The questions go in one comment marked
 `<!-- cite-context -->`, separate from the sticky comment because `cite listen`
 rewrites the sticky comment. Cite edits that comment in place on later runs, so
-the thread shows one. It is not pinned. When a later description reports
+the thread shows one. Cite leaves it unpinned. When a later description reports
 `COMPLETE`, Cite hides the comment with GitHub's minimized state and rewrites it
 to one line, so the history stays and the questions leave the default view.
 Cite applies the minimized state once and never removes it. If a later description regresses,
