@@ -1,0 +1,10 @@
+{
+  "description": "Add Policy.NextAttempt, the due time of the nth retry measured from the first failure.",
+  "must_not_flag": [
+    {
+      "path": "retry.go",
+      "lines": [14, 14],
+      "why": "attempt counts from 1, so the first retry is due one interval after the failure and the third three intervals after, as the test states. The arithmetic is correct."
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "description": "Add Policy.NextAttempt, the due time of the nth retry measured from the first failure.",
+  "must_flag": [
+    {
+      "path": "retry.go",
+      "lines": [14, 14],
+      "rubric": "The delay is (attempt - 1) intervals, so the first retry is due at the failure time itself and every later retry fires one interval early. The doc comment and the test both want attempt * Interval."
+    }
+  ]
+}

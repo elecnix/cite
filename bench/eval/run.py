@@ -32,6 +32,20 @@ file at head, and is replaced before the diff is taken, so the planted
 line is part of the change under review. A must_flag label on the planted
 line measures recall on a known defect in real code.
 
+Fixture cases (bench/eval/fixtures/<id>/) hold their code in this repository
+instead of pinning a pull request, so they run offline:
+
+    <id>/case.json   id, description, config, must_flag, must_not_flag
+    <id>/base/       the tree before the change
+    <id>/steps/NN/   files to add or overwrite in commit NN (a `.delete` file
+                     lists paths to remove, one per line)
+
+The harness commits base, then each step, in a temporary repository with a
+fixed identity and dates (see fixture.py), diffs the first commit against the
+last, and reviews that diff like any other case. Labels are post-change line
+numbers at the last commit. Point the harness at bench/eval/fixtures, one
+fixture directory, or mix them with pinned cases in one invocation.
+
 Lines are post-change line numbers at head. A finding hits a label when its
 path matches and its anchor overlaps the label's range widened by --slack.
 A case with neither list is a clean case: every finding on it is a false
@@ -52,6 +66,8 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+
+from fixture import build_repo
 
 
 def sh(args, cwd=None, check=True, capture=True, env=None):
@@ -156,13 +172,51 @@ def score(case, record, slack):
     }
 
 
-def run_case(case, args, rep):
-    bare = ensure_repo(Path(args.cache), case["repo"], [case["base"], case["head"]])
-    # Absolute: cite runs inside the temporary worktree, so a relative path
-    # would put the record in a directory deleted before it is read.
+def review(case, args, rep, cwd, diff, tmp):
+    """Run `cite review --diff` on diff from cwd, then score the run record."""
+    # Absolute: cite runs inside cwd, which may be deleted before the record
+    # is read, so a relative path would lose it.
     out_dir = Path(args.out).resolve() / case["id"]
     out_dir.mkdir(parents=True, exist_ok=True)
-    elapsed = 0.0
+    diff_path = Path(tmp) / "pr.diff"
+    diff_path.write_text(diff)
+    cfg_path = Path(tmp) / "cite.yml"
+    cfg_path.write_text(case.get("config", ""))
+    desc_path = Path(tmp) / "body.md"
+    desc_path.write_text(case.get("description", ""))
+    record_path = out_dir / f"record-{rep}.json"
+    log_path = out_dir / f"log-{rep}.txt"
+    cmd = [str(Path(args.cite).resolve()), "review", "--diff", str(diff_path), "--config", str(cfg_path),
+           "--report", "json", "--out", str(record_path)]
+    if case.get("description"):
+        cmd += ["--description", str(desc_path)]
+    t0 = time.time()
+    r = subprocess.run(cmd, cwd=cwd, env=dict(os.environ), text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    elapsed = time.time() - t0
+    log_path.write_text(r.stdout)
+    if not record_path.exists():
+        return {"id": case["id"], "rep": rep, "error": "no run record", "elapsed": elapsed}
+    try:
+        record = json.loads(record_path.read_text()).get("run") or {}
+    except (OSError, ValueError) as e:
+        return {"id": case["id"], "rep": rep, "error": f"unreadable run record: {e}", "elapsed": elapsed}
+    s = score(case, record, args.slack)
+    s.update({"id": case["id"], "rep": rep, "elapsed": round(elapsed, 1)})
+    return s
+
+
+def run_fixture_case(case, args, rep):
+    """Build the case's synthetic repository and review base..head offline."""
+    with tempfile.TemporaryDirectory(prefix="cite-eval-") as tmp:
+        repo, base, head = build_repo(case["fixture_dir"], Path(tmp) / "repo")
+        diff = sh(["git", "diff", base, head], cwd=repo).stdout
+        return review(case, args, rep, repo, diff, tmp)
+
+
+def run_case(case, args, rep):
+    if "fixture_dir" in case:
+        return run_fixture_case(case, args, rep)
+    bare = ensure_repo(Path(args.cache), case["repo"], [case["base"], case["head"]])
     with tempfile.TemporaryDirectory(prefix="cite-eval-") as tmp:
         wt = Path(tmp) / "wt"
         with repo_lock(Path(args.cache), case["repo"]):
@@ -177,42 +231,28 @@ def run_case(case, args, rep):
             merge_base = sh(["git", "merge-base", case["base"], case["head"]], cwd=wt).stdout.strip()
             # Against the working tree, so a planted defect is part of the diff.
             diff = sh(["git", "diff", merge_base], cwd=wt).stdout
-            diff_path = Path(tmp) / "pr.diff"
-            diff_path.write_text(diff)
-            cfg_path = Path(tmp) / "cite.yml"
-            cfg_path.write_text(case.get("config", ""))
-            desc_path = Path(tmp) / "body.md"
-            desc_path.write_text(case.get("description", ""))
-            record_path = out_dir / f"record-{rep}.json"
-            log_path = out_dir / f"log-{rep}.txt"
-            env = dict(os.environ)
-            cmd = [str(Path(args.cite).resolve()), "review", "--diff", str(diff_path), "--config", str(cfg_path),
-                   "--report", "json", "--out", str(record_path)]
-            if case.get("description"):
-                cmd += ["--description", str(desc_path)]
-            t0 = time.time()
-            r = subprocess.run(cmd, cwd=wt, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            elapsed = time.time() - t0
-            log_path.write_text(r.stdout)
+            return review(case, args, rep, wt, diff, tmp)
         finally:
             with repo_lock(Path(args.cache), case["repo"]):
                 sh(["git", "worktree", "remove", "--force", str(wt)], cwd=bare, check=False)
-    if not record_path.exists():
-        return {"id": case["id"], "rep": rep, "error": "no run record", "elapsed": elapsed}
-    try:
-        record = json.loads(record_path.read_text()).get("run") or {}
-    except (OSError, ValueError) as e:
-        return {"id": case["id"], "rep": rep, "error": f"unreadable run record: {e}", "elapsed": elapsed}
-    s = score(case, record, args.slack)
-    s.update({"id": case["id"], "rep": rep, "elapsed": round(elapsed, 1)})
-    return s
 
 
 def load_cases(paths):
     cases = []
     for p in paths:
         p = Path(p)
-        files = sorted(p.glob("*.json")) if p.is_dir() else [p]
+        if (p / "case.json").is_file():
+            dirs, files = [p], []
+        elif p.is_dir():
+            dirs = sorted(d for d in p.iterdir() if (d / "case.json").is_file())
+            files = sorted(p.glob("*.json"))
+        else:
+            dirs, files = [], [p]
+        for d in dirs:
+            c = json.loads((d / "case.json").read_text())
+            c.setdefault("id", d.name)
+            c["fixture_dir"] = str(d)
+            cases.append(c)
         for f in files:
             c = json.loads(f.read_text())
             c.setdefault("id", f.stem)
