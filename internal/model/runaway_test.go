@@ -51,10 +51,6 @@ func itoa(n int) string {
 	return string(b)
 }
 
-// A response that spent the whole budget and produced no answer is a runaway
-// generation, not a capacity overflow. It must not be reported as the terminal
-// deterministic failure, because the premise behind that class -- "a truncated
-// response truncates identically on retry" -- is false for this shape.
 // captureTruncationIn points the truncated-response capture at dir for the rest
 // of the test. One call, so the seven tests that need it carry one line of
 // setup each rather than the same two.
@@ -64,24 +60,144 @@ func captureTruncationIn(t *testing.T, dir string) {
 	t.Cleanup(func() { SetDiagnostics(Diagnostics{}) })
 }
 
-func TestCompleteRunawayGenerationIsNotTerminalDeterministic(t *testing.T) {
-	dir := t.TempDir()
-	captureTruncationIn(t, dir)
+// TestCompleteClassifiesTruncatedResponses pins the line between a runaway
+// generation (ErrRunaway, retryable) and a capacity overflow
+// (ErrDeterministic, terminal). The premise behind the terminal class, that a
+// truncated response truncates identically on retry, is false for a runaway,
+// so each case says which side of the line its response is on and why.
+func TestCompleteClassifiesTruncatedResponses(t *testing.T) {
+	// A tool call, even one whose arguments the cap cut in half, is the model
+	// having stopped thinking and started emitting its answer. Calling it a
+	// runaway would discard a real (truncated) answer as if none existed.
+	truncatedToolCall := `{"choices":[{"message":{"role":"assistant","content":"","reasoning":"` +
+		strings.Repeat("thinking ", 40) + `","tool_calls":[{"id":"c1","type":"function",` +
+		`"function":{"name":"submit_review","arguments":""}}]},"finish_reason":"length"}],` +
+		`"usage":{"prompt_tokens":100,"completion_tokens":65536}}`
 
-	h := &runawayHandler{body: runawayBody(4096)}
-	ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
-	defer ts.Close()
-	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+	for _, tc := range []struct {
+		name string
+		body string
+		cap  int
+		// runaway is the expected class: ErrRunaway when true, the terminal
+		// ErrDeterministic when false. The two are never both set.
+		runaway bool
+		// notBlameCap requires that the message does not say the whole
+		// requested cap was spent, for responses the provider ended below it.
+		notBlameCap bool
+	}{
+		{
+			// The whole budget spent with no answer, the measured shape.
+			name:    "whole budget spent on reasoning",
+			body:    runawayBody(4096),
+			cap:     4096,
+			runaway: true,
+		},
+		{
+			// The runaway must be recognised from what the response contains,
+			// not from the provider having honoured a cap Cite asked for. The
+			// provider stopped at 65536, below the 131072 requested, so no
+			// number Cite chose can be the test.
+			name:        "under the provider's own cap",
+			body:        measuredRunawayBody(),
+			cap:         131072,
+			runaway:     true,
+			notBlameCap: true,
+		},
+		{
+			// DeepSeek's own surface puts the trace on reasoning_content. Only
+			// the OpenAI-compatible name was exercised elsewhere, so without
+			// this case the second wire name is decoded code no test reaches.
+			// It also proves the trace reaches the predicate from this name
+			// and not only into the response struct.
+			name: "reasoning_content wire name",
+			body: `{"choices":[{"message":{"role":"assistant","content":"","reasoning_content":"` +
+				strings.Repeat("Hmm. ", 2000) + `"},"finish_reason":"length"}],` +
+				`"usage":{"prompt_tokens":12361,"completion_tokens":65536}}`,
+			cap:         131072,
+			runaway:     true,
+			notBlameCap: true,
+		},
+		{
+			name:    "truncated tool call below the cap",
+			body:    truncatedToolCall,
+			cap:     131072,
+			runaway: false,
+		},
+		{
+			// Withholding only the reasoning from the runaway predicate would
+			// not help here: the full-budget fallback would still fire, so
+			// the guard has to be on the predicate itself. This is the case
+			// Cite's reviewer caught on PR #166.
+			name: "truncated tool call at the full budget, no reasoning",
+			body: `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1",` +
+				`"type":"function","function":{"name":"submit_review","arguments":""}}]},` +
+				`"finish_reason":"length"}],"usage":{"prompt_tokens":100,"completion_tokens":4096}}`,
+			cap:     4096,
+			runaway: false,
+		},
+		{
+			// A response that says nothing about reasoning and spent less than
+			// the cap is not evidence of anything: the old full-budget test
+			// cannot be trusted against a provider whose ceiling Cite does not
+			// know. It stays a capacity overflow, never a runaway.
+			name: "empty answer without evidence",
+			body: `{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":"length"}],` +
+				`"usage":{"prompt_tokens":100,"completion_tokens":64}}`,
+			cap:     131072,
+			runaway: false,
+		},
+		{
+			// A genuine overflow, content cut off mid-answer, keeps its
+			// terminal class: the runaway cases must not have widened it.
+			name:    "content present",
+			body:    `{"choices":[{"message":{"content":"partial"},"finish_reason":"length"}],"usage":{"completion_tokens":4096}}`,
+			cap:     4096,
+			runaway: false,
+		},
+		{
+			name:    "content present, partial budget",
+			body:    `{"choices":[{"message":{"content":"{\"findings\":"},"finish_reason":"length"}],"usage":{"completion_tokens":100,"completion_tokens_details":{"reasoning_tokens":10}}}`,
+			cap:     4096,
+			runaway: false,
+		},
+		{
+			name:    "content present, no usage reported",
+			body:    `{"choices":[{"message":{"content":"partial"},"finish_reason":"length"}]}`,
+			cap:     4096,
+			runaway: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			captureTruncationIn(t, dir)
+			h := &runawayHandler{body: tc.body}
+			ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
+			defer ts.Close()
+			c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
 
-	_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 4096})
-	if err == nil {
-		t.Fatal("a runaway generation must be an error, got nil")
-	}
-	if errors.Is(err, ErrDeterministic) {
-		t.Fatalf("runaway generation misclassified as terminal deterministic: %v", err)
-	}
-	if !errors.Is(err, ErrRunaway) {
-		t.Fatalf("err = %v, want ErrRunaway", err)
+			_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: tc.cap})
+			if err == nil {
+				t.Fatal("a truncated response must be an error, got nil")
+			}
+			if tc.runaway {
+				if errors.Is(err, ErrDeterministic) {
+					t.Fatalf("runaway misclassified as terminal deterministic: %v", err)
+				}
+				if !errors.Is(err, ErrRunaway) {
+					t.Fatalf("err = %v, want ErrRunaway", err)
+				}
+			} else {
+				if !errors.Is(err, ErrDeterministic) {
+					t.Fatalf("want a terminal capacity overflow, got %v", err)
+				}
+				if errors.Is(err, ErrRunaway) {
+					t.Fatalf("overflow misclassified as a runaway: %v", err)
+				}
+			}
+			if tc.notBlameCap && strings.Contains(err.Error(), "131072-token output cap was spent") {
+				t.Fatalf("message blames a cap the provider never reached: %v", err)
+			}
+		})
 	}
 }
 
@@ -134,36 +250,6 @@ func TestRunawayMessageSteersOperatorAwayFromTheCap(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "thinking") {
 		t.Fatalf("capture must hold the raw response, got %q", string(raw))
-	}
-}
-
-// A genuine overflow -- content came back and was cut off mid-answer -- keeps
-// its terminal class. The runaway test above must not have widened it.
-func TestCompleteGenuineOverflowStaysDeterministic(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		body string
-	}{
-		{"content present", `{"choices":[{"message":{"content":"partial"},"finish_reason":"length"}],"usage":{"completion_tokens":4096}}`},
-		{"content present, partial budget", `{"choices":[{"message":{"content":"{\"findings\":"},"finish_reason":"length"}],"usage":{"completion_tokens":100,"completion_tokens_details":{"reasoning_tokens":10}}}`},
-		{"no usage reported", `{"choices":[{"message":{"content":"partial"},"finish_reason":"length"}]}`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			captureTruncationIn(t, dir)
-			h := &runawayHandler{body: tc.body}
-			ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
-			defer ts.Close()
-			c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
-
-			_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 4096})
-			if !errors.Is(err, ErrDeterministic) {
-				t.Fatalf("genuine overflow must stay terminal deterministic, got %v", err)
-			}
-			if errors.Is(err, ErrRunaway) {
-				t.Fatalf("genuine overflow misclassified as a runaway: %v", err)
-			}
-		})
 	}
 }
 
