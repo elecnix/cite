@@ -77,6 +77,15 @@ class BuildTest(unittest.TestCase):
             self.build()
         self.assertTrue(outside.exists())
 
+    def test_delete_path_may_contain_spaces(self):
+        write(self.case, "base/a b.txt", "x\n")
+        write(self.case, "base/a", "y\n")
+        write(self.case, "base/b.txt", "z\n")
+        write(self.case, "steps/02/.delete", "a b.txt\n")
+        repo, _, _ = self.build()
+        self.assertFalse((repo / "a b.txt").exists())
+        self.assertTrue((repo / "a").exists() and (repo / "b.txt").exists())
+
     def test_delete_of_missing_path_is_rejected(self):
         write(self.case, "steps/02/.delete", "nope.txt\n")
         with self.assertRaises(ValueError):

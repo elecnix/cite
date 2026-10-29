@@ -74,7 +74,7 @@ def build_repo(case_dir, dest):
     for n, step in enumerate(steps, start=1):
         marker = step / ".delete"
         if marker.exists():
-            for rel in marker.read_text().split():
+            for rel in (l for l in marker.read_text().splitlines() if l.strip()):
                 target = (dest / rel).resolve()
                 if dest.resolve() not in target.parents:
                     raise ValueError(f"{step.name}: .delete names {rel}, which is outside the repository")
