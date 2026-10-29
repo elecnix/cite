@@ -37,7 +37,7 @@ class BuildTest(unittest.TestCase):
     def test_commits_base_then_one_per_step(self):
         repo, base, head = self.build()
         self.assertEqual(git(repo, "rev-list", "--count", head).strip(), "3")
-        self.assertEqual(git(repo, "rev-parse", base + "~0").strip(), base)
+        self.assertEqual(git(repo, "rev-parse", head + "~2").strip(), base)
         self.assertEqual(git(repo, "rev-list", "--count", base).strip(), "1")
 
     def test_steps_overlay_and_delete(self):
