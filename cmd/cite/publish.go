@@ -140,8 +140,8 @@ func buildReviewPayload(
 	var anchorable, unanchorable []model.ValidatedFinding
 	for _, f := range plan.CommentsToPost {
 		df := diffs[f.Path]
-		ok := false
-		if df != nil {
+		ok := f.Reanchor != nil
+		if df != nil && !ok {
 			lines := df.AnchorableLines()
 			for l := f.Anchor.StartLine; l <= f.Anchor.EndLine; l++ {
 				if lines[l] {
@@ -159,13 +159,19 @@ func buildReviewPayload(
 	_ = plan.SuppressedByLedger // recorded in the run record; gate unchanged
 
 	for _, f := range anchorable {
-		comments = append(comments, githubclient.ReviewComment{
+		c := githubclient.ReviewComment{
 			Path:      f.Path,
 			StartLine: pickStart(f.Anchor.StartLine),
 			Line:      f.Anchor.EndLine,
 			Side:      "RIGHT",
 			Body:      renderComment(f),
-		})
+		}
+		if ra := f.Reanchor; ra != nil {
+			// The model's range is outside the hunks (issue #220); post on
+			// the line computed in code, as a single-line comment.
+			c.Path, c.StartLine, c.Line, c.Side = ra.Path, 0, ra.Line, ra.Side
+		}
+		comments = append(comments, c)
 	}
 
 	var footer []string
@@ -217,6 +223,10 @@ func renderComment(f model.ValidatedFinding) string {
 	if f.Body != "" {
 		sb.WriteString(f.Body)
 		sb.WriteString("\n\n")
+	}
+	if ra := f.Reanchor; ra != nil {
+		fmt.Fprintf(&sb, "Posted here because the line it is about is outside the diff. It is about `%s` line %d:\n\n```\n%s\n```\n\n",
+			f.Path, ra.UseSite.Line, ra.UseSite.Text)
 	}
 	if f.Impact != "" {
 		fmt.Fprintf(&sb, "*Impact:* %s\n\n", f.Impact)

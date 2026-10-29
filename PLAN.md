@@ -764,7 +764,11 @@ post-image, so an anchor past end-of-file references a line it was never shown. 
 degraded output about one finding, not a schema violation of the whole response. Both classes
 surface in a labelled "Notable but unanchored" section of the review body and on the GitHub
 Actions run page via `$GITHUB_STEP_SUMMARY`, so a reviewer reading the PR sees them without
-scraping the raw log, and one bad anchor never fails the whole file's parse. Other drop reasons
+scraping the raw log, and one bad anchor never fails the whole file's parse. Before a finding falls to that section, the validator
+re-anchors an `anchor_invalid` one (issue #220), in this order: the removed line that defines an identifier the
+anchor line uses (left side of the diff), the changed line nearest the anchor in the same file, and, for a file with
+no hunks, a changed line in another file that the finding text names. The posted comment quotes the original line.
+A re-anchored finding never blocks, because its anchor is not on an added line. Other drop reasons
 (evidence_mismatch, budget, suppressed) are not "real but imprecise" and stay in the drop-log
 count and the run record.
 
