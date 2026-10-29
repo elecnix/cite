@@ -185,17 +185,23 @@ else
   owner=${PR%%/*}
   repo_name=${rest%%#*}
   if [ "$rest" = "$PR" ] || [ -z "$owner" ] || [ -z "$repo_name" ] \
-     || [ "$repo_name" = "$rest" ] || ! printf '%s' "${rest##*#}" | grep -Eq '^[0-9]+$'; then
+     || [ "$repo_name" = "$rest" ]; then
     die "pull request must be owner/repo#N"
   fi
+  # case patterns see the whole string, so an embedded newline cannot hide behind
+  # a line that looks valid the way it can with grep, which matches line by line.
+  case "${rest##*#}" in
+    ''|*[!0-9]*) die "pull request must be owner/repo#N" ;;
+  esac
   # owner and repo become directory names below, so `..` in either one would
   # climb out of the history directory and a `/` would open a level.
   for part in "$owner" "$repo_name"; do
     case "$part" in
       .|..) die "pull request must be owner/repo#N" ;;
     esac
-    printf '%s' "$part" | grep -Eq '^[A-Za-z0-9._-]+$' \
-      || die "pull request must be owner/repo#N"
+    case "$part" in
+      ''|*[!A-Za-z0-9._-]*) die "pull request must be owner/repo#N" ;;
+    esac
   done
   group=pr-${rest##*#}
 fi
