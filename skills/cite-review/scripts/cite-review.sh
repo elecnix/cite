@@ -178,21 +178,24 @@ if [ "$LOCAL" -eq 1 ]; then
   branch=$(git rev-parse --abbrev-ref HEAD)
   group=branch-$(printf '%s' "$branch" | tr -c 'A-Za-z0-9._-' '-' | sed 's/-\{2,\}/-/g; s/-$//')
 else
+  # The error names the shape and never echoes the argument: a flag written before
+  # the target (`--model-api-key KEY owner/repo#1`) makes KEY the first positional,
+  # and printing it would put the key in a transcript or a CI log.
   rest=${PR#*/}
   owner=${PR%%/*}
   repo_name=${rest%%#*}
   if [ "$rest" = "$PR" ] || [ -z "$owner" ] || [ -z "$repo_name" ] \
      || [ "$repo_name" = "$rest" ] || ! printf '%s' "${rest##*#}" | grep -Eq '^[0-9]+$'; then
-    die "pull request must be owner/repo#N, got $PR"
+    die "pull request must be owner/repo#N"
   fi
   # owner and repo become directory names below, so `..` in either one would
   # climb out of the history directory and a `/` would open a level.
   for part in "$owner" "$repo_name"; do
     case "$part" in
-      .|..) die "pull request must be owner/repo#N, got $PR" ;;
+      .|..) die "pull request must be owner/repo#N" ;;
     esac
     printf '%s' "$part" | grep -Eq '^[A-Za-z0-9._-]+$' \
-      || die "pull request must be owner/repo#N, got $PR"
+      || die "pull request must be owner/repo#N"
   done
   group=pr-${rest##*#}
 fi
