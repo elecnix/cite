@@ -23,6 +23,7 @@ set -uo pipefail
 
 cd "$(cd "$(dirname "$0")/.." && pwd)" || exit 1
 script="$PWD/scripts/release-tag.sh"
+self="$PWD/scripts/release-tag_test.sh"
 version_check="$PWD/scripts/version-check.sh"
 sandboxes=()
 fails=0
@@ -148,7 +149,8 @@ sandbox
 # Single-fault on purpose: the inconsistency is committed and pushed, so the branch
 # is level with origin/main and the version check is the only thing that can object.
 git checkout -q main
-sed -i 's|const version = "1.0.0"|const version = "1.0.1"|' cmd/cite/main.go
+sed 's|const version = "1.0.0"|const version = "1.0.1"|' cmd/cite/main.go >cmd/cite/main.go.new &&
+  mv cmd/cite/main.go.new cmd/cite/main.go
 git -c user.email=t@t -c user.name=t commit -qam inconsistent
 git push -q origin main
 git checkout -q -b release/1.0.2
@@ -233,6 +235,13 @@ out="$(rt 1.0.1 --tag 2>&1)" || fail "tagging the merged bump failed: $out"
 
 out="$(rt 1.0.1 --tag 2>&1)"
 contains "$out" "already exists" || fail "a second tag was not refused: $out"
+
+# `sed -i` takes its backup suffix as an argument on BSD sed and as an attached
+# option on GNU sed, so no spelling of it behaves the same on a maintainer's Mac
+# and on the CI runner. This script already failed that way once.
+if grep -n -E '(^|[^[:alnum:]_])sed +(-[A-Za-z]+ +)*-i' "$script" "$self" | grep -v -F 'grep -n -E' | grep -v '^[^:]*:[0-9]*: *#'; then
+  fail "an in-place sed is not portable between GNU and BSD sed"
+fi
 
 if [ "$fails" -gt 0 ]; then
   printf '\n%s check(s) failed.\n' "$fails" >&2
