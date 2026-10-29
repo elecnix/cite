@@ -347,8 +347,8 @@ func stickyVisibleBody(rec *model.RunRecord) string {
 	if cvg.Errored > 0 {
 		fmt.Fprintf(&sb, ", **%d errored**", cvg.Errored)
 	}
-	fmt.Fprintf(&sb, " · samples: %d · cost: $%.4f (in %d out %d)\n",
-		rec.Samples, rec.CostUSD, rec.Usage.InputTokens, rec.Usage.OutputTokens)
+	fmt.Fprintf(&sb, " · samples: %d · cost: %s (in %d out %d)\n",
+		rec.Samples, rec.CostText(), rec.Usage.InputTokens, rec.Usage.OutputTokens)
 	if u := actionsRunURL(); u != "" {
 		fmt.Fprintf(&sb, "\nReviewer log: [Actions run #%s](%s)\n", url.PathEscape(os.Getenv("GITHUB_RUN_ID")), u)
 	}

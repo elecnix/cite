@@ -283,7 +283,7 @@ func logToStderr(format string, args ...any) {
 func printRecord(rec *model.RunRecord) {
 	fmt.Printf("model=%s temperature=%.1f samples=%d\n", rec.Model, rec.Temperature, rec.Samples)
 	fmt.Printf("coverage: %d/%d api files complete=%t\n", rec.Coverage.Reviewed+rec.Coverage.ApprovedSkip, rec.Coverage.APIFiles, rec.Coverage.Complete)
-	fmt.Printf("cost: $%.4f (in %s out %s)\n", rec.CostUSD, humanTokens(rec.Usage.InputTokens), humanTokens(rec.Usage.OutputTokens))
+	fmt.Printf("cost: %s (in %s out %s)\n", rec.CostText(), humanTokens(rec.Usage.InputTokens), humanTokens(rec.Usage.OutputTokens))
 	if rec.Usage.InputTokens > 0 {
 		fmt.Printf("cache: %s (share of prompt tokens read from cache, against the best this run's prompts allowed)%s\n",
 			model.CacheSummary(rec.Usage.CacheHitRate(), rec.CacheCeiling), upstreamSuffix(rec.Calls))

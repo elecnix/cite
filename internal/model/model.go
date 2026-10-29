@@ -423,6 +423,18 @@ type RunRecord struct {
 	Usage   Usage   `json:"usage"`
 	CostUSD float64 `json:"cost_usd"`
 
+	// CostUnknown says the run's cost could not be determined, as opposed
+	// to a run that cost nothing (issue #204). A provider that reports
+	// token counts but no per-call cost, in a config that declares no
+	// rates, leaves the cost undetermined: printing $0.0000 for it claims
+	// the run was free when the account was in fact billed. The two are
+	// different claims, so the record carries the difference and every
+	// surface that prints a cost says "unknown" when it is set.
+	//
+	// It is set only for a run that reported tokens. A run with neither a
+	// cost nor tokens has nothing to be uncertain about, and reports $0.
+	CostUnknown bool `json:"cost_unknown,omitempty"`
+
 	// CacheCeiling is the best cache hit rate this run's prompts allowed
 	// (CacheCeiling over Calls). The measured rate is Usage.CacheHitRate;
 	// the two together say whether the cache served what it could (§7).
@@ -506,6 +518,31 @@ type InstructionUsage struct {
 func (r *RunRecord) Summary() string {
 	return fmt.Sprintf("%d sample · %d files reviewed · %d blocking findings. This is one observation, not assurance.",
 		r.Samples, r.Coverage.Reviewed, countBlocking(r.Findings))
+}
+
+// CostUnknownLabel is what a cost line reads when the run's cost could not
+// be determined (issue #204). It is a word, not a number: "$0.0000" claims
+// the run was free, and for a provider that bills in aggregate — Ollama
+// Cloud, for one — a run whose cost Cite cannot price is a run the account
+// is still charged for. The two are different claims and only one of them
+// is true.
+const CostUnknownLabel = "unknown"
+
+// CostText renders the run's cost for a human: the dollar amount the
+// provider billed or the declared rates produced, or CostUnknownLabel when
+// neither resolved for a run that reported tokens.
+//
+// Every surface that prints a cost calls this, so the four of them cannot
+// drift: the stdout summary, the published report, the published summary and
+// the check-run payload all say the same thing about the same run.
+func (r *RunRecord) CostText() string {
+	if r == nil {
+		return "$0.0000"
+	}
+	if r.CostUnknown {
+		return CostUnknownLabel
+	}
+	return fmt.Sprintf("$%.4f", r.CostUSD)
 }
 
 func countBlocking(fs []ValidatedFinding) int {

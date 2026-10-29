@@ -100,8 +100,8 @@ func (s mdSink) Publish(rec *model.RunRecord, payload ReportPayload) error {
 	if !c.Complete {
 		fmt.Fprint(s.w, " — **incomplete**")
 	}
-	fmt.Fprintf(s.w, " · samples: %d · cost: $%.4f (in %d out %d)\n",
-		rec.Samples, rec.CostUSD, rec.Usage.InputTokens, rec.Usage.OutputTokens)
+	fmt.Fprintf(s.w, " · samples: %d · cost: %s (in %d out %d)\n",
+		rec.Samples, rec.CostText(), rec.Usage.InputTokens, rec.Usage.OutputTokens)
 
 	if len(rec.Findings) == 0 {
 		fmt.Fprint(s.w, "\nNo findings.\n")
