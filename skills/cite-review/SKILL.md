@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Requires the cite CLI on PATH, git, and jq. Pull request mode needs a GitHub token. The script borrows one from the gh CLI. Cite builds with Go 1.22 or newer.
 metadata:
   homepage: https://github.com/elecnix/cite
-allowed-tools: Bash(cite:*) Bash(git:*) Bash(jq:*) Read Grep
+allowed-tools: Bash(scripts/cite-review.sh:*) Bash(cite:*) Bash(git:*) Bash(jq:*) Read Grep
 ---
 
 # Cite review
