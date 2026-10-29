@@ -32,7 +32,7 @@ file at head, and is replaced before the diff is taken, so the planted
 line is part of the change under review. A must_flag label on the planted
 line measures recall on a known defect in real code.
 
-Fixture cases (bench/eval/fixtures/<id>/) hold their code in this repository
+Fixture cases (bench/eval/testdata/<id>/) hold their code in this repository
 instead of pinning a pull request, so they run offline:
 
     <id>/case.json   id, description, config, must_flag, must_not_flag
@@ -43,7 +43,7 @@ instead of pinning a pull request, so they run offline:
 The harness commits base, then each step, in a temporary repository with a
 fixed identity and dates (see fixture.py), diffs the first commit against the
 last, and reviews that diff like any other case. Labels are post-change line
-numbers at the last commit. Point the harness at bench/eval/fixtures, one
+numbers at the last commit. Point the harness at bench/eval/testdata, one
 fixture directory, or mix them with pinned cases in one invocation.
 
 Lines are post-change line numbers at head. A finding hits a label when its

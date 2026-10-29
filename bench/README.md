@@ -116,7 +116,8 @@ pull requests. Add one whenever a reply refutes a finding.
 A pinned case needs the network and a repository that keeps its commits. A
 fixture case keeps its code in this repository instead, so it runs offline and
 a pull request that adds one shows the code under review. Fixtures live in
-`bench/eval/fixtures/<id>/`:
+`bench/eval/testdata/<id>/`, a name the Go toolchain skips, so `go test ./...` never
+builds their sample code:
 
 ```
 case.json     description, config, must_flag, must_not_flag
@@ -129,7 +130,7 @@ The harness runs `git init` in a temporary directory, commits `base/`, then
 commits each step in name order. It writes `git diff <base> <last>` to a file
 and calls `cite review --diff` on it, the same path a pinned case takes, and
 scores the record with the same labels. Labels are post-change line numbers in
-the last commit. Pass `bench/eval/fixtures`, one fixture directory, or a mix
+the last commit. Pass `bench/eval/testdata`, one fixture directory, or a mix
 with `bench/eval/cases` in one invocation to get one summary line.
 
 The design makes these choices:

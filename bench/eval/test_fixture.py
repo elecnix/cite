@@ -69,17 +69,21 @@ class BuildTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.build()
 
+    def test_delete_cannot_leave_the_repository(self):
+        outside = self.tmp / "outside.txt"
+        outside.write_text("x")
+        write(self.case, "steps/02/.delete", "../outside.txt\n")
+        with self.assertRaises(ValueError):
+            self.build()
+        self.assertTrue(outside.exists())
+
     def test_delete_of_missing_path_is_rejected(self):
         write(self.case, "steps/02/.delete", "nope.txt\n")
         with self.assertRaises(ValueError):
             self.build()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-FIXTURES = Path(__file__).parent / "fixtures"
+FIXTURES = Path(__file__).parent / "testdata"
 
 
 class SeedFixturesTest(unittest.TestCase):
@@ -98,3 +102,7 @@ class SeedFixturesTest(unittest.TestCase):
                 for label in labels:
                     n = len((repo / label["path"]).read_text().splitlines())
                     self.assertTrue(1 <= label["lines"][0] <= label["lines"][1] <= n, label)
+
+
+if __name__ == "__main__":
+    unittest.main()

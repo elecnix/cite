@@ -75,7 +75,9 @@ def build_repo(case_dir, dest):
         marker = step / ".delete"
         if marker.exists():
             for rel in marker.read_text().split():
-                target = dest / rel
+                target = (dest / rel).resolve()
+                if dest.resolve() not in target.parents:
+                    raise ValueError(f"{step.name}: .delete names {rel}, which is outside the repository")
                 if not target.is_file():
                     raise ValueError(f"{step.name}: .delete names {rel}, which is not a file")
                 target.unlink()
