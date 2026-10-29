@@ -1002,7 +1002,9 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 			// have spent, so its wording names the limit the provider
 			// applied instead.
 			capSpent := fmt.Sprintf("the whole %d-token output cap was spent", req.MaxOutputTokens)
-			if req.MaxOutputTokens == 0 {
+			if req.MaxOutputTokens == 0 && usage.OutputTokens == 0 {
+				capSpent = "the provider reported no output token count and the request set no cap"
+			} else if req.MaxOutputTokens == 0 {
 				capSpent = fmt.Sprintf("the provider's own output limit of %d tokens was reached (the request set no cap)", usage.OutputTokens)
 			}
 			where := capSpent + " and no answer was written"
