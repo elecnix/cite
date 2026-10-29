@@ -77,7 +77,37 @@ const (
 	ClaimVersionBehavior ClaimType = "version_behavior" // rejected at parse time
 	ClaimCIBehavior      ClaimType = "ci_behavior"      // note only, never blocking
 	ClaimConvention      ClaimType = "convention"       // note only, rendered as a question
+
+	// The absence-claim types (issue #203). A finding that asserts an
+	// absence used to have its shape recovered from English prose, which
+	// only ever worked in English. These types carry the absence
+	// explicitly, so the mechanical check runs on the declared type and
+	// the declared subject, never on a phrase table.
+	//
+	// Each names the shape of the absence it asserts, and each is
+	// falsified by the opposite shape:
+	//
+	//   symbol_not_defined    a symbol is not defined anywhere
+	//   symbol_not_called     a symbol is not called anywhere
+	//   occurrence_count_zero a symbol occurs zero times
+	//
+	// The subject stays a structured field, so the check is a lookup and
+	// not a parse.
+	ClaimSymbolNotDefined    ClaimType = "symbol_not_defined"
+	ClaimSymbolNotCalled     ClaimType = "symbol_not_called"
+	ClaimOccurrenceCountZero ClaimType = "occurrence_count_zero"
 )
+
+// IsAbsenceClaim reports whether the claim type asserts an absence. The
+// absence-claim types are the ones whose blocking turns on the absence
+// holding, so a finding that carries one needs it declared to be checked.
+func (t ClaimType) IsAbsenceClaim() bool {
+	switch t {
+	case ClaimSymbolNotDefined, ClaimSymbolNotCalled, ClaimOccurrenceCountZero:
+		return true
+	}
+	return false
+}
 
 // ExternalClaim is a repository-dependent fact the model cannot verify from
 // the bytes it was given. Declaring it is how a claim gets checked instead of
@@ -85,10 +115,23 @@ const (
 type ExternalClaim struct {
 	Type    ClaimType `json:"type"`
 	Subject string    `json:"subject"`
+	// Symbol is the structured subject of the absence-claim types
+	// (issue #203): the name the absence is about. Subject stays the
+	// general-purpose string field; the absence claims read their symbol
+	// from here, so the check never has to recover a name from prose.
+	Symbol string `json:"symbol,omitempty"`
+	// Path is the structured path subject of an absence claim, when the
+	// absence is about a file rather than a symbol.
+	Path string `json:"path,omitempty"`
+	// Count is the expected occurrence count of an
+	// occurrence_count_zero claim. It is zero for that type by
+	// definition, and rejected at parse time when it says otherwise.
+	Count *int `json:"count,omitempty"`
 	// Verified is filled in by the verifier pass, never by the model.
 	Verified *bool `json:"verified,omitempty"`
 	// Disposition is the mechanical outcome: "verified", "dropped",
-	// "note", or "rejected".
+	// "note", "rejected", or "declared" (an absence claim the
+	// reviewer recorded and checked separately).
 	Disposition string `json:"disposition,omitempty"`
 }
 

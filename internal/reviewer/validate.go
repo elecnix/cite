@@ -198,6 +198,26 @@ findingsLoop:
 				// hold while it is present.
 				c.Disposition = "note"
 				claimsOK = false
+			case model.ClaimSymbolNotDefined, model.ClaimSymbolNotCalled, model.ClaimOccurrenceCountZero:
+				// The absence-claim types (issue #203). The check runs on
+				// the declared type and the declared structured subject,
+				// against the post-image the reviewer already received —
+				// not against a phrase in the finding's prose. The
+				// falsification itself happens in checkAbsenceClaims,
+				// which has the file's lines; here the claim is only
+				// recorded as the finding's own declaration.
+				//
+				// A claim with no usable symbol names nothing to search
+				// for, so it can neither confirm nor refute the absence:
+				// it takes the note disposition, and the finding can
+				// never block. The same holds for a claim that is
+				// mechanically checkable but on a partially-sent file.
+				if _, ok := symbolSubject(absenceClaimSymbol(*c)); !ok {
+					c.Disposition = "note"
+					claimsOK = false
+					continue
+				}
+				c.Disposition = "declared"
 			default:
 				// Unknown types were rejected at parse time; anything left
 				// is unreachable, but fail closed regardless.
@@ -209,16 +229,40 @@ findingsLoop:
 			continue
 		}
 
-		// Negative-existence claims (issue #45): a narrative claim that a
-		// symbol is "never called" / "no other occurrence" is mechanically
-		// checkable against the post-image. A contradicted claim drops the
+		// Absence claims (issues #45, #201, #203): a claim that a symbol
+		// is not defined, not called, or does not occur is mechanically
+		// checkable against the post-image, and the check runs on the
+		// claim the model declared. A contradicted claim drops the
 		// finding; a claim that cannot be checked (partial view, no
 		// extractable symbol) can never ground a block — fail open to a
 		// note, never to a merge blocker.
-		negDrop, negVerified, negDetail := checkNegativeClaims(f, fc.lines, fc.partial)
-		if negDrop {
-			drop(f, model.DropNegativeClaimFalsified, negDetail)
+		//
+		// The narrative phrase tables are only the fallback here: they can
+		// downgrade a finding to a note, and they can never be the
+		// mechanism that lets a claim block.
+		absence := checkAbsenceClaims(f, fc.path, fc.lines, fc.partial)
+		if absence.Drop {
+			drop(f, model.DropNegativeClaimFalsified, absence.Detail)
 			continue
+		}
+		negVerified := absence.Verified
+		// Record the outcome of each absence claim on the finding, so the
+		// run record says which of them was checked and which was not. A
+		// claim that could not be checked also fails the claims conjunct:
+		// "every claim verified true" cannot hold while one of them is
+		// unverified.
+		for i := range absence.Claims {
+			for j := range f.ExternalClaims {
+				if f.ExternalClaims[j].Type == absence.Claims[i].Type &&
+					absenceClaimSymbol(f.ExternalClaims[j]) == absenceClaimSymbol(absence.Claims[i]) {
+					f.ExternalClaims[j].Verified = absence.Claims[i].Verified
+					f.ExternalClaims[j].Disposition = absence.Claims[i].Disposition
+					if absence.Claims[i].Verified == nil {
+						claimsOK = false
+					}
+					break
+				}
+			}
 		}
 
 		// Self-negating findings (issue #65): a finding that says there is

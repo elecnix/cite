@@ -167,13 +167,43 @@ func reviewResponseSchema() json.RawMessage {
 				"items": map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
-					"required":             []any{"type", "subject"},
+					// Strict mode requires every property to be listed in
+					// required, so the structured subject fields are
+					// required too. They are nullable, so a claim that is
+					// not about a symbol says null rather than leaving
+					// the key out: a key the model omits fails the whole
+					// response, and one missing key must not cost the
+					// file its review.
+					"required": []any{"type", "subject", "symbol", "path", "count"},
 					"properties": map[string]any{
 						"type": map[string]any{"type": "string", "enum": []any{
 							"path_exists", "symbol_exists", "config_key",
 							"ci_behavior", "convention",
+							"symbol_not_defined", "symbol_not_called",
+							"occurrence_count_zero",
 						}},
 						"subject": map[string]any{"type": "string"},
+						"symbol": map[string]any{
+							"anyOf": []any{
+								map[string]any{"type": "string"},
+								map[string]any{"type": "null"},
+							},
+						},
+						"path": map[string]any{
+							"anyOf": []any{
+								map[string]any{"type": "string"},
+								map[string]any{"type": "null"},
+							},
+						},
+						// Nullable via anyOf: strict mode rejects bare
+						// type arrays, and a count only means something
+						// for occurrence_count_zero.
+						"count": map[string]any{
+							"anyOf": []any{
+								map[string]any{"type": "integer"},
+								map[string]any{"type": "null"},
+							},
+						},
 					},
 				},
 			},
