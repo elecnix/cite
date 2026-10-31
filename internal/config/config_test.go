@@ -783,3 +783,40 @@ roles:
 		}
 	}
 }
+
+// pr_context chooses whether the context pass posts. It defaults to comment,
+// and it has two values.
+func TestPRContextDefaultsToCommentAndTakesTwoValues(t *testing.T) {
+	if got := mustParse(t, "").PRContext; got != PRContextComment {
+		t.Fatalf("default = %q, want %q", got, PRContextComment)
+	}
+	if got := mustParse(t, "max_comments: 3\n").PRContext; got != PRContextComment {
+		t.Fatalf("a file that omits the key = %q, want %q", got, PRContextComment)
+	}
+	for _, v := range []string{PRContextOff, PRContextComment} {
+		if got := mustParse(t, "pr_context: "+v+"\n").PRContext; got != v {
+			t.Errorf("pr_context: %s parsed as %q", v, got)
+		}
+	}
+	ve := problemsOf(t, "pr_context: pin\n")
+	if ve == nil || !hasProblemContaining(ve, "pr_context") {
+		t.Fatalf("an unknown value must be rejected naming the key, got %v", ve)
+	}
+}
+
+// The context role takes a model and a timeout like the other roles, and its
+// deadline defaults to the classifier's own two minutes.
+func TestContextRoleResolvesModelAndTimeout(t *testing.T) {
+	c := mustParse(t, "model: base\nroles:\n  context:\n    model: other\n    timeout: 30s\n")
+	rc := c.Role(model.RoleContext)
+	if rc.Model != "other" || rc.Timeout != 30*time.Second {
+		t.Fatalf("role = %+v", rc)
+	}
+	def := mustParse(t, "model: base\n").Role(model.RoleContext)
+	if def.Model != "base" || def.Timeout != DefaultContextTimeout {
+		t.Fatalf("default role = %+v, want the top-level model and %s", def, DefaultContextTimeout)
+	}
+	if DefaultContextTimeout != 2*time.Minute {
+		t.Fatalf("DefaultContextTimeout = %s", DefaultContextTimeout)
+	}
+}

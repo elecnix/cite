@@ -30,8 +30,9 @@ compat_profile: "2026-08"     # which snapshot of the instruction formats to hon
 | `gate` | *(none)* | Accepted and validated, but reserved on the decision path (issue #86): `FOUND` concludes `failure` under every accepted value, so there is no shadow mode and no mode switch. The only conclusion knob is the action's `tool_failure_blocks` input, which governs `COULD_NOT_EVALUATE`. A real finding always blocks. The key exists so a config can store the value without silently dropping a future decision input. |
 | `compat_profile` | `"2026-08"` | Which dated snapshot of instruction-file behaviour Cite honours. Never auto-updates. See [CONFORMANCE.md](../CONFORMANCE.md). |
 | `require_parameters` | `false` | Ask OpenRouter-style routers to route only to endpoints that support every request parameter. See [Require parameters](#require-parameters). |
+| `pr_context` | `comment` | `comment` posts the author one comment of questions about facts the pull request description leaves unexplained. `off` skips the pass. It never reaches the verdict. See [Pull request context](#pull-request-context). |
 
-Seven keys. A v1 with more than ten has already lost.
+Eight keys. A v1 with more than ten has already lost.
 
 The keys above say how a review reads code. The action's inputs live in the
 workflow instead, and two of them say what a run archives: `archive_on_failure`
@@ -279,7 +280,7 @@ run without a token count has nothing to price, and reports $0.
 
 ## Roles
 
-One model string is enough for small teams. A reviewer actually runs three
+One model string is enough for small teams. A reviewer actually runs four
 distinct jobs, and they have different tolerances:
 
 ```yaml
@@ -287,6 +288,7 @@ roles:
   review:   { model: gateway/vendor/model-x, timeout: 90s, max_output_tokens: 8192, concurrency: 8 }
   triage:   { model: gateway/cheap-model,    timeout: 30s }
   assemble: { model: gateway/cheap-model,    timeout: 60s }
+  context:  { model: gateway/cheap-model,    timeout: 30s }
 ```
 
 - **`review`**: the expensive pass over flagged files. Longest timeout, largest
@@ -295,6 +297,9 @@ roles:
   expensive pass. Short timeout; if triage fails, the run fails closed.
 - **`assemble`**: the final capping pass that enforces the comment budget. See
   [noise.md](noise.md#the-assembly-call-is-a-capper).
+- **`context`**: the pass that reads the pull request description. It takes `model` and
+  `timeout` (default two minutes) and ignores `max_output_tokens`. See
+  [Pull request context](#pull-request-context).
 
 Timeouts and concurrency are **per role**, not global, because a slow local model
 and a fast hosted one cannot share one number. Unspecified fields inherit sane
@@ -410,6 +415,80 @@ hit, so the chain is first-class configuration rather than an afterthought.
   the leg that served the call, and the run record's per-call log carries the
   serving model, so a quality change after a failover is diagnosable rather
   than mysterious.
+
+## Pull request context
+
+```yaml
+pr_context: comment          # or off; default comment
+roles:
+  context: { model: openrouter/openai/gpt-oss-20b, timeout: 30s }
+providers:
+  openrouter:
+    base_url: https://openrouter.ai/api/v1
+    api: openai-completions
+    api_key: $OPENROUTER_API_KEY
+    models:
+      - id: openai/gpt-oss-20b
+```
+
+Each review run reads the pull request description and asks one question of
+it: does it give a reader enough to understand what the change is about and
+what changed, without opening the diff? The answer is `COMPLETE` or
+`MISSING_CONTEXT`, and `MISSING_CONTEXT` comes with questions for the author.
+The pass runs whether or not the code review finds anything, because a diff
+with no findings and a thin description is the case it exists for.
+
+A model reference in `roles.context.model` must match a model the provider
+declares under `models`, like every other role. Without `roles.context.model`,
+the pass uses the review's model.
+
+**The comment.** The questions go in one comment marked
+`<!-- cite-context -->`, separate from the sticky comment because `cite listen`
+rewrites the sticky comment. Cite edits that comment in place on later runs, so
+the thread shows one. Cite leaves it unpinned. When a later description reports
+`COMPLETE`, Cite hides the comment with GitHub's minimized state and rewrites it
+to one line, so the history stays and the questions leave the default view.
+Cite applies the minimized state once and never removes it. If a later description regresses,
+Cite edits the collapsed comment and leaves it collapsed.
+
+An edit to the description does not start a run, because the documented
+workflows trigger on `pull_request`. The questions change on the next review
+run, after a push or an `@cite review` request. A reply to the comment is for
+human readers: `cite listen` accepts only the literal `@cite review`.
+
+**The gate.** The context verdict leaves `Verdict`, the check conclusion and
+the merge decision alone. The check-run summary and the run record
+(`context_verdict`, `context_questions`) show the answer, so a failed post
+still leaves it in the Actions log. The comment budget in
+[noise.md](noise.md#the-budget) caps findings, and this comment is not a
+finding.
+
+**Failures.** A provider error, a timeout, or a reply the parser rejects
+records `context_error` on the run record and posts nothing. Cite retries on
+the next run, never inside the current one. An empty description skips the
+model and posts one fixed question.
+
+**Untrusted text.** The description comes from whoever opened the pull
+request, and the questions are model prose derived from it. The comment has
+the origin tag, and every question passes the sanitizer that rendered findings
+pass. Cite also strips every `<` and joins each question onto one line. It
+keeps at most 8 questions of 600 characters each.
+
+**Matching the classifier.** The request reproduces the one that
+[pr-context-classifier](https://github.com/elecnix/pr-context-classifier)
+sends: `model`, `messages` and `temperature: 0`, with nothing else in the body.
+Cite vendors the classifier's system prompt (revision `c867c9c`, after its
+calibration block came out) and its user message, and reads the reply with a
+port of its parser. The call omits `max_tokens`. The classifier's current
+prompt has no published measurement, so this feature claims nothing about
+classification quality.
+
+One limit applies. `require_parameters` is a top-level repository setting, and
+the context call inherits it. When it is `true`, the call adds
+`provider.require_parameters`, which restricts routing to backends that support
+the request parameters, and the classifier doesn't send that field. The match holds
+at the default and drifts at `true`. Cite cannot fix routing either: OpenRouter
+picks a backend per request, so two identical requests can behave differently.
 
 ## Require parameters
 

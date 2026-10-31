@@ -58,9 +58,13 @@ func checkNameFor(id string) string { return id }
 // derived marker inserts the identity before the closing, which makes each
 // marker unmatchable by the others. The default identity returns the legacy
 // marker unchanged.
-func stickyMarkerFor(id string) string {
+func stickyMarkerFor(id string) string { return markerFor(stickyMarker, id) }
+
+// markerFor derives the marker for an identity from a default marker. The
+// default identity keeps the marker unchanged.
+func markerFor(marker, id string) string {
 	if id == defaultReviewerID {
-		return stickyMarker
+		return marker
 	}
-	return stickyMarker[:len(stickyMarker)-len(" -->")] + " " + id + " -->"
+	return marker[:len(marker)-len(" -->")] + " " + id + " -->"
 }

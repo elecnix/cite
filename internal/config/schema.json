@@ -33,6 +33,12 @@
       "enum": ["comment", "block"],
       "default": "comment"
     },
+    "pr_context": {
+      "type": "string",
+      "enum": ["off", "comment"],
+      "default": "comment",
+      "description": "Whether each review run also posts one comment of questions about facts the pull request description leaves unexplained. The pass never reaches the verdict."
+    },
     "compat_profile": {
       "type": "string",
       "minLength": 1,
@@ -53,7 +59,8 @@
       "properties": {
         "review": { "$ref": "#/definitions/role" },
         "triage": { "$ref": "#/definitions/role" },
-        "assemble": { "$ref": "#/definitions/role" }
+        "assemble": { "$ref": "#/definitions/role" },
+        "context": { "$ref": "#/definitions/role" }
       },
       "additionalProperties": false
     },

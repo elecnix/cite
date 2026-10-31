@@ -461,6 +461,60 @@ func (c *Client) FindIssueComment(ctx context.Context, prNum int, marker string)
 	return 0, "", false, nil
 }
 
+// IssueComment is one pull request conversation comment. ID is the REST
+// database id that PATCH takes; NodeID is the GraphQL global id that
+// minimizeComment takes. The two are not interchangeable.
+type IssueComment struct {
+	ID     int64
+	NodeID string
+	Body   string
+}
+
+// FindIssueCommentWithNode returns the newest issue comment that opens with marker,
+// with both of its ids. FindIssueComment drops the node id, and a caller that
+// minimizes the comment afterwards needs it.
+func (c *Client) FindIssueCommentWithNode(ctx context.Context, prNum int, marker string) (IssueComment, bool, error) {
+	raws, err := c.listPaginated(ctx, fmt.Sprintf("repos/%s/%s/issues/%d/comments", c.owner, c.repo, prNum))
+	if err != nil {
+		return IssueComment{}, false, err
+	}
+	for i := len(raws) - 1; i >= 0; i-- {
+		var cm struct {
+			ID     int64  `json:"id"`
+			NodeID string `json:"node_id"`
+			Body   string `json:"body"`
+		}
+		if err := json.Unmarshal(raws[i], &cm); err != nil {
+			return IssueComment{}, false, fmt.Errorf("decoding github response: %w", err)
+		}
+		// The marker must open the body: a quote-reply carries it too, after
+		// a "> ", and must not displace the comment Cite wrote.
+		if marker != "" && strings.HasPrefix(cm.Body, marker) {
+			return IssueComment{ID: cm.ID, NodeID: cm.NodeID, Body: cm.Body}, true, nil
+		}
+	}
+	return IssueComment{}, false, nil
+}
+
+// CreateIssueComment posts a new conversation comment on the pull request.
+func (c *Client) CreateIssueComment(ctx context.Context, prNum int, body string) error {
+	return c.do(ctx, http.MethodPost,
+		fmt.Sprintf("repos/%s/%s/issues/%d/comments", c.owner, c.repo, prNum), nil, map[string]string{"body": body}, nil)
+}
+
+// UpdateIssueComment replaces the body of one conversation comment.
+func (c *Client) UpdateIssueComment(ctx context.Context, id int64, body string) error {
+	return c.do(ctx, http.MethodPatch,
+		fmt.Sprintf("repos/%s/%s/issues/comments/%d", c.owner, c.repo, id), nil, map[string]string{"body": body}, nil)
+}
+
+// MinimizeNode minimizes a comment by GraphQL node id with classifier
+// OUTDATED, for the same reason MinimizeComment uses it.
+func (c *Client) MinimizeNode(ctx context.Context, nodeID string) error {
+	var out map[string]any
+	return c.graphql(ctx, minimizeCommentMutation, map[string]any{"subjectId": nodeID}, &out)
+}
+
 // FindTrustedIssueComment is FindIssueComment for state the reviewer acts on.
 // Anyone can comment on a public pull request, and the pull request's author
 // controls its diff, so a comment carries the marker only if its author is a

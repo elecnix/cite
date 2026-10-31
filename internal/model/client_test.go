@@ -639,3 +639,32 @@ func TestBodyShapeQuotesNothing(t *testing.T) {
 		}
 	}
 }
+
+// A request that sets no output cap leaves max_tokens out of the body. The
+// context pass depends on it: its request matches the one a classifier
+// measured, and that request carries no max_tokens. Every other call sets a
+// cap, so they keep sending the field.
+func TestCompleteOmitsMaxTokensWhenUnset(t *testing.T) {
+	var got map[string]any
+	ts := newTestServer(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &got)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
+	})
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, APIKey: "k", Model: "m"}
+
+	if _, err := c.Complete(context.Background(), CompletionRequest{System: "s", User: "u"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["max_tokens"]; ok {
+		t.Fatalf("an unset cap must leave max_tokens out of the body, got %v", got["max_tokens"])
+	}
+
+	if _, err := c.Complete(context.Background(), CompletionRequest{System: "s", User: "u", MaxOutputTokens: 64}); err != nil {
+		t.Fatal(err)
+	}
+	if got["max_tokens"] != float64(64) {
+		t.Fatalf("a set cap must reach the body, got %v", got["max_tokens"])
+	}
+}

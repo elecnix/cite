@@ -85,6 +85,10 @@ in the review body as one paragraph instead.
 Above 40 flagged files, files are risk-ranked and the top N reviewed, disclosed
 in one line of the review body. Never silently.
 
+The context comment ([configuration.md](configuration.md#pull-request-context))
+is outside this budget. It asks questions about the description, doesn't claim
+anything about the code, and Cite keeps one marker-keyed comment per pull request.
+
 ## Convention and error-swallow are off by default
 
 `nits: false` (the default) disables the `convention` and `error-swallow`

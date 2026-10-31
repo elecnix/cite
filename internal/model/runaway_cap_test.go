@@ -136,3 +136,50 @@ func TestRunawayMessageWithoutUsageDoesNotQuoteZero(t *testing.T) {
 		t.Fatalf("message should say the count is missing: %q", err)
 	}
 }
+
+// A request that set no cap, as the context pass's does, has no cap to have
+// spent. The runaway message names the limit the provider applied and never
+// claims a zero-token cap was exhausted.
+func TestCompleteRunawayWithoutACapNamesNoCap(t *testing.T) {
+	captureTruncationIn(t, t.TempDir())
+
+	body := `{"choices":[{"message":{"role":"assistant","content":"","reasoning":"` +
+		strings.Repeat("Hmm. ", 50) + `"},"finish_reason":"length"}],` +
+		`"usage":{"prompt_tokens":100,"completion_tokens":500}}`
+	h := &runawayHandler{body: body}
+	ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+
+	_, err := c.Complete(context.Background(), CompletionRequest{})
+	if !errors.Is(err, ErrRunaway) {
+		t.Fatalf("err = %v, want ErrRunaway", err)
+	}
+	if strings.Contains(err.Error(), "0-token") {
+		t.Fatalf("the message claims a 0-token cap: %v", err)
+	}
+	if !strings.Contains(err.Error(), "the request set no cap") {
+		t.Fatalf("the message must say the request set no cap: %v", err)
+	}
+}
+
+// With no cap requested and no usage object returned, the output count is
+// missing, and the message says so instead of quoting a limit of zero.
+func TestCompleteRunawayWithoutACapOrUsageSaysTheCountIsMissing(t *testing.T) {
+	captureTruncationIn(t, t.TempDir())
+
+	body := `{"choices":[{"message":{"role":"assistant","content":"","reasoning":"` +
+		strings.Repeat("Hmm. ", 50) + `"},"finish_reason":"length"}]}`
+	h := &runawayHandler{body: body}
+	ts := newTestServer(http.HandlerFunc(h.ServeHTTP))
+	defer ts.Close()
+	c := &OpenAICompatClient{BaseURL: ts.URL, Model: "m"}
+
+	_, err := c.Complete(context.Background(), CompletionRequest{})
+	if !errors.Is(err, ErrRunaway) {
+		t.Fatalf("err = %v, want ErrRunaway", err)
+	}
+	if strings.Contains(err.Error(), "limit of 0 tokens") || !strings.Contains(err.Error(), "reported no output token count") {
+		t.Fatalf("the message must say the count is missing: %v", err)
+	}
+}

@@ -482,6 +482,16 @@ type RunRecord struct {
 	Coverage Coverage           `json:"coverage"`
 
 	Verdict Verdict `json:"verdict"`
+
+	// The context pass (docs/configuration.md, pr_context). It reads the pull
+	// request description, and its answer is never part of the verdict above.
+	// ContextVerdict is COMPLETE or MISSING_CONTEXT, empty when the pass did not
+	// run or failed; ContextQuestions are cleaned for rendering; ContextError is
+	// why a pass that ran produced no verdict. A failed pass posts nothing.
+	ContextVerdict   string   `json:"context_verdict,omitempty"`
+	ContextQuestions []string `json:"context_questions,omitempty"`
+	ContextError     string   `json:"context_error,omitempty"`
+
 	// VerdictReason explains COULD_NOT_EVALUATE in one line.
 	VerdictReason string `json:"verdict_reason,omitempty"`
 

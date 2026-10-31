@@ -209,6 +209,9 @@ func CheckRunPayload(rec *model.RunRecord, verdict model.Verdict, reason string)
 		sb.WriteString(line)
 	}
 	if rec != nil {
+		sb.WriteString(contextLines(rec))
+	}
+	if rec != nil {
 		agg := skippedAggregate(rec.Files)
 		if len(agg) > 0 {
 			sb.WriteString("\n")
@@ -224,6 +227,23 @@ func CheckRunPayload(rec *model.RunRecord, verdict model.Verdict, reason string)
 		}
 	}
 	return title, sb.String()
+}
+
+// contextLines renders the context pass for the check-run summary. The pass is
+// information for the author: it appears here, and nothing in it feeds Decide
+// or Conclusion. The questions in the record are already cleaned for rendering.
+func contextLines(rec *model.RunRecord) string {
+	var sb strings.Builder
+	switch {
+	case rec.ContextError != "":
+		fmt.Fprintf(&sb, "\n\nContext: could not run (%s)", rec.ContextError)
+	case rec.ContextVerdict != "":
+		fmt.Fprintf(&sb, "\n\nContext: %s", rec.ContextVerdict)
+		for i, q := range rec.ContextQuestions {
+			fmt.Fprintf(&sb, "\n%d. %s", i+1, q)
+		}
+	}
+	return sb.String()
 }
 
 // BypassSummary renders the break-glass line: BYPASSED — <state> — @author —
