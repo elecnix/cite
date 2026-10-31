@@ -1,50 +1,13 @@
-# Dogfooding: Cite reviews its own pull requests (PLAN §17, "shadow mode").
-#
-# This uses Cite's own released composite action — the same install path a
-# consumer copies from the README — on every pull request of this
-# repository. Reviews post as COMMENT; the check run fails only when the
-# gate concludes COULD_NOT_EVALUATE (fail-closed coverage), never on
-# findings themselves.
-#
-# Pin tracks the latest release rather than an old one: dogfooding should
-# exercise what consumers actually get, including released retry hardening.
-#
-# Consequence of the tool_failure_blocks choice below: the check run
-# concludes "neutral" when the gate reports COULD_NOT_EVALUATE, so a
-# corrupted model reply no longer fails this check. A real finding (FOUND)
-# still concludes failure and blocks, and every COULD_NOT_EVALUATE is
-# still published truthfully and diagnosed (see .github/cite.yml for the
-# why).
-#
-# Security posture mirrors the documented install (§12): no checkout of the
-# pull request head — the action fetches everything it needs from the GitHub
-# API — and the model key arrives as a secret, never in the diff.
-#
-# Two reviewers run in parallel on every same-repository pull request:
-#
-#   review      — the released binary, the "before" reviewer, under the
-#                 canonical identity "cite" (default check run name and
-#                 sticky marker).
-#   review-head — the binary built from THIS pull request's head, the
-#                 "after" reviewer, under identity "cite-head"
-#                 (CITE_REVIEWER_ID). Comparing the two reviews on the same
-#                 pull request shows exactly what the pull request changed
-#                 about the reviewer itself.
-#
-# Identities namespace everything GitHub-facing (check run name, sticky
-# comment marker), so the two reviewers never conclude or overwrite each
-# other's state. See cmd/cite/identity.go.
 name: review
 
+# One shape across the fleet. The endpoint, the model and the structured-output
+# mode are repository variables, so retargeting this repository is three
+# variable edits and never a workflow edit; the credential is one secret. The
+# action is pinned to a full commit SHA, which also pins the release binary it
+# downloads, and the run log prints the endpoint and model it used.
+
 on:
-  # pull_request_target, not pull_request: the workflow definition is always
-  # taken from the default branch, so a long-lived branch cannot keep running
-  # a stale copy of this file (the reviewer that reviews the reviewer's own
-  # configuration). The trusted contexts stay safe for the reason in
-  # docs/security.md I1 — nothing from the pull request head is executed in
-  # them — and the fork gates below keep head code out of this repository's
-  # runs entirely.
-  pull_request_target:
+  pull_request:
 
 permissions:
   contents: read
@@ -52,201 +15,18 @@ permissions:
   checks: write
 
 concurrency:
-  # One review per pull request at a time; superseded runs may be cancelled
-  # freely because publishing is idempotent (fingerprint reconciliation).
   group: cite-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  # The "before" reviewer: the released Cite binary, under the canonical
-  # "cite" identity (check run name and sticky marker unchanged).
   review:
-    # Fork pull requests receive a read-only github.token, so posting the
-    # review would fail; Cite's own fork-safe two-workflow split (§12) is
-    # deliberately not wired up for its own repository yet.
-    if: github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     steps:
       - name: Review this pull request with Cite
-        uses: elecnix/cite@e790f27116e76c26aa8b4f6c6437c5bec6c5cc30  # v0.16.0
+        uses: elecnix/cite@e790f27116e76c26aa8b4f6c6437c5bec6c5cc30 # v0.16.0
         with:
-          tool_failure_blocks: false
-          # Ollama Cloud is the default provider; set the CITE_PROVIDER
-          # repository variable to "openrouter" to switch this repository
-          # back. Provider and model move together, which is why
-          # .github/cite.yml no longer pins a model.
-          structured_output: ${{ vars.CITE_PROVIDER == 'openrouter' && 'response_format' || 'tools' }}
-          require_parameters: ${{ vars.CITE_PROVIDER == 'openrouter' }}
-          model_api_key: ${{ vars.CITE_PROVIDER == 'openrouter' && secrets.MODEL_API_KEY || secrets.OLLAMA_API_KEY }}
-          model_base_url: ${{ vars.CITE_PROVIDER == 'openrouter' && 'https://openrouter.ai/api/v1' || 'https://ollama.com/v1' }}
-          model_id: ${{ vars.CITE_PROVIDER == 'openrouter' && 'deepseek/deepseek-v4-flash-0731' || 'deepseek-v4.1-flash' }}
-          # The same chain as the head leg below: on Ollama Cloud, the calls
-          # deepseek-v4.1-flash cannot answer (a runaway) move to glm-5.2,
-          # then kimi-k2.6.
-          fallback_model_ids: ${{ vars.CITE_PROVIDER != 'openrouter' && 'glm-5.2,kimi-k2.6' || '' }}
-          # Scope: this repository's own choice, not a recommendation to
-          # consumers (our reviewer is also the product under review, so the
-          # config here is read from the base ref of every PR we open).
-          # What it changes: when the reviewer cannot evaluate a diff at all
-          # (a corrupted model reply or a provider outage, published
-          # truthfully as COULD_NOT_EVALUATE), the check run concludes
-          # "neutral" instead of "failure", so silence from a broken judge
-          # does not veto the merge. A real finding (FOUND) always concludes
-          # failure and blocks, unchanged. The pin above is v0.16.0. The first
-          # release carrying the tool_failure_blocks input was v0.8.0 (issue
-          # #59 landed on main after v0.6.0), so the input takes effect as
-          # written.
+          model_api_key: ${{ secrets.REVIEW_MODEL_API_KEY }}
+          model_base_url: ${{ vars.REVIEW_MODEL_BASE_URL }}
+          model_id: ${{ vars.REVIEW_MODEL_ID }}
+          structured_output: ${{ vars.REVIEW_MODEL_STRUCTURED_OUTPUT }}
 
-  # The "after" reviewer: the binary built from THIS pull request's head,
-  # reviewing the same pull request under its own "cite-head" identity
-  # (CITE_REVIEWER_ID).
-  #
-  # I1 (docs/security.md) says a privileged job executes zero PR-head code.
-  # This path is the deliberate, gated exception: it runs ONLY for
-  # same-repository branches, where head code is controlled by the same
-  # people who own the secrets. Fork pull requests get no head review — the
-  # `if` guards below are the security boundary, keep them on both jobs.
-  build-head:
-    if: github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: Build Cite from the pull request head
-        run: go build -o cite-head ./cmd/cite
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: cite-head-binary
-          path: cite-head
-
-  review-head:
-    needs: build-head
-    if: github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: cite-head-binary
-          path: .
-
-      # Same trusted-config fetch as the released reviewer above: the config
-      # comes from the BASE ref, never from the PR head (§12). The released
-      # composite action fetches it internally; the head build reads its
-      # config from the local path, so this job fetches it explicitly.
-      - name: Fetch trusted Cite config from the base branch
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$(dirname '.github/cite.yml')"
-          # Tolerant by design: a missing config is not an error — Cite falls
-          # back to its defaults — but never leave an empty/partial file.
-          if gh api "repos/${{ github.repository }}/contents/.github/cite.yml?ref=${{ github.base_ref }}" \
-               --jq '.content' | base64 -d > .github/cite.yml.tmp; then
-            mv .github/cite.yml.tmp .github/cite.yml
-          else
-            rm -f .github/cite.yml.tmp
-            echo "cite-head: no .github/cite.yml on base ref; running with defaults"
-          fi
-
-      - name: Review this pull request with the head build of Cite
-        id: review
-        env:
-          MODEL_API_KEY: ${{ vars.CITE_PROVIDER == 'openrouter' && secrets.MODEL_API_KEY || secrets.OLLAMA_API_KEY }}
-          MODEL_BASE_URL: ${{ vars.CITE_PROVIDER == 'openrouter' && 'https://openrouter.ai/api/v1' || 'https://ollama.com/v1' }}
-          MODEL_ID: ${{ vars.CITE_PROVIDER == 'openrouter' && 'deepseek/deepseek-v4-flash-0731' || 'deepseek-v4.1-flash' }}
-          # deepseek-v4.1-flash spends its whole output budget reasoning on
-          # some files at every reasoning_effort (internal/scope/diff.go of
-          # #171, every attempt); glm-5.2 and kimi-k2.6 on the same endpoint
-          # reviewed that file in one to two minutes, so they serve the calls
-          # it cannot.
-          CITE_FALLBACK_MODELS: ${{ vars.CITE_PROVIDER != 'openrouter' && 'glm-5.2,kimi-k2.6' || '' }}
-          # The action leg gets these two from its own inputs; this leg drives
-          # the CLI directly, so it has to say the same thing: Ollama Cloud
-          # ignores response_format and reads the schema from a forced tool
-          # call, while require_parameters is a router-only field that a
-          # direct provider rejects.
-          CITE_STRUCTURED_OUTPUT: ${{ vars.CITE_PROVIDER == 'openrouter' && 'response_format' || 'tools' }}
-          CITE_REQUIRE_PARAMETERS: ${{ vars.CITE_PROVIDER == 'openrouter' }}
-          GITHUB_TOKEN: ${{ github.token }}
-          CITE_REVIEWER_ID: cite-head
-          CITE_RECORD_OUT: ${{ runner.temp }}/cite-head-run-record.json
-          # Where cite writes the partial response of a review that hit the token
-          # cap. Its default is /tmp, which the archive step below does not read,
-          # so without this the capture is lost when the job ends.
-          CITE_TRUNCATED_OUT: ${{ runner.temp }}/cite-truncated-response.json
-          # From the event payload: this step runs under pull_request_target,
-          # where GITHUB_REF is the base branch and carries no pull number.
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-          chmod +x ./cite-head
-          # Archive for forensics: tee the full log and dump the run record
-          # (per-call timings, token usage, per-file outcomes) even when the
-          # run fails. pipefail preserves cite's exit code through the tee.
-          CITE_LOG="$RUNNER_TEMP/cite-head-output.log"
-          # PR_NUMBER arrives from the event payload above; the ref parse
-          # stays as a fallback for the pull_request trigger.
-          PR_NUM="${PR_NUMBER:-}"
-          if [ -z "$PR_NUM" ] && [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
-            PR_NUM="${GITHUB_REF#refs/pull/}"
-            PR_NUM="${PR_NUM%/merge}"
-          fi
-          if [ -z "$PR_NUM" ]; then
-            echo "cite-head: no pull request context (event: ${GITHUB_EVENT_NAME:-unknown}); nothing to review" >&2
-            exit 0
-          fi
-          # Same choice as the release leg's `tool_failure_blocks: false` above: a
-          # tool failure (COULD_NOT_EVALUATE) concludes neutral, a real finding
-          # still blocks. This leg drives the CLI directly, so it has to pass the
-          # flag the action would have passed; without it the two legs disagreed
-          # and the head build alone turned red on its own truncation failures.
-          ./cite-head review --pr "$GITHUB_REPOSITORY#$PR_NUM" --config .github/cite.yml --tool-failure-blocks=false 2>&1 | tee "$CITE_LOG"
-          # A neutral COULD_NOT_EVALUATE exits zero, so failure() misses it;
-          # this output keeps its forensics archived.
-          if grep -q 'COULD_NOT_EVALUATE concluded neutral' "$CITE_LOG"; then
-            echo "could_not_evaluate=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      # The run record on every successful run too: calls[] carries the
-      # per-call cache counters and upstream provider.
-      - name: Archive the run record
-        if: success()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: cite-head-run-record-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/cite-head-run-record.json
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Archive forensics on failure
-        if: failure() || steps.review.outputs.could_not_evaluate == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: cite-head-forensics-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/cite-head-output.log
-            ${{ runner.temp }}/cite-head-run-record.json
-          if-no-files-found: warn
-          retention-days: 30
-
-      # The partial response is the only evidence of what a truncated review
-      # actually contained, and it lives only on the runner: the log says how
-      # many bytes it was, never what was in them. Without this step the
-      # runaway-output failure has no artifact to study once the job ends. It
-      # is a request/response exchange, so it can carry the reviewed source;
-      # it gets its own artifact so it keeps the same 14-day retention as the
-      # run record rather than the 30 days of the forensics bundle above. The
-      # file exists only when a review truncated, hence no warning when absent.
-      - name: Archive the truncated response on failure
-        if: failure() || steps.review.outputs.could_not_evaluate == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: cite-head-truncated-response-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/cite-truncated-response.json
-          if-no-files-found: ignore
-          retention-days: 14
