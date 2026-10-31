@@ -31,7 +31,7 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: elecnix/cite@db01467aae47c33f16ec6b404d3cdbd13ec94f12  # v0.15.1
+      - uses: elecnix/cite@e790f27116e76c26aa8b4f6c6437c5bec6c5cc30  # v0.16.0
         env:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
 ```
@@ -780,6 +780,9 @@ count and the run record.
 | `version_behavior` | impossible without network | **rejected at parse time** |
 | `ci_behavior` | impossible | note only, never blocking |
 | `convention` | impossible | note only, rendered as a question |
+| `symbol_not_defined` | search the reviewed file for a definition of the declared `symbol` | **drop** when the file defines it |
+| `symbol_not_called` | search the reviewed file for a call of the declared `symbol` | **drop** when the file calls it |
+| `occurrence_count_zero` | search the reviewed file for any occurrence of the declared `symbol` | **drop** when the file has it |
 
 A `symbol_exists` subject that isn't an identifier, such as a sentence about how a toolchain
 behaves, gives the definition search nothing to look for, and zero hits can't refute it. The
@@ -790,6 +793,29 @@ never blocks. The harness strips backticks and a trailing `()` from a name befor
 and the model is always confident about it. It is the class that flagged a real `actions/checkout@v5` as "no such version".
 `ci_behavior` is the class that produced the suggestion which would have silently disabled every
 staging deploy.
+
+### Absence claims are declared, not inferred
+
+The absence-claim types exist because a finding that asserts an absence used to have its
+narrative recovered into a check by reading English. The harness matched a table of phrases
+against the finding's narrative fields and guessed the subject from the token before the phrase.
+Coverage was a function of the narrative vocabulary. Outside English no phrase matched,
+so the guard was absent rather than weaker, and the ordinary blocking formula applied to an
+absence claim nobody had checked. Every fix was a new word, and the class has produced four
+incidents closed by widening the table.
+
+So the model fills in the absence it asserts. The type says which one
+(`symbol_not_defined`, `symbol_not_called`, `occurrence_count_zero`), the `symbol` field says which
+name, and the check runs on the type and the symbol, in any language the finding is written in. A
+claim the file contradicts drops the finding. A claim the file bears out stands and can block.
+
+The prose tables stay, as a fallback, and the fallback is weaker in the one direction that matters.
+An absence in prose that no declared claim covers was never mechanically observed, so the finding
+fails open to a note and can never ground a blocker. The tables keep the falsifying power they
+always had, because dropping a false claim is worth more than the coverage of the table. A
+phrase-matched claim the file contradicts is still dropped. A finding that declares
+`evidence_kind: "absent"` with no absence claim is held to the same rule, and `evidence_kind` is a
+field rather than a phrase, so the rule works in every language.
 
 ### The verifier pass
 
@@ -934,6 +960,18 @@ pull request event at all, and carried-forward findings must not survive it.
 
 When in doubt, incremental **fails toward re-review**, never toward carry-forward. A silently
 un-raised finding is the failure mode that ends the tool's credibility in one afternoon.
+
+When a file's blob SHA matches the one a completed earlier review recorded, Cite does not send the
+file to the model again. The file counts toward coverage as an approved skip, and its earlier findings
+stay in the record with the block each had when posted, so the verdict still covers the whole pull
+request. The sticky state also records the head and the merge base of its run. A later run uses the
+state only when the merge base is unchanged and the compare API reports the earlier head as an
+ancestor of the current one. A force push, a reset, a rebase onto a new base, a missing commit, a
+failed comparison, and a state without these fields all give a full review.
+
+Cite reads only the sticky comment of a bot or a repository collaborator, never one from the pull
+request's author (I2). The state sets which files the reviewer skips, so a forged marker comment
+from the author would hide a file from review.
 
 ### State storage and the ledger
 
@@ -1617,6 +1655,53 @@ then decide. A finding you have not traced there does not belong in
 `findings`. Nobody reads `analysis` but you, so it does not need to be short.
 
 
+## ABSENCE CLAIMS
+
+This section applies ONLY to a finding whose mechanism is that something
+is MISSING: a helper nobody defines, or a symbol that occurs nowhere in
+the file. A finding about a line you can quote keeps `evidence_kind` as
+"present" and doesn't declare an absence claim.
+
+An absence cannot be quoted, so it needs its own fields. Set
+`evidence_kind` to "absent", put the missing thing in `missing_assertion`,
+and declare the absence as one entry in `external_claims`. The `type` key
+of that entry says WHICH shape of absence you mean, and the `symbol` key
+holds the name:
+
+  type "symbol_not_defined"     the symbol is not defined anywhere
+  type "symbol_not_called"      the symbol is never called
+  type "occurrence_count_zero"  the symbol does not occur at all
+
+The `type` key says which one, and the `symbol` key says which name. A
+claim that puts the absence in `subject`, or uses it as a key of its own,
+is a claim the checker cannot read, and the finding falls back to a note.
+The `subject` key holds a one-line description of the claim, and the
+`symbol` key holds the bare name the checker searches for.
+
+The `symbol` field holds the bare name: `notok`, `validateSignature`,
+`Cache.Get`. Put the name there, and leave the explanation to `body`: a
+sentence in `symbol` gives the search nothing to look for. Use `null` for
+`path` on a claim about a symbol, and for `count` on every type but
+`occurrence_count_zero`.
+
+Declare the absence, and it gets checked against the file: a claim the file
+contradicts is discarded as a fabrication, and a claim the file bears out
+stands. Leave the claim undeclared, and nobody can check what you asserted:
+the finding is kept as a note and it can never block. The claim costs you
+nothing to declare and it is the only thing that lets an absence be
+verified.
+
+"X is never called" is what symbol_not_called says, and "X is
+undefined" is what symbol_not_defined says. The third one is careful:
+"the file contains no occurrence of X" is occurrence_count_zero, and "the
+file contains no OTHER occurrence of X" is not, because that wording says
+one occurrence is there and every other one is missing. Declare the type
+that matches what you are claiming, not the one the words resemble: a
+claim the file contradicts is discarded as a fabrication.
+
+Use the fields, not the prose: the checker reads the type and the symbol,
+so it works the same in any language you write in.
+
 ## MOST FILES HAVE NO FINDINGS
 
 Returning `"findings": []` is the correct answer for many files, and it is a
@@ -1766,6 +1851,19 @@ REPORT a language semantic that sits entirely inside the file:
   evidence: [{1, "set -eo pipefail"}, {58, "if [ $? -ne 0 ]; then"}]
   fix: replace 58-60 with "run_migration || rollback"
 
+REPORT an absence, with the claim that makes it checkable:
+
+  category: logic-inversion, confidence: certain
+  title: "notok is undefined, so the failure path never increments fail"
+  body:  "Line 12 calls notok, and nothing in this file defines it, so the
+          failure path never increments fail and the script reports success."
+  evidence: [{12, "notok \"exited $rc\""}]
+  evidence_kind: "absent"
+  missing_assertion: "notok is not defined anywhere in this file"
+  external_claims: [{ "type": "symbol_not_defined",
+                      "subject": "notok is not defined in this file",
+                      "symbol": "notok", "path": null, "count": null }]
+
 DO NOT REPORT a repo fact that is not a defect:
 
   "Import this from internal/config, not pkg/config, per the project layout."
@@ -1802,7 +1900,7 @@ One JSON object, without a fence or commentary:
   "path": "<echo the path from file_under_review>",
   "outcome": "reviewed" | "reviewed_partial_context" | "not_reviewable",
   "not_reviewable_reason": "<only when outcome is not_reviewable>",
-  "analysis": "<your walk of each changed condition: the input you tried and what the code returns for it>",
+  "analysis": "<your walk of each changed condition: the input you tried and the result it returns>",
   "findings": [
     {
       "id": "f1",
@@ -1812,7 +1910,9 @@ One JSON object, without a fence or commentary:
       "body": "",
       "impact": "",
       "evidence": [ { "line": 0, "quote": "" } ],
-      "external_claims": [ { "type": "", "subject": "" } ],
+      "evidence_kind": "present" | "absent",
+      "missing_assertion": "",
+      "external_claims": [],
       "introduced_by": "added_line" | "existing_line_made_wrong",
       "confidence": "<certain|likely|question>",
       "fix": null
@@ -1822,6 +1922,13 @@ One JSON object, without a fence or commentary:
 
 At most 8 findings. That is a cap, and fewer is fine. `"findings": []` with
 `"outcome": "reviewed"` is a complete and successful review.
+
+`"external_claims": []` is the right value for a finding that has no
+repository-dependent claim. A finding that declares one follows the worked
+examples above. The `type` key says which claim it is, the `subject` key
+describes it in a line, and the `symbol` key holds the bare name. Leave
+`path` and `count` null unless the claim is about a path or states a
+count.
 ````
 
 ## Appendix B: the failure behind each rule

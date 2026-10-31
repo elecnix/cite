@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -47,6 +48,107 @@ func TestParseFileReviewRejectsBannedClaimType(t *testing.T) {
 	_, err := ParseFileReview([]byte(in))
 	if err == nil || !strings.Contains(err.Error(), "version_behavior") {
 		t.Fatalf("version_behavior must be rejected at parse time, got %v", err)
+	}
+}
+
+// The absence-claim types (issue #203) parse, and each one keeps its
+// subject in a structured field: the type says which shape of absence the
+// finding asserts, the symbol says which name.
+func TestParseFileReviewAcceptsAbsenceClaimTypes(t *testing.T) {
+	for _, typ := range []ClaimType{ClaimSymbolNotDefined, ClaimSymbolNotCalled, ClaimOccurrenceCountZero} {
+		in := fmt.Sprintf(`{"schema_version":1,"path":"a.go","outcome":"reviewed","findings":[{
+		  "id":"f1","category":"crash","anchor":{"start_line":1,"end_line":2},
+		  "title":"t","body":"b","impact":"i",
+		  "evidence":[{"line":1,"quote":"x"}],
+		  "external_claims":[{"type":%q,"subject":"notok","symbol":"notok"}],
+		  "introduced_by":"added_line","confidence":"likely"}]}`, typ)
+		fr, err := ParseFileReview([]byte(in))
+		if err != nil {
+			t.Fatalf("%s: %v", typ, err)
+		}
+		c := fr.Findings[0].ExternalClaims[0]
+		if c.Type != typ {
+			t.Errorf("Type = %q, want %q", c.Type, typ)
+		}
+		if c.Symbol != "notok" {
+			t.Errorf("Symbol = %q, want notok: the subject is a structured field", c.Symbol)
+		}
+	}
+}
+
+// An absence claim with no symbol does not fail the parse. The claim
+// names nothing to search for, so the validator gives it the note
+// disposition and the finding can never block. A field on one finding
+// must not cost the whole file its review.
+func TestParseFileReviewKeepsAbsenceClaimWithoutASymbol(t *testing.T) {
+	in := `{"schema_version":1,"path":"a.go","outcome":"reviewed","findings":[{
+	  "id":"f1","category":"crash","anchor":{"start_line":1,"end_line":2},
+	  "title":"t","body":"b","impact":"i",
+	  "evidence":[{"line":1,"quote":"x"}],
+	  "external_claims":[{"type":"symbol_not_defined","subject":"notok"}],
+	  "introduced_by":"added_line","confidence":"likely"}]}`
+	fr, err := ParseFileReview([]byte(in))
+	if err != nil {
+		t.Fatalf("an absence claim with no symbol must not fail the parse: %v", err)
+	}
+	if len(fr.Findings) != 1 {
+		t.Fatalf("Findings = %d, want 1", len(fr.Findings))
+	}
+}
+
+// An occurrence_count_zero claim that declares a non-zero count contradicts
+// itself: the type says the count is zero. The parse keeps it, and the
+// validator turns it into a note.
+func TestParseFileReviewKeepsZeroCountClaimWithANonZeroCount(t *testing.T) {
+	in := `{"schema_version":1,"path":"a.go","outcome":"reviewed","findings":[{
+	  "id":"f1","category":"crash","anchor":{"start_line":1,"end_line":2},
+	  "title":"t","body":"b","impact":"i",
+	  "evidence":[{"line":1,"quote":"x"}],
+	  "external_claims":[{"type":"occurrence_count_zero","subject":"notok","symbol":"notok","count":3}],
+	  "introduced_by":"added_line","confidence":"likely"}]}`
+	fr, err := ParseFileReview([]byte(in))
+	if err != nil {
+		t.Fatalf("a self-contradicting count must not fail the parse: %v", err)
+	}
+	if got := fr.Findings[0].ExternalClaims[0].Count; got == nil || *got != 3 {
+		t.Errorf("Count = %v, want 3: the parse keeps what the model said", got)
+	}
+}
+
+// A null structured subject decodes to the empty string, so a claim that
+// is not about a symbol parses and reads as "no symbol here". The
+// provider's strict schema requires the key, and a key the model omits
+// fails the whole response, so null is the shape that says "not
+// applicable" without costing the file its review.
+func TestParseFileReviewAcceptsNullStructuredSubjects(t *testing.T) {
+	in := `{"schema_version":1,"path":"a.go","outcome":"reviewed","findings":[{
+	  "id":"f1","category":"crash","anchor":{"start_line":1,"end_line":2},
+	  "title":"t","body":"b","impact":"i",
+	  "evidence":[{"line":1,"quote":"x"}],
+	  "external_claims":[{"type":"path_exists","subject":"internal/config","symbol":null,"path":null,"count":null}],
+	  "introduced_by":"added_line","confidence":"likely"}]}`
+	fr, err := ParseFileReview([]byte(in))
+	if err != nil {
+		t.Fatalf("a null structured subject must parse: %v", err)
+	}
+	c := fr.Findings[0].ExternalClaims[0]
+	if c.Symbol != "" || c.Path != "" || c.Count != nil {
+		t.Errorf("claim = %+v, want empty symbol, empty path and no count", c)
+	}
+}
+
+// IsAbsenceClaim names the claim types whose blocking turns on an absence.
+func TestIsAbsenceClaim(t *testing.T) {
+	absences := []ClaimType{ClaimSymbolNotDefined, ClaimSymbolNotCalled, ClaimOccurrenceCountZero}
+	for _, c := range absences {
+		if !c.IsAbsenceClaim() {
+			t.Errorf("%s must be an absence claim", c)
+		}
+	}
+	for _, c := range []ClaimType{ClaimPathExists, ClaimSymbolExists, ClaimConfigKey, ClaimCIBehavior, ClaimConvention} {
+		if c.IsAbsenceClaim() {
+			t.Errorf("%s must not be an absence claim", c)
+		}
 	}
 }
 
@@ -240,5 +342,69 @@ func TestUnwrapJSONLeavesNonFencedInputAlone(t *testing.T) {
 		if got := string(UnwrapJSON([]byte(in))); got != in {
 			t.Errorf("UnwrapJSON(%q) = %q, want it untouched", in, got)
 		}
+	}
+}
+
+// The cost line is the one number a buyer reads, and it has to distinguish
+// three cases (issue #204): a billed amount, a billed zero, and a cost Cite
+// could not determine. The last one must not read as a zero.
+func TestRunRecordCostText(t *testing.T) {
+	cases := []struct {
+		name string
+		rec  *RunRecord
+		want string
+	}{
+		{
+			name: "billed amount",
+			rec:  &RunRecord{CostUSD: 0.0123},
+			want: "$0.0123",
+		},
+		{
+			name: "billed zero",
+			rec:  &RunRecord{CostUSD: 0},
+			want: "$0.0000",
+		},
+		{
+			name: "unknown",
+			rec:  &RunRecord{CostUnknown: true},
+			want: CostUnknownLabel,
+		},
+		{
+			name: "nil record",
+			rec:  nil,
+			want: "$0.0000",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.rec.CostText(); got != tc.want {
+				t.Errorf("CostText() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// ReportedTokens is the guard that decides whether a run consumed tokens, so
+// it has to count every counter the cost formula prices. A run whose only
+// tokens were a cache write was still billed for them, and counting two of
+// the four priced counters would price that run as a known zero.
+func TestUsageReportedTokens(t *testing.T) {
+	cases := []struct {
+		name string
+		u    Usage
+		want bool
+	}{
+		{"nothing reported", Usage{}, false},
+		{"input", Usage{InputTokens: 10}, true},
+		{"output", Usage{OutputTokens: 10}, true},
+		{"cache read", Usage{CacheReadTokens: 10}, true},
+		{"cache write", Usage{CacheWriteTokens: 10}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.u.ReportedTokens(); got != tc.want {
+				t.Errorf("ReportedTokens() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

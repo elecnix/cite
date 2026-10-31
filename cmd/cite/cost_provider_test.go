@@ -144,8 +144,8 @@ func captureStderr(t *testing.T, fn func()) string {
 // TestApplyCostWarnsWhenTheRunModelHasNoRates covers the silent zero. The model
 // client reads MODEL_ID from the environment and never consults the providers
 // block, so a repository whose config declares one set of models can easily run
-// a model that block never declared. applyCost found no rates and returned 0,
-// and the run then printed "cost: $0.0000" as though zero were the price.
+// a model that block never declared. applyCost found no rates and left the
+// cost at 0, and the run then printed that zero as though it were the price.
 func TestApplyCostWarnsWhenTheRunModelHasNoRates(t *testing.T) {
 	rec := &model.RunRecord{Model: "openai/gpt-5-mini",
 		Usage: model.Usage{InputTokens: 45_000, OutputTokens: 2_000}}
@@ -156,17 +156,31 @@ func TestApplyCostWarnsWhenTheRunModelHasNoRates(t *testing.T) {
 	if out == "" {
 		t.Fatal("applyCost reported no cost and said nothing; an absent rate is not a price of zero")
 	}
+	if !rec.CostUnknown {
+		t.Error("CostUnknown = false, want true: the run reported tokens and no rate priced them")
+	}
 }
 
-// TestApplyCostStaysQuietWhenNoProvidersDeclared keeps the note narrow. With no
-// providers block there are no declared rates anywhere, so a zero cost is the
-// documented outcome and warning about it on every run would be noise.
-func TestApplyCostStaysQuietWhenNoProvidersDeclared(t *testing.T) {
+// TestApplyCostWarnsWhenNoProvidersDeclared covers the case issue #204
+// opened. With no providers block there are no declared rates anywhere, and
+// a provider that reports token counts but no per-call cost leaves the run's
+// price unknowable. The old version of this test pinned silence for exactly
+// that case, on the reasoning that a zero cost was then the documented
+// outcome. That reasoning was wrong: the run is billed, the zero is only
+// what Cite could not price, and printing it as "$0.0000" claimed the run
+// was free. The note now fires, and the run's surfaces say "unknown".
+func TestApplyCostWarnsWhenNoProvidersDeclared(t *testing.T) {
 	rec := &model.RunRecord{Model: "openai/gpt-4o-mini",
 		Usage: model.Usage{InputTokens: 45_000, OutputTokens: 2_000}}
 	out := captureStderr(t, func() { applyCost(rec, &config.Config{}) })
-	if out != "" {
-		t.Errorf("applyCost wrote %q with no providers declared; want silence", out)
+	if out == "" {
+		t.Fatal("applyCost could not price a run that reported tokens and said nothing; an absent rate is not a price of zero")
+	}
+	if !strings.Contains(out, "unknown") {
+		t.Errorf("applyCost wrote %q, want a note that says the cost is unknown", out)
+	}
+	if !rec.CostUnknown {
+		t.Error("CostUnknown = false, want true: the run reported tokens and no rate priced them")
 	}
 }
 

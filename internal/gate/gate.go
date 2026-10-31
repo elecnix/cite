@@ -198,9 +198,13 @@ func CheckRunPayload(rec *model.RunRecord, verdict model.Verdict, reason string)
 	}
 	sb.WriteString(fmt.Sprintf("%s — %s", verdict, reason))
 
-	if rec != nil && (rec.CostUSD > 0 || rec.Usage.InputTokens > 0) {
-		line := fmt.Sprintf("\ncost: $%.4f · %s · %s",
-			rec.CostUSD, rec.Model,
+	// A cost line appears when there is a cost to report: a billed amount,
+	// or a run whose cost could not be determined (issue #204). The
+	// unknown case is a run that reported tokens and no price for them, so
+	// it would otherwise print $0.0000 and claim the run was free.
+	if rec != nil && (rec.CostUSD > 0 || rec.CostUnknown || rec.Usage.InputTokens > 0) {
+		line := fmt.Sprintf("\ncost: %s · %s · %s",
+			rec.CostText(), rec.Model,
 			model.CacheSummary(rec.Usage.CacheHitRate(), rec.CacheCeiling))
 		sb.WriteString(line)
 	}

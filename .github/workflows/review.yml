@@ -68,7 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Review this pull request with Cite
-        uses: elecnix/cite@db01467aae47c33f16ec6b404d3cdbd13ec94f12  # v0.15.1
+        uses: elecnix/cite@e790f27116e76c26aa8b4f6c6437c5bec6c5cc30  # v0.16.0
         with:
           tool_failure_blocks: false
           # Ollama Cloud is the default provider; set the CITE_PROVIDER
@@ -92,7 +92,7 @@ jobs:
           # truthfully as COULD_NOT_EVALUATE), the check run concludes
           # "neutral" instead of "failure", so silence from a broken judge
           # does not veto the merge. A real finding (FOUND) always concludes
-          # failure and blocks, unchanged. The pin above is v0.15.1. The first
+          # failure and blocks, unchanged. The pin above is v0.16.0. The first
           # release carrying the tool_failure_blocks input was v0.8.0 (issue
           # #59 landed on main after v0.6.0), so the input takes effect as
           # written.

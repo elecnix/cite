@@ -152,6 +152,20 @@ func ParseFileReview(data []byte) (*FileReview, error) {
 			if !validClaimType(c.Type) {
 				return nil, fmt.Errorf("schema: finding %s unknown external_claim type %q", f.ID, c.Type)
 			}
+			// The absence-claim types (issue #203) carry a structured
+			// subject, but a missing one is NOT a parse failure. The
+			// validator gives an absence claim with no usable symbol
+			// the note disposition, the same way it treats a
+			// symbol_exists claim whose subject is a sentence: the
+			// search has nothing to look for, so the claim can neither
+			// confirm nor refute the absence, and an uncheckable
+			// claim must not block.
+			//
+			// Rejecting it here instead would fail the whole
+			// response over one finding's field, and a file that
+			// cannot be parsed ends up unevaluated, which the gate
+			// turns into a veto. A field on one finding must not cost
+			// the file's review.
 		}
 		if f.Fix != nil && !validFixShape(f.Fix.Shape) {
 			return nil, fmt.Errorf("schema: finding %s unknown fix shape %q", f.ID, f.Fix.Shape)
@@ -180,7 +194,8 @@ func validConfidence(c Confidence) bool {
 
 func validClaimType(t ClaimType) bool {
 	switch t {
-	case ClaimPathExists, ClaimSymbolExists, ClaimConfigKey, ClaimCIBehavior, ClaimConvention:
+	case ClaimPathExists, ClaimSymbolExists, ClaimConfigKey, ClaimCIBehavior, ClaimConvention,
+		ClaimSymbolNotDefined, ClaimSymbolNotCalled, ClaimOccurrenceCountZero:
 		return true
 	}
 	return false

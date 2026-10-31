@@ -272,7 +272,11 @@ When the provider reports a cost for each call, as OpenRouter does in
 `usage.cost`, Cite reports that sum and ignores the declared rates. You don't
 need a `cost` block for a model you reach through OpenRouter. Declared rates
 give a cost for a provider that reports only token counts, including a model
-Cite has never heard of. With neither, the run reports $0.
+Cite has never heard of. With neither, the run reports `cost: unknown` and
+writes a note to the log. It does not report $0. A provider that bills in
+aggregate, such as Ollama Cloud, charges for those tokens whatever Cite can
+see, so an unpriced run has an undetermined cost rather than a free one. A
+run without a token count has nothing to price, and reports $0.
 
 ## Roles
 
@@ -390,7 +394,7 @@ primary's own endpoint ahead of this list, which is the short form when one
 provider serves several models:
 
 ```yaml
-- uses: elecnix/cite@db01467aae47c33f16ec6b404d3cdbd13ec94f12  # v0.15.1
+- uses: elecnix/cite@e790f27116e76c26aa8b4f6c6437c5bec6c5cc30  # v0.16.0
   with:
     model_id: deepseek-v4.1-flash
     fallback_model_ids: glm-5.2,kimi-k2.6

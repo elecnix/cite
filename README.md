@@ -31,7 +31,7 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - uses: elecnix/cite@db01467aae47c33f16ec6b404d3cdbd13ec94f12  # v0.15.1
+      - uses: elecnix/cite@e790f27116e76c26aa8b4f6c6437c5bec6c5cc30  # v0.16.0
         env:
           MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
 ```
@@ -68,7 +68,7 @@ response Cite's schema rejected is never written down anywhere. When you need
 those bytes, opt into the wire capture:
 
 ```yaml
-      - uses: elecnix/cite@db01467aae47c33f16ec6b404d3cdbd13ec94f12  # v0.15.1
+      - uses: elecnix/cite@e790f27116e76c26aa8b4f6c6437c5bec6c5cc30  # v0.16.0
         with:
           capture_wire: true
         env:
@@ -103,7 +103,9 @@ has the field list, the masking rules, and the two settings that go with it
   your file, the comment is dropped before you see it.
 - Cost you can see: every run reports its token usage and USD cost. The cost
   is what your provider billed, when it reports one (OpenRouter does), or
-  else a figure from the rates you declare.
+  else a figure from the rates you declare. When neither prices the run, the
+  cost reads `unknown` rather than `$0.0000`: your provider may bill in
+  aggregate, and an unpriced run is not a free one.
 
 ## Local evaluation path
 
@@ -136,6 +138,7 @@ The `--report json|markdown` path runs the reviewer against the real pull reques
 - [docs/security.md](docs/security.md) covers the invariants, the fork case, and the capabilities Cite works without.
 - [docs/downstream-contract.md](docs/downstream-contract.md): what an agent consuming these comments must be told
 - [docs/troubleshooting.md](docs/troubleshooting.md): the diagnostic chain, the forensics archive and the opt-in wire capture
+- [skills/cite-review/](skills/cite-review/SKILL.md): an Agent Skill that runs `cite review` in report mode and keeps one directory per run, with a guide to triaging the record
 - [CONFORMANCE.md](CONFORMANCE.md): the compatibility tiers, dated
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 
