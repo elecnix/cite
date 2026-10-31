@@ -110,3 +110,42 @@ gives recall over `must_flag`, the findings that hit a `must_not_flag` label
 a file unevaluated. The case format is documented at the top of the script.
 Cases come from the false positives and misses that people replied to on
 pull requests. Add one whenever a reply refutes a finding.
+
+### Fixture cases
+
+A pinned case needs the network and a repository that keeps its commits. A
+fixture case keeps its code in this repository instead, so it runs offline and
+a pull request that adds one shows the code under review. Fixtures live in
+`bench/eval/testdata/<id>/`, a name the Go toolchain skips, so `go test ./...` never
+builds their sample code:
+
+```
+case.json     description, config, must_flag, must_not_flag
+base/         the tree before the change
+steps/01/     files to add or overwrite in the first commit
+steps/02/     optional further commits
+```
+
+The harness runs `git init` in a temporary directory, commits `base/`, then
+commits each step in name order. It writes `git diff <base> <last>` to a file
+and calls `cite review --diff` on it, the same path a pinned case takes, and
+scores the record with the same labels. Labels are post-change line numbers in
+the last commit. Pass `bench/eval/testdata`, one fixture directory, or a mix
+with `bench/eval/cases` in one invocation to get one summary line.
+
+The design makes these choices:
+
+- A step is an overlay directory, so a reviewer reads the new
+  file as plain code. A `.delete` file in a step lists paths to remove, one per
+  line.
+- The reviewer sees the cumulative diff, so steps change nothing in a score
+  today. They split a long change into readable commits and leave room for
+  incremental re-review cases.
+- `bench/eval/fixture.py` fixes the author, the committer and the dates (one
+  minute apart from 2000-01-01) and ignores git's own configuration, so every
+  machine builds the same SHAs. Model sampling is the only source of variation.
+- `run.py` loads both kinds. Any directory holding a `case.json` is a fixture.
+
+Run `python3 -m unittest discover -s bench/eval` to test the builder.
+The seed fixtures pair an opt-out guard that is correct (`must_not_flag`) with a
+retry deadline that is right in one fixture and off by one in the other.

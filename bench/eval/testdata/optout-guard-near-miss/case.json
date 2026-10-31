@@ -1,0 +1,10 @@
+{
+  "description": "Add an environment-variable opt-out for usage reporting.",
+  "must_not_flag": [
+    {
+      "path": "telemetry.go",
+      "lines": [8, 9],
+      "why": "The guard is correct: the result is false only for \"0\", \"false\" and \"off\", and true for unset or any other value, which is what the comment and the test state. A finding that calls it inverted misreads the negations."
+    }
+  ]
+}
