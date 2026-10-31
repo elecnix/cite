@@ -226,6 +226,10 @@ contains "$out" "would run: git tag -a v1.0.1" || fail "the tag dry run did not 
 
 out="$(rt 1.0.1 --tag 2>&1)" || fail "tagging the merged bump failed: $out"
 [ -n "$(git ls-remote --tags origin refs/tags/v1.0.1)" ] || fail "the tag was not pushed"
+# The hint names the repository with a sed that BSD sed rejects when it uses a lazy
+# quantifier; its error text then lands in the output next to an empty -R argument.
+contains "$out" "RE error" && fail "the follow-up hint printed a sed error: $out"
+contains "$out" "gh run list -R  " && fail "the follow-up hint left -R empty: $out"
 [ "$(git cat-file -t v1.0.1)" = "tag" ] || fail "the tag is not annotated"
 # shellcheck disable=SC1083 # the ^{commit} peeling syntax is git's, not a shell brace
 [ "$(git rev-parse "v1.0.1^{commit}")" = "$(git rev-parse origin/main)" ] ||
