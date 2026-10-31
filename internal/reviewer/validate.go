@@ -33,6 +33,8 @@ type fileContext struct {
 	added      map[int]bool // post-change lines this change added
 	norm       *normalizer
 	related    []scope.RelatedSnippet // what the review call was shown from other files
+	diff       *scope.DiffFile        // this file's parsed diff, nil when it has none
+	otherDiffs map[string]*scope.DiffFile
 }
 
 // validateFindings runs the full pipeline over one parsed FileReview and
@@ -108,16 +110,22 @@ findingsLoop:
 					f.Anchor.StartLine, f.Anchor.EndLine, len(fc.lines), fc.path))
 			continue
 		}
-		anchorOK := true
+		// A line outside the hunks (issue #220) is usually the use site of a
+		// definition the change deleted. GitHub cannot take a comment there,
+		// so the finding moves to a line it can take. Only a finding with no
+		// such line is dropped, and it then reaches the review body (#43).
+		var reanchor *model.Reanchor
 		for line := f.Anchor.StartLine; line <= f.Anchor.EndLine; line++ {
 			if !fc.anchorable[line] {
-				drop(f, model.DropAnchorInvalid,
-					fmt.Sprintf("anchor line %d is not in the parsed diff hunks for %s", line, fc.path))
-				anchorOK = false
+				reanchor = fc.reanchor(f)
+				if reanchor == nil {
+					drop(f, model.DropAnchorInvalid,
+						fmt.Sprintf("anchor line %d is not in the parsed diff hunks for %s", line, fc.path))
+				}
 				break
 			}
 		}
-		if !anchorOK {
+		if reanchor == nil && !fc.anchorsInHunks(f.Anchor) {
 			continue
 		}
 
@@ -317,6 +325,7 @@ findingsLoop:
 		vf.Finding.MissingAssertion = model.SanitizeText(f.MissingAssertion)
 		vf.Path = fc.path
 		vf.EvidenceLevel = level
+		vf.Reanchor = reanchor
 
 		// The verifier pass runs on every finding a reader would see, not
 		// only on blocking candidates: a wrong note costs a reader the same
@@ -447,6 +456,8 @@ func buildFileContext(e scope.ManifestEntry, in *Inputs) (*fileContext, *scope.E
 		anchorable: anchorable,
 		added:      added,
 		norm:       newNormalizer(lines),
+		diff:       in.Diffs[e.Path],
+		otherDiffs: in.Diffs,
 	}, env
 }
 

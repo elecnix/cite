@@ -259,6 +259,44 @@ type ValidatedFinding struct {
 	VerifierResult string `json:"verifier_result,omitempty"`
 	// Occurrence disambiguates two identical findings in one file.
 	Occurrence int `json:"occurrence,omitempty"`
+	// Reanchor is where the finding posts when the model's own anchor is
+	// outside the diff's hunks (issue #220). Nil when the anchor posts as is.
+	Reanchor *Reanchor `json:"reanchor,omitempty"`
+}
+
+// ReanchorKind says which fallback produced a Reanchor, in the order the
+// validator tries them.
+type ReanchorKind string
+
+const (
+	// ReanchorDeletedDefinition is the removed line that defines an
+	// identifier the model's anchor line uses.
+	ReanchorDeletedDefinition ReanchorKind = "deleted_definition"
+	// ReanchorNearestChange is the changed line nearest the model's anchor
+	// in the same file.
+	ReanchorNearestChange ReanchorKind = "nearest_change"
+	// ReanchorOtherFile is a changed line in another file that the finding
+	// text points at, for a file with no hunks.
+	ReanchorOtherFile ReanchorKind = "other_file"
+)
+
+// UseSite is the model's original anchor line and its text, quoted in the
+// posted comment so the reader sees both places.
+type UseSite struct {
+	Line int    `json:"line"`
+	Text string `json:"text"`
+}
+
+// Reanchor is a diff-valid position computed in code. Side is "LEFT" for a
+// removed line (Line is its pre-change number) and "RIGHT" for an added or
+// context line.
+type Reanchor struct {
+	Path      string       `json:"path"`
+	Side      string       `json:"side"`
+	StartLine int          `json:"start_line,omitempty"`
+	Line      int          `json:"line"`
+	Kind      ReanchorKind `json:"kind"`
+	UseSite   UseSite      `json:"use_site"`
 }
 
 // Fingerprint is content-addressed, not line-addressed, so it survives a
