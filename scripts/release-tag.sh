@@ -166,7 +166,7 @@ if [ "$do_tag" -eq 1 ]; then
   else
     say ""
     say "tag $tag pushed. The release workflow builds and attests the three binaries from it:"
-    say "  gh run list -R $(git remote get-url "$remote" | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#') --workflow release --limit 1"
+    say "  gh run list -R $(git remote get-url "$remote" | sed -E 's#\.git$##; s#.*[:/]([^/]+/[^/]+)$#\1#') --workflow release --limit 1"
     say ""
     say "Then tick the Marketplace box on the release: the API does not expose it (docs/release.md)."
   fi
