@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"slices"
 	"sort"
@@ -662,6 +664,103 @@ func TestBlankBodyParseFailureRetriedFromPerFileBudget(t *testing.T) {
 	}
 	if fo == nil || fo.State != model.FileReviewed || !fo.Reviewed {
 		t.Fatalf("file outcome = %+v, want reviewed after blank-body retry", fo)
+	}
+}
+
+// A 200 whose body is not a completion must be retried by the layer that
+// owns retries. Before the reclassification the model client typed it
+// ErrDeterministic and completeWithRetry returned on the first attempt: the
+// file was never reviewed and the gate concluded COULD_NOT_EVALUATE, which is
+// what kept elecnix/email4ynab#107 red for a month on one HTML interstitial.
+// The second review call here answers properly, so a run that reviews the
+// file proves the first failure was not treated as terminal.
+func TestMalformed200RetriedAndReviewed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<html><body>502 Bad Gateway</body></html>"))
+	}))
+	defer srv.Close()
+	// The real client, so the classification under test is the shipped one.
+	bad := &model.OpenAICompatClient{BaseURL: srv.URL, Model: "primary", APIKey: "k"}
+
+	reviewCalls := 0
+	c := &fakeClient{fn: func(_ int, req model.CompletionRequest) (string, error) {
+		if isTriageCall(req) {
+			return triageJSON("a.go"), nil
+		}
+		reviewCalls++
+		if reviewCalls == 1 {
+			if _, err := bad.Complete(context.Background(), req); err != nil {
+				return "", err
+			}
+			t.Fatal("the stub endpoint answered HTML: the call must have failed")
+		}
+		return reviewJSON("a.go", "reviewed", nil), nil
+	}}
+	rec, err := runOnce(t, baseInputs(), baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if reviewCalls != 2 {
+		t.Errorf("review calls = %d, want 2 (one retry of the malformed 200)", reviewCalls)
+	}
+	var fo *model.FileOutcome
+	for i := range rec.Files {
+		if rec.Files[i].Path == "a.go" {
+			fo = &rec.Files[i]
+		}
+	}
+	if fo == nil || fo.State != model.FileReviewed || !fo.Reviewed {
+		t.Fatalf("file outcome = %+v, want reviewed after a retry of the malformed 200", fo)
+	}
+	if fo.Reason == "deterministic_failure" {
+		t.Errorf("a malformed 200 must not be recorded as a deterministic failure")
+	}
+}
+
+// The retry is bounded, and what it ends in is a run-level failure rather than
+// a silent pass: a provider that answers 200 with no completion forever spends
+// the run-global transient bucket (defaultRetriesPerUnitType tokens) and then
+// reports the file as a model error, not as a deterministic one — the sentence
+// an operator now reads matches what they can retry by hand.
+func TestMalformed200ExhaustedRetriesRecordsModelError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(""))
+	}))
+	defer srv.Close()
+	bad := &model.OpenAICompatClient{BaseURL: srv.URL, Model: "primary", APIKey: "k"}
+
+	reviewCalls := 0
+	c := &fakeClient{fn: func(_ int, req model.CompletionRequest) (string, error) {
+		if isTriageCall(req) {
+			return triageJSON("a.go"), nil
+		}
+		reviewCalls++
+		_, err := bad.Complete(context.Background(), req)
+		return "", err
+	}}
+	rec, err := runOnce(t, baseInputs(), baseOptions(c))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if want := 1 + defaultRetriesPerUnitType; reviewCalls != want {
+		t.Errorf("review calls = %d, want %d (the initial call plus the run-global retry bucket, no more)", reviewCalls, want)
+	}
+	var fo *model.FileOutcome
+	for i := range rec.Files {
+		if rec.Files[i].Path == "a.go" {
+			fo = &rec.Files[i]
+		}
+	}
+	if fo == nil || fo.State != model.FileErrored {
+		t.Fatalf("file outcome = %+v, want errored", fo)
+	}
+	if fo.Reason != "model_error" {
+		t.Errorf("reason = %q, want model_error (a malformed 200 is not a deterministic refusal)", fo.Reason)
+	}
+	if rec.Coverage.Complete {
+		t.Errorf("coverage complete despite an unreviewed file — the gate must fail closed")
 	}
 }
 

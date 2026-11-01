@@ -36,6 +36,16 @@ const (
 
 // ErrDeterministic is returned for deterministic failures, which are terminal:
 // a truncated response truncates identically on retry (§7).
+//
+// What belongs here is a request the same endpoint will answer the same way
+// twice: a retired model, a rejected parameter, a missing key, an output cap,
+// and a 200 that carries a provider error envelope instead of a completion.
+// What does NOT belong here is a 200 whose body is not a completion at all —
+// an HTML interstitial, an empty body, a truncated document. That one is a
+// blip, measured as three clean runs in a row on the same commit, model and
+// endpoint after one such body kept a pull request red for a month; it is
+// typed as a transient provider failure instead so the retry and failover
+// machinery can answer it.
 var ErrDeterministic = errors.New("deterministic failure")
 
 // ErrRunaway is returned when the provider produced NO answer at all: content
@@ -639,6 +649,46 @@ func bodyShape(raw []byte) string {
 	}
 }
 
+// providerErrorEnvelope is the error object an OpenAI-compatible provider puts
+// in its body. It is decoded on a non-200 and, separately, on a 200: a gateway
+// that answers 200 and puts its refusal in the body has refused all the same,
+// and telling that apart from a body that is not a completion at all is what
+// the terminal/transient split rests on.
+type providerErrorEnvelope struct {
+	Error *providerError `json:"error"`
+}
+
+type providerError struct {
+	Code     any    `json:"code"`
+	Message  string `json:"message"`
+	Metadata *struct {
+		Raw string `json:"raw"`
+	} `json:"metadata"`
+}
+
+// sentence is the actionable half of a provider error: flattened onto one
+// line and bounded, because it mirrors untrusted provider text (I4) and must
+// not carry a newline into a single-line log. Gateways (e.g. OpenRouter) wrap
+// the upstream error, and the raw payload is where the actionable reason
+// lives, so the longer of the two wins.
+func (e *providerError) sentence() string {
+	flat := func(s string) string {
+		s = strings.TrimSpace(s)
+		s = strings.ReplaceAll(s, "\r\n", " ")
+		return strings.ReplaceAll(s, "\n", " ")
+	}
+	m := flat(e.Message)
+	if e.Metadata != nil && e.Metadata.Raw != "" {
+		if raw := flat(e.Metadata.Raw); len(raw) > len(m) {
+			m = raw
+		}
+	}
+	if len(m) > 300 {
+		m = m[:300]
+	}
+	return m
+}
+
 // typedError maps provider errors to typed codes before rendering (I4).
 type typedError struct {
 	Code string
@@ -830,15 +880,7 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 	}
 	if resp.StatusCode != http.StatusOK {
 		// Map to a typed code; never surface verbatim provider text (I4).
-		var b struct {
-			Error *struct {
-				Code     any    `json:"code"`
-				Message  string `json:"message"`
-				Metadata *struct {
-					Raw string `json:"raw"`
-				} `json:"metadata"`
-			} `json:"error"`
-		}
+		var b providerErrorEnvelope
 		// Read the capped window into memory rather than decoding straight
 		// off the reader: the wire capture needs the bytes a non-200 came
 		// back with, and a streaming decode leaves nothing to hand it.
@@ -855,20 +897,7 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		code := "provider_error"
 		msg := fmt.Sprintf("HTTP %d", resp.StatusCode)
 		if b.Error != nil {
-			m := b.Error.Message
-			// Gateways (e.g. OpenRouter) wrap the upstream error; the raw
-			// payload is where the actionable reason lives.
-			if b.Error.Metadata != nil && b.Error.Metadata.Raw != "" {
-				raw := strings.TrimSpace(b.Error.Metadata.Raw)
-				raw = strings.ReplaceAll(raw, "\n", " ")
-				if len(raw) > len(m) {
-					m = raw
-				}
-			}
-			if m != "" {
-				if len(m) > 300 {
-					m = m[:300]
-				}
+			if m := b.Error.sentence(); m != "" {
 				msg += ": " + m
 			}
 		}
@@ -926,6 +955,10 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage chatCompletionsUsage `json:"usage"`
+		// Error decodes a provider error envelope sent with a 200: some
+		// gateways answer 200 and put the refusal in the body, and that is a
+		// terminal refusal, not a blip (see the branch below).
+		Error *providerError `json:"error"`
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {
@@ -957,11 +990,49 @@ func (c *OpenAICompatClient) Complete(ctx context.Context, req CompletionRequest
 		// on, and every way to reach it (a redirected endpoint, a gateway
 		// interstitial, a model id the host does not serve) reads identically
 		// without them.
-		return nil, fmt.Errorf("%w: malformed provider response from %s (HTTP %d, %d bytes, %s; set CITE_DEBUG=1 to capture the body)", ErrDeterministic, c.BaseURL, resp.StatusCode, len(raw), bodyShape(raw))
+		//
+		// NOT ErrDeterministic. A 200 whose body is not a completion is a blip:
+		// measured on elecnix/email4ynab#107, the same commit, model and
+		// endpoint then answered cleanly on three runs in a row, while the
+		// terminal classification kept that PR red for a month — no retry, no
+		// failover, the file never reviewed, COULD_NOT_EVALUATE. The same
+		// request again is exactly what a transient blip rewards, so this is
+		// typed like an outage: completeWithRetry retries it from the
+		// run-global bucket with a bounded backoff, and FailoverClient walks
+		// the chain, both of which respect the per-call deadline and the run
+		// budget. Only a provider error envelope at 200 stays terminal
+		// (below): that is a refusal, and the same request meets it again.
+		return nil, &typedError{
+			Code: "malformed_response",
+			Body: fmt.Sprintf("HTTP %d from %s: %d bytes, %s", resp.StatusCode, c.BaseURL, len(raw), bodyShape(raw)),
+			Hint: "set CITE_DEBUG=1 to capture the body",
+		}
 	}
+	// A 200 carrying an error envelope and no completion is a refusal, not a
+	// blip: the provider answered, and what it said is that it will not serve
+	// this request. That one stays terminal, and names the provider's own
+	// sentence, which is the only actionable half of the body. A response that
+	// does carry a completion keeps it: an incidental error field beside a
+	// usable answer is not worth discarding a review over.
 	if len(out.Choices) == 0 {
-		end(CaptureOutcomeHTTPError, "no choices in the provider response")
-		return nil, fmt.Errorf("%w: no choices in response", ErrDeterministic)
+		if out.Error != nil {
+			end(CaptureOutcomeHTTPError, fmt.Sprintf("provider error at HTTP %d from %s", resp.StatusCode, c.BaseURL))
+			msg := fmt.Sprintf("HTTP %d from %s", resp.StatusCode, c.BaseURL)
+			if m := out.Error.sentence(); m != "" {
+				msg += ": " + m
+			}
+			return nil, &typedError{Code: "provider_error", Body: msg, Terminal: true}
+		}
+		// Valid JSON, still no completion: the same class as an undecodable
+		// body, so the same retryable classification — and a diagnostic, which
+		// the bare "no choices in response" never carried. bodyShape is not
+		// quoted here: it classifies by first byte, and this body did decode.
+		end(CaptureOutcomeHTTPError, fmt.Sprintf("no choices in the provider response from %s (HTTP %d, %d bytes)", c.BaseURL, resp.StatusCode, len(raw)))
+		return nil, &typedError{
+			Code: "malformed_response",
+			Body: fmt.Sprintf("HTTP %d from %s: %d bytes of JSON but no choices in it", resp.StatusCode, c.BaseURL, len(raw)),
+			Hint: "set CITE_DEBUG=1 to capture the body",
+		}
 	}
 	ch := out.Choices[0]
 	if cc != nil {

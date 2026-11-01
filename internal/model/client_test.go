@@ -597,8 +597,13 @@ func TestCompleteMalformedResponseNamesEndpointNotBody(t *testing.T) {
 	defer ts.Close()
 	c := &OpenAICompatClient{BaseURL: ts.URL, APIKey: "k", Model: "m"}
 	_, err := c.Complete(context.Background(), CompletionRequest{MaxOutputTokens: 8})
-	if !errors.Is(err, ErrDeterministic) {
-		t.Fatalf("want ErrDeterministic, got %v", err)
+	// Retryable, not terminal: an HTML page at 200 is the blip that kept
+	// elecnix/email4ynab#107 red for a month (see
+	// TestUndecodable200IsRetryable for the whole class and its evidence).
+	// What this test pins is the diagnostic, which the reclassification must
+	// not cost.
+	if errors.Is(err, ErrDeterministic) {
+		t.Fatalf("an HTML page at 200 is a transient blip, not a verdict: %v", err)
 	}
 	for _, want := range []string{ts.URL, "HTTP 200", "an HTML page", "CITE_DEBUG=1"} {
 		if !strings.Contains(err.Error(), want) {

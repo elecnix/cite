@@ -94,7 +94,11 @@ func FailsOver(err error) bool {
 	var te *typedError
 	if errors.As(err, &te) {
 		switch te.Code {
-		case "rate_limited", "provider_unavailable", "provider_error":
+		// malformed_response is the retryable half of a 200 that carried no
+		// completion: a gateway interstitial, an empty body or a truncated
+		// document. Another model or endpoint will answer where this one
+		// did not.
+		case "malformed_response", "rate_limited", "provider_unavailable", "provider_error":
 			return true
 		}
 	}
