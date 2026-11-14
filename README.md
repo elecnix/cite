@@ -8,8 +8,9 @@ they are about, and publishes a check run a repository may require before
 merge. Every finding quotes the source line it is about, and the quote is
 verified against the file before anyone sees it.
 
-> **Status: under construction.** This repository is being implemented from
-> [PLAN.md](PLAN.md).
+> **Status: stable.** [CONFORMANCE.md](CONFORMANCE.md) is a dated snapshot of
+> what Cite guarantees and what it treats as best-effort, and `cite doctor`
+> warns when that snapshot goes stale.
 
 ## Install
 
